@@ -1,0 +1,62 @@
+# Build the book and publish it to GitHub Pages on every push to main.
+#
+# One-time setup in the repository: Settings > Pages > Build and deployment > Source: "GitHub Actions".
+# The site then appears at https://tatetian.github.io/kernelet-book/. No gh-pages branch is needed:
+# the built HTML is uploaded as a Pages artifact and deployed from there.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  MDBOOK_VERSION: 0.5.2
+  MDBOOK_MERMAID_VERSION: 0.17.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mdBook and mdbook-mermaid (prebuilt binaries)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin"
+          curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v${MDBOOK_MERMAID_VERSION}/mdbook-mermaid-v${MDBOOK_MERMAID_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check cross-references and build
+        # The site lives under /kernelet-book/, not at the domain root. mdBook reads any config
+        # key from MDBOOK_* variables, so the site-url is set here rather than in book.toml,
+        # which keeps `make serve` at http://localhost:3000/ locally.
+        env:
+          MDBOOK_OUTPUT__HTML__SITE_URL: /kernelet-book/
+        run: make
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: book
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

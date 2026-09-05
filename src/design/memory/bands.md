@@ -1,0 +1,7 @@
+# Two bands, and the death reserve
+
+Rust routes every infallible allocation that fails through `handle_alloc_error`, which halts the machine. So **no allocation charged to a kernelet may return null**, and the design has two bands.
+
+The **soft band** is the compatibility surface: `mmap`, `brk`, fork, socket and pipe buffers, fd-table growth, every host object created for the kernelet, checked fallibly before allocating, returning `ENOMEM`. Every tenant-growable collection in the kernelet crate grows through a `try_reserve` wrapper, and no single infallible allocation exceeds a cap (1 MiB). The **hard band** is inside the arena and the frame dispatcher: when the grant is empty, the kernelet is marked dying (one [epoch](../facade/services.md) store revokes every handle it holds, on every CPU), the allocation is served from a host-owned **death reserve** of `(1 MiB + 4 pages) × nr_cpus`, and the kernelet is terminated at its next quiescent point ([§4.7.1](../faults/tiers.md)). The reserve is per CPU, not per kernelet, because the dying check is made under a preemption guard immediately before the draw, so at most one maximal draw is outstanding per CPU even with kernel preemption; frames drawn from it are loaned to the dying kernelet, counted in the reserve's ledger and never in the kernelet's grant (a model that counted them in both broke its own reclamation), and returned at destroy.
+
+The allocator path may not panic: unwinding out of the global allocator is not handled anywhere in the tree, so a request over the cap is a metric, never an assertion.

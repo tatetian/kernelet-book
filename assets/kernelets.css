@@ -1,0 +1,184 @@
+/* Kernelets theme.
+ *
+ * Applies the palette of the Executive Summary figures (navy #000319 / #060A24, cyan #00F7FF, blue #1937FF,
+ * translucent one-pixel borders, mono "kicker" labels) to mdBook's built-in `navy` theme by redefining its
+ * CSS variables and a few component rules. The light themes (light, rust) are left as mdBook ships them.
+ * Lives in assets/ and is loaded through `additional-css` in book.toml; remove that entry to revert.
+ *
+ * What it changes: page #060A24, sidebar #000319, text #C9CCE0, links and the active sidebar entry #00F7FF,
+ * hairline borders rgba(255,255,255,.12); code blocks, Mermaid diagrams and tables sit on rounded hairline
+ * panels, inline code is a translucent cyan chip, table headers and sidebar part titles are mono uppercase
+ * kickers, blockquotes carry a cyan left rule, headings are white with an underline on h2. Prose uses the
+ * system sans stack, --mono-font is IBM Plex Mono with fallbacks (the web font is not loaded), and
+ * --content-max-width is 880px. The Mermaid side of the same palette lives in assets/mermaid-init.js, which passes
+ * Mermaid's `base` theme with matching themeVariables for the dark themes only.
+ *
+ * Deliberately not done: a named theme in mdBook's menu or any `theme/` template override (mdBook 0.5 keeps
+ * changing those files); display-size type, gradients on headings and the website's pulse animation, which
+ * belong to a landing page and not to long-form reading.
+ */
+
+/* ---- fonts: the site's sans stack for prose, a mono stack for code and labels ---- */
+:root {
+  --mono-font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --content-max-width: 880px;   /* mdBook's default is 750px; the diagrams and tables need the room */
+}
+html {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", "Open Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* ---- the navy theme, rebranded ---- */
+.navy, .coal, .ayu {
+  --k-cyan: #00F7FF;
+  --k-blue: #1937FF;
+  --k-line: rgba(255, 255, 255, 0.12);
+  --k-panel: #0B1030;
+  --k-panel2: #14172B;
+}
+.navy {
+  --bg: #060A24;
+  --fg: #C9CCE0;
+
+  --sidebar-bg: #000319;
+  --sidebar-fg: #9A9DB0;
+  --sidebar-non-existant: #3A3F60;
+  --sidebar-active: #00F7FF;
+  --sidebar-spacer: rgba(255, 255, 255, 0.10);
+
+  --scrollbar: #3A3F60;
+
+  --icons: #7F818C;
+  --icons-hover: #FFFFFF;
+
+  --links: #00F7FF;
+
+  --inline-code-color: #BEE9F0;
+
+  --theme-popup-bg: #0B1030;
+  --theme-popup-border: rgba(255, 255, 255, 0.16);
+  --theme-hover: #14172B;
+
+  --quote-bg: rgba(255, 255, 255, 0.035);
+  --quote-border: rgba(0, 247, 255, 0.40);
+
+  --table-border-color: rgba(255, 255, 255, 0.12);
+  --table-header-bg: rgba(25, 55, 255, 0.22);
+  --table-alternate-bg: rgba(255, 255, 255, 0.025);
+
+  --searchbar-border-color: rgba(255, 255, 255, 0.16);
+  --searchbar-bg: #0B1030;
+  --searchbar-fg: #FFFFFF;
+  --searchbar-shadow-color: transparent;
+  --searchresults-header-fg: #7F818C;
+  --searchresults-border-color: rgba(255, 255, 255, 0.12);
+  --searchresults-li-bg: #0B1030;
+  --search-mark-bg: #1937FF;
+
+  --footnote-highlight: #1937FF;
+  --overlay-bg: rgba(0, 3, 25, 0.6);
+  --sidebar-header-border-color: rgba(0, 247, 255, 0.35);
+
+  /* copy button icons: cyan on hover (filters approximate #7F818C and #00F7FF) */
+  --copy-button-filter: invert(51%) sepia(10%) saturate(393%) hue-rotate(198deg) brightness(86%) contrast(87%);
+  --copy-button-filter-hover: invert(84%) sepia(61%) saturate(3000%) hue-rotate(130deg) brightness(105%) contrast(105%);
+}
+
+/* ---- typography ---- */
+.navy .content h1, .navy .content h2, .navy .content h3, .navy .content h4 {
+  color: #FFFFFF;
+  letter-spacing: -0.015em;
+}
+.navy .content h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--k-line);
+}
+.navy .content a:hover { text-decoration: underline; }
+.navy .content strong { color: #FFFFFF; }
+.navy ::selection { background: rgba(0, 247, 255, 0.25); }
+
+/* ---- code: panels with a hairline border, like the figures ---- */
+.navy .content pre {
+  background: var(--k-panel);
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  padding: 1em 1.1em;
+}
+.navy .content pre > code, .navy .content pre > code.hljs { background: transparent; }
+.navy .content :not(pre) > code.hljs, .navy .content :not(pre) > code {
+  background: rgba(0, 247, 255, 0.07);
+  border: 1px solid rgba(0, 247, 255, 0.14);
+  border-radius: 5px;
+  padding: 0.05em 0.35em;
+}
+.navy .content a > code { border-color: rgba(0, 247, 255, 0.35); }
+
+/* ---- Mermaid diagrams on the same panel as the SVG figures ---- */
+.navy .content pre.mermaid {
+  background: radial-gradient(ellipse at 50% 0%, rgba(25, 55, 255, 0.16), transparent 62%), var(--k-panel);
+  border: 1px solid var(--k-line);
+  border-radius: 14px;
+  padding: 22px 20px;
+  overflow-x: auto;
+}
+.navy .content pre.mermaid svg { max-width: 100%; height: auto; }
+
+/* ---- tables: mono uppercase kicker headers, hairline rules ---- */
+.navy .content table {
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  overflow: hidden;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.navy .content table th {
+  font-family: var(--mono-font);
+  font-size: 0.72em;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9FD9E4;
+  background: var(--table-header-bg);
+  border-left: none; border-right: none; border-top: none;
+  border-bottom: 1px solid var(--k-line);
+  padding: 10px 12px;
+}
+.navy .content table td {
+  border-left: none; border-right: none; border-top: none;
+  border-bottom: 1px solid var(--k-line);
+  padding: 10px 12px;
+}
+.navy .content table tr:last-child td { border-bottom: none; }
+
+/* ---- blockquotes: the placeholders and the pitch lines ---- */
+.navy .content blockquote {
+  background: var(--quote-bg);
+  border-top: none;
+  border-bottom: none;
+  border-left: 2px solid var(--quote-border);
+  border-radius: 0 12px 12px 0;
+  padding: 0.6em 1.1em;
+}
+
+/* ---- sidebar: part titles as kickers, cyan active entry ---- */
+.navy .sidebar .part-title {
+  font-family: var(--mono-font);
+  font-size: 0.68em;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--k-cyan);
+  opacity: 0.85;
+  margin-top: 1.2em;
+}
+.navy .sidebar .chapter li a.active { color: var(--k-cyan); }
+.navy .sidebar .chapter li > a > strong { color: #5C6180; }
+.navy .sidebar .chapter li a.active > strong { color: var(--k-cyan); }
+.navy .sidebar-resize-handle { background: transparent; }
+
+/* ---- menu bar and title ---- */
+.navy .menu-title { color: #FFFFFF; letter-spacing: -0.01em; }
+.navy #menu-bar, .navy .menu-bar { border-bottom: 1px solid var(--k-line); }
+.navy .nav-chapters:hover, .navy .mobile-nav-chapters:hover { background: rgba(0, 247, 255, 0.06); }
+
+/* ---- the two SVG figures use the same panel; keep them in step with the code panels ---- */
+.navy .fwd-fig { border-color: var(--k-line); }

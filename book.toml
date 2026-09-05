@@ -1,0 +1,24 @@
+[book]
+language = "en"
+src = "src"
+title = "Asterinas Kernelets"
+description = "A design for many mutually distrusting tenant kernels inside one Asterinas image"
+
+[build]
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["assets/fig.css", "assets/kernelets.css"]
+additional-js = ["assets/mermaid.min.js", "assets/mermaid-init.js"]
+
+[output.html.playground]
+editable = false
+copyable = true
+copy-js = true
+line-numbers = false
+runnable = false
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

@@ -1,0 +1,3 @@
+# Evaluation plan
+
+> **To be written.** The measurements the [staged plan](../implementation/plan.md) commits to, with their baselines: dispatch, crossing, allocation, the kernel-mode fault path, the switch, create and destroy, against the booted prototype's numbers ([Runtime](runtime.md)); the CR3-write and window-flush cost on same-kernelet and cross-kernelet switches; the create/destroy loop with leak assertions; fault injection against a real workload next door; syscall latency and a syscall-heavy macro-benchmark against Docker, gVisor and Firecracker; kernelet fork against a snapshot restore. Each entry names the milestone that produces it and the question in [what must be verified](../limitations/todos.md) it answers.

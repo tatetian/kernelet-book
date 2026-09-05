@@ -1,0 +1,5 @@
+# The problem and the two answers
+
+Multi-agent workloads want kernelets to talk, and all kernelets share a physical address space, so a transfer could be a pointer hand-off. Alternative A refused any object move for two reasons found the hard way: a moved object carries back-pointers into its sender's state, and the moment A's object graph is reachable from B the arena-release argument fails for both. It chose a byte-copying pipe with receiver credit. Alternative B chose a shared heap with `RRef<T>` and an *exchangeable-type* rule that forbids any reference or pointer in `T`, so that a moved object *cannot* carry a back-pointer, and measured it on a booted kernel ([§2.2](../../background/prototype.md)).
+
+The two are compatible, and this design uses both halves: **Alternative B's mechanism under Alternative A's accounting.** An `RRef` is a host object, not an arena object; it lives outside every window; its ownership is a row in a host table; and its bytes never cross a memory boundary, only its owner does. The booted prototype measured the whole path ([§2.2](../../background/prototype.md)); the numbers are not repeated here.

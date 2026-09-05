@@ -1,0 +1,3 @@
+# What the windows add
+
+A kernelet killed by [T2](tiers.md) has abandoned stacks whose frames hold pointers into its windows, host objects that name it, and possibly host code somewhere that kept a pointer it should not have. The first are host-owned stacks freed without being resumed. The second are drained by name. The third, the bug case, is what [§4.1.5](../process/heap-window.md) bought: once the windows are unmapped (step 5 of [§4.7.4](destroy.md)), any such pointer dereferenced from a host task faults, and dereferenced from another kernelet's task reads that kernelet's own window. Poisoning released frames, which Alternative A used to turn a silent miss into a loud one, is kept for the linear-map aliases.

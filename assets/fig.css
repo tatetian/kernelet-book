@@ -1,0 +1,18 @@
+/* Figures reused from the Asterinas website (Background: trilemma; Architecture: how a kernelet works). */
+/* A page that carries one of these figures gets 40px more width than --content-max-width in kernelets.css. */
+main:has(.fwd-fig){max-width:920px}
+.fwd-fig{--cyan:#00F7FF;--blue:#1937FF;--line:rgba(255,255,255,.12);
+  background:radial-gradient(ellipse at 50% 0%,rgba(25,55,255,.16),transparent 62%),#060A24;
+  border:1px solid var(--line);border-radius:14px;padding:22px 20px;margin:24px 0 28px;color:#C9CCE0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",sans-serif}
+.fwd-fig svg{width:100%;height:auto;display:block}
+.fwd-fig .head{margin:0 0 16px;text-align:center}
+.fwd-fig .head .title{margin:6px 0 0;font-size:18px;font-weight:650;color:#fff;line-height:1.3}
+.fwd-fig .cmp{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.fwd-fig .cmp .col{background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:12px;padding:14px 12px 10px}
+.fwd-fig .cmp .col.win{border-color:rgba(0,247,255,.42);background:linear-gradient(170deg,rgba(0,247,255,.08),rgba(25,55,255,.05));box-shadow:0 0 40px rgba(0,247,255,.10)}
+.fwd-fig .tag{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:10px;letter-spacing:.16em;color:#9A9DB0;text-transform:uppercase}
+.fwd-fig .col.win .tag{color:var(--cyan)}
+.fwd-fig .name{margin:4px 0 10px;font-size:15px;font-weight:650;color:#fff}
+.fwd-fig figcaption{margin:14px 0 0;font-size:12.5px;line-height:1.5;color:#7F86A8;text-align:center}
+@media(max-width:700px){.fwd-fig .cmp{grid-template-columns:1fr}}
