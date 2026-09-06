@@ -140,7 +140,7 @@ pub enum CreateError {
 
 ## Hooks: how OSTD calls the endovisor
 
-The endovisor customizes a kernelet's behavior by implementing one trait per kernelet and passing it at creation. The five *request* hooks (`mmio_read`, `mmio_write`, `log`, `console_write`, `on_grant_exhausted`) and `on_oops` run on the kernelet's own task, inside a service call, with the kernelet's page table active, and their time is charged to the kernelet. They must not sleep: a driver holds a spin lock across a register write as it would for real hardware, so a hook is a bounded amount of state manipulation, and anything that needs host I/O is handed to a device thread ([Devices](virtualizing-ostd/devices.md)). `on_dying` runs on whichever task caused the death: the killer's host task, or the kernelet task that called `exit` or `panic`. `on_exited` runs on a host reaper task after the last kernelet task has switched away, so that its stack is not the one being reaped. The hooks are the only path from a kernelet's requests into the host kernel's Linux functionality.
+The endovisor customizes a kernelet's behavior by implementing one trait per kernelet and passing it at creation. The five *request* hooks (`mmio_read`, `mmio_write`, `log`, `console_write`, `on_grant_exhausted`) and `on_oops` run on the kernelet's own task, inside a service call, with the kernelet's page table active, and their time is charged to the kernelet. They must not sleep: a driver holds a spin lock across a register write as it would for real hardware, so a hook is a bounded amount of state manipulation, and anything that needs host I/O is handed to a device thread ([Devices](virtualizing-ostd/devices.md)). `on_dying` and `on_exited` run on the host's **reaper task**, never on a kernelet's task or in the context that detected the death, which may be an interrupt handler; `on_dying` is therefore the one hook that may sleep, and `on_exited` runs after the last kernelet task's stack has been freed ([Faults, termination, and reclamation](faults-and-reclamation.md)). The hooks are the only path from a kernelet's requests into the host kernel's Linux functionality.
 
 ```rust
 pub trait KerneletHooks: Send + Sync + 'static {
@@ -244,7 +244,8 @@ impl Kernelet {
     /// Adds `grains` to the grant and to `max_grains` as one run if it can and as several
     /// otherwise, appends them to the grant table, installs level-2 tables if needed, and
     /// posts `JOB_GRANT` so that the kernelet maps them. Legal in `Created` and `Running`.
-    /// Memory only grows; a kernelet returns memory by exiting.
+    /// Memory only grows; a kernelet returns memory by exiting. Every grain is zeroed
+    /// before it is published (register D55), so no tenant's data reaches another.
     pub fn grant(&self, grains: u32) -> Result<u32 /* granted */, GrantError>;
 
     pub fn set_budget(&self, budget: CpuBudget) -> Result<(), StateError>;
@@ -300,7 +301,7 @@ pub struct ExitStatus { pub reason: ExitReason, pub uptime: Duration, pub cpu_ti
 
 pub struct StateError { pub state: KerneletState }
 pub enum GrantError { State(KerneletState), Limit, NoMemory }
-pub enum DestroyError { NotExited(KerneletState), Zombie { pins: u32 } }
+pub enum DestroyError { NotExited(KerneletState), Zombie { pins: u32, adopted: u32 } }
 pub struct Timeout;
 pub struct LimitError;
 
@@ -342,7 +343,9 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 | `image`, `config`, `hooks` | the kind, the configuration, the endovisor's hooks | creation |
 | `kernel_pt`, `window_l3` | the kernelet's kernel page table root and its private level-3 table for entry 500; the host's mappings under it (`KW_TEXT`, `KW_DATA`, `KW_SHARED`) | creation |
 | `grant` | the grant table: each run's physical base, first slot, length and reserved level-2 frames, mirrored read-only into `KW_SHARED`, plus each run's pin count and its host `Segment`; append-only, chunked | `create`, `grant`, `grains_request`; pins by `guest_memory` |
-| `roots` | the user page-table roots the kernelet has registered | the service half |
+| `roots` | the user page-table roots the kernelet has registered, each with its active set of CPUs | the service half |
+| `sched_group` | the kernelet's group in the host scheduler: weight, quota, members and adopted tasks | `create`, `set_budget`, adoption |
+| `timer_deadlines: [AtomicU64; MAX_VCPUS]`, tick-list membership | the per-virtual-CPU `timer_arm` deadlines, and whether the host tick posts to this kernelet | `timer_arm`; `start` and `mark_dying` |
 | `tasks` | the host tasks that are this kernelet's, by name; the boot task and the workers among them, with each worker's virtual CPU | the service half's spawn and exit |
 | `devices`, `virq_pending: [AtomicU64; 4]`, `tick_pending: [(AtomicBool, AtomicU32); MAX_VCPUS]` | the device table, the pending-interrupt bitmap, and per virtual CPU the pending tick bit and the count of ticks since delivery | creation; `raise_irq` and the host tick; `job_wait` clears them when it hands a job over |
 | `shared` | the frames mapped read-only (`BootArgs`, the info page) and read-write (the task records) into `KW_SHARED` | creation; the scheduler writes task records |

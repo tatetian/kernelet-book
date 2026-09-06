@@ -14,7 +14,7 @@ kernel/core/src/endovisor/                a module of the kernel crate, `cfg(not
   sandbox.rs                              one `Sandbox` per created kernelet: hooks, devices, endpoints
   models/{blk,console,rng,vsock,net}.rs   the virtio MMIO device models and their device threads
   vsock_switch.rs                         the host-wide switch of [Channels](channels.md)
-  reaper.rs                               the thread that finishes destroys and retries zombies
+  retry.rs                                the thread that finishes destroys and retries zombies
   policy.rs                               limits, defaults, who may create
 ```
 
@@ -69,7 +69,7 @@ pub(crate) trait DeviceModel: Send + Sync {
 }
 ```
 
-The device thread behind a model is a kernel thread of the host kernel proper (`ThreadOptions::new(…).spawn()`), started at `START` and adopted into the kernelet's group with `adopt_current_task` until it finishes. `cancel` cannot join it, because `on_dying` may run on the dying kernelet's own task inside a service call, so it sets a flag and wakes the thread; the thread finishes the host I/O it is in, since no file operation on the tree can be interrupted, abandons the rest of its inbox, calls `disown_current_task`, and exits. `destroy` reports `Zombie` for exactly that interval, and the reaper retries it. The backends of the first version and the host objects they hold, taken from the runtime's own file table at `ATTACH` (the `ioctl` runs on the runtime's process, so `FileTable::get_file(fd)` is the lookup, and the file is held as `Arc<dyn FileLike>`, an `InodeHandle` for a regular file or the block device's open file):
+The device thread behind a model is a kernel thread of the host kernel proper (`ThreadOptions::new(…).spawn()`), started at `START` and adopted into the kernelet's group with `adopt_current_task` until it finishes. `cancel` does not join it, because the reaper task that calls `on_dying` must not wait on one kernelet's host I/O, so it sets a flag and wakes the thread; the thread finishes the host I/O it is in, since no file operation on the tree can be interrupted, abandons the rest of its inbox, calls `disown_current_task`, and exits. `destroy` reports `Zombie` for exactly that interval, and the retry thread retries it. The backends of the first version and the host objects they hold, taken from the runtime's own file table at `ATTACH` (the `ioctl` runs on the runtime's process, so `FileTable::get_file(fd)` is the lookup, and the file is held as `Arc<dyn FileLike>`, an `InodeHandle` for a regular file or the block device's open file):
 
 | backend | host object held | the device thread's work |
 |---|---|---|
@@ -134,7 +134,7 @@ type KerneletStatus = ioc!(KERNELET_STATUS, MAGIC, 0x25, OutData<StatusRaw>);   
 /// A vsock stream: connect to the kernelet's `port`, or listen on a port scoped to this sandbox for one connection from it.
 type KerneletVsockConnect = ioc!(KERNELET_VSOCK_CONNECT, MAGIC, 0x30, InOutData<VsockArgs>);   // returns an endpoint descriptor
 type KerneletVsockListen  = ioc!(KERNELET_VSOCK_LISTEN,  MAGIC, 0x31, InOutData<VsockArgs>);
-/// Reclaims everything. `EBUSY` unless the kernelet has exited or never started; a `Zombie` is queued for the reaper and the call succeeds.
+/// Reclaims everything. `EBUSY` unless the kernelet has exited or never started; a `Zombie` is queued for the retry thread and the call succeeds.
 type KerneletDestroy = ioc!(KERNELET_DESTROY, MAGIC, 0x2f, NoData);
 ```
 
@@ -142,7 +142,7 @@ type KerneletDestroy = ioc!(KERNELET_DESTROY, MAGIC, 0x2f, NoData);
 
 `START` is where `Kernelet::create` and `Kernelet::start` are called, back to back: the control half fixes a kernelet's devices, CPUs and command line at creation ([control half](kernelet-api-control.md)), so the endovisor gathers them first and creates once. It picks `num_vcpus` host CPUs from the policy's set, the ones with the fewest virtual CPUs of other kernelets already placed on them (chosen), and fails with `EINVAL` if the set is smaller than `num_vcpus`. The kernel boot inside the kernelet begins at `START`, so a runtime that must know the sandbox is viable before reporting success starts it and waits for its agent ([kernelet runtime](kernelet-runtime.md)).
 
-A sandbox descriptor is pollable: readable when the kernelet has exited, so that the runtime waits with `poll` rather than a blocking `ioctl`. Closing the last sandbox descriptor of a live kernelet kills it and hands the wait-and-destroy to the **reaper**, a host kernel thread the endovisor starts at registration, so that a runtime that crashes leaves no sandbox behind and no `close` or `exit_group` blocks on a kernelet's death; the reaper also retries every `destroy` that returned `Zombie` whenever a pin or an adoption is released, and runs `on_exited` for the control half.
+A sandbox descriptor is pollable: readable when the kernelet has exited, so that the runtime waits with `poll` rather than a blocking `ioctl`. Closing the last sandbox descriptor of a live kernelet kills it and hands the wait-and-destroy to the **retry thread**, a host kernel thread the endovisor starts at registration, so that a runtime that crashes leaves no sandbox behind and no `close` or `exit_group` blocks on a kernelet's death; the retry thread also calls `destroy` again for every kernelet that returned `Zombie` whenever a pin or an adoption is released.
 
 ## Policy
 
@@ -157,7 +157,7 @@ Everything. It runs in ring 0 in the host kernel and holds every kernelet's hook
 - Per sandbox: the `Sandbox` object, its endpoints' queues, one device thread per device with a 512 KiB stack, and the kernelet's own cost from the [control half](kernelet-api-control.md).
 - Per `ioctl`: a system call on the host; none is on a kernelet's fast path.
 - Per byte through an endpoint: one copy into the queue and one out, one wakeup each way when the queue was empty or full.
-- Per host: the reaper thread; per kind, the boot-time copy of its image ([Builds and images](builds-and-images.md)).
+- Per host: the retry thread; per kind, the boot-time copy of its image ([Builds and images](builds-and-images.md)).
 
 ## What this page decides
 

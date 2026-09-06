@@ -107,7 +107,8 @@ pub struct ClockPage {
 ```rust
 #[repr(C)]
 pub struct InfoPage {
-    /// Set once by `kill`, `exit` or `panic`; every service call after it fails with `-DYING`.
+    /// Set once by `kill`, `exit` or `panic`; every service call after it terminates its
+    /// caller at the prologue, except the four that end tasks.
     pub dying: AtomicU32,
     /// The published length of the grant table: runs the kernelet may read and map.
     pub runs: AtomicU32,
@@ -211,7 +212,7 @@ pub struct JobDesc { pub kind: u32, pub arg: u32, pub arg2: u64 }
 pub const JOB_VIRQ: u32 = 1; pub const JOB_TICK: u32 = 2; pub const JOB_GRANT: u32 = 3;
 
 // Error codes: negative return values.
-pub const DYING: i32 = 1; pub const NOT_OWNED: i32 = 2; pub const INVALID: i32 = 3;
+pub const NOT_OWNED: i32 = 2; pub const INVALID: i32 = 3;   // 1 is unused: a dying kernelet's call never returns
 pub const LIMIT: i32 = 4; pub const STATE: i32 = 5; pub const CANCEL: i32 = 6;
 
 // `task_spawn` flags.
@@ -220,7 +221,7 @@ pub const SPAWN_IDLE: u32 = 2;        // an idle task: runs only when its virtua
                                       // and is unparked once each time that becomes true
 ```
 
-Twenty-five functions. Return values are `0` or a positive count on success and `-code` on failure: `-DYING` (the kernelet was killed), `-NOT_OWNED` (a physical address outside the grant), `-INVALID` (a bad name, index, width or pointer), `-LIMIT` (a quota or `max_grains` reached), `-STATE` (the call is not legal now, including a sleeping call with preemption disabled), `-CANCEL` (a park cut short by a kill).
+Twenty-six functions. Return values are `0` or a positive count on success and `-code` on failure: `-NOT_OWNED` (a physical address outside the grant), `-INVALID` (a bad name, index, width or pointer), `-LIMIT` (a quota or `max_grains` reached), `-STATE` (the call is not legal now, including a sleeping call with preemption disabled), `-CANCEL` (a park cut short by a kill).
 
 **Pointer arguments.** A pointer the host writes through (`out`, `ctx`) must lie in `KW_DATA`, in `KW_HEAP`, or in the calling task's own kernel stack (the kernel proper keeps its `UserMode` as a local of the task's entry closure; checked on the tree: `kernel/core/src/thread/task.rs`), and be aligned to its pointee; a pointer the host only reads (`module`, `text`, `bytes`, `msg`, `vcpus`) may also lie in `KW_TEXT` or `KW_SHARED`. The host checks the range before touching it, since a write to a read-only window page would fault in ring 0. Every pointer is used only during the call; the host copies what it needs and keeps no pointer afterward (invariant I4). This is the one class of host access to a kernelet's memory besides `guest_memory` on the control half, and both are bounded by a call.
 
@@ -232,16 +233,19 @@ fn enter(may_sleep: bool, exempt_from_dying: bool) -> Result<Entered, i32> {
     let slot = cpu_slot();                                        // one GS-relative load
     let k = slot_table().get(slot.kernelet, slot.generation).ok_or(-INVALID)?;
     let st = current_task().kernelet_state();                     // host-private
-    if !exempt_from_dying && k.info.dying.load(Acquire) != 0 { return Err(-DYING); }
+    if !exempt_from_dying && k.info.dying.load(Acquire) != 0 { drop(k); terminate_current_task(st); }   // a quiescent point; nothing returns into `KW_TEXT`
     if may_sleep && k.task_record(st.name).preempt_count.load(Relaxed) != 0 { return Err(-STATE); }
-    if stack_below_reserve() { k.kill(KillReason::StackReserve); return Err(-DYING); }
+    if stack_below_reserve() { k.mark_dying(KillReason::StackReserve); drop(k); terminate_current_task(st); }   // the reaper does the rest
     st.service_depth.store(1, Release);                           // invariant I7: now in host code
     k.accounts.service_calls.fetch_add(1, Relaxed);               // invariant I6
     Ok(Entered { k, st })
 }
 fn leave(e: Entered) {
-    e.st.service_depth.store(0, Release);
-    if e.k.info.dying.load(Acquire) != 0 { terminate_current_task(e.st); }   // a quiescent point
+    let Entered { k, st } = e;
+    st.service_depth.store(0, Release);
+    let dying = k.info.dying.load(Acquire) != 0;
+    drop(k);                                                      // `terminate_current_task` never returns; nothing may be live on this stack
+    if dying { terminate_current_task(st); }                      // a quiescent point
 }
 ```
 
@@ -253,15 +257,15 @@ The depth is stored only after every check has passed, so no error return leaves
 
 - `grains_request(count, contiguous)`: asks for more memory now, `count` grains, as one physically contiguous run if `contiguous` is set. Grants at once, from the host's free memory, up to what `max_grains` allows; at `max_grains`, consults `KerneletHooks::on_grant_exhausted` if the policy allows, which may raise the limit. Appends the run to the host-written grant table, fills the radix, installs level-2 tables if the run raises the installed coverage, and publishes the new length in the info page before returning the number granted, possibly `0`; the kernelet maps the run itself ([Memory](virtualizing-ostd/memory.md)). *Cost:* one aligned segment allocation, the table and radix writes, or the hook.
 - `pt_root_register(root)`, `pt_root_unregister(root)`: the kernelet built a user page table whose root frame is `root`; the host records it so that `pt_activate` and the scheduler accept it, and so that destroy can find every root. Unregistering a root that any task has recorded as its address space, or that is active on any CPU, fails with `-STATE`; a successful unregister invalidates the root's translations on every CPU it was active on before returning. *Checks:* `root` in the grant and not already registered. *Cost:* one owner-array read, one insertion in the kernelet's root set; on unregister, a shootdown.
-- `pt_activate(root)`: writes CR3 with `root` for the current task and records `root` in the task's host-private state, so that the host's `switch_to_task` restores it on every switch to this task and records the CPU in the root's active set; when the host switches from a kernelet task to a host task it also clears its own `ACTIVATED_VM_SPACE` cache, so that the host thread's post-schedule handler re-activates its space rather than trusting a stale pointer (checked on the tree: `VmSpace::activate` early-returns when the cache matches). *Checks:* `root` registered. *Cost:* the CR3 write and, since window mappings are not Global, the loss of the window's translations.
+- `pt_activate(root)`: writes CR3 with `root` for the current task and records `root` in the task's host-private state, so that the host's `switch_to_task` restores it on every switch to this task and records the CPU in the root's active set; when the host switches from a kernelet task to a task of another group or to a host task it loads the host kernel's root into CR3, since the tree's `switch_to_task` never writes CR3 and a freed grant frame must never remain a CPU's live root ([Faults, termination, and reclamation](faults-and-reclamation.md)), and clears its own `ACTIVATED_VM_SPACE` cache, so that the host thread's post-schedule handler re-activates its space rather than trusting a stale pointer (checked on the tree: `VmSpace::activate` early-returns when the cache matches). *Checks:* `root` registered. *Cost:* the CR3 write and, since window mappings are not Global, the loss of the window's translations.
 - `tlb_shootdown(root, start, len)`: invalidates `[start, start+len)` on every host CPU in `root`'s active set, by inter-processor call, and waits; `root == 0` means every root of this kernelet, which is what a change to the window's own mappings needs, since those are shared by every root. A kernelet cannot send interrupts (absent `smp`), so this is how its `TlbFlusher` completes. *Checks:* `root` registered or zero; the range inside the user half or the window. *Cost:* one IPI per target CPU plus the wait; the target set is bounded by the kernelet's CPU set.
 
 The window's own level-2 tables under `KW_HEAP` are written by OSTD (kernelet build) with frames from its grant, so mapping a grain into `KW_HEAP` needs no service call ([Memory](virtualizing-ostd/memory.md)). The host owns only the level-3 table and its mappings of `KW_TEXT`, `KW_DATA` and `KW_SHARED`.
 
 ### Tasks
 
-- `task_spawn(entry, arg, vcpus, prio, flags) -> name`: creates a host task whose body is the trampoline that calls `EntryTable::run_task(entry, arg)` on the kernelet's kernel page table, with a fresh 512 KiB kernel stack (measured on the tree), in the kernelet's scheduling group, with affinity the host CPUs of the virtual-CPU set `*vcpus`, and makes it runnable unless `SPAWN_SUSPENDED`. `SPAWN_IDLE` marks an idle task ([Tasks](virtualizing-ostd/tasks.md)). *Checks:* `entry > 1`; the task limit; `*vcpus` a nonempty subset of the CPU set. *Cost:* a kernel stack and a task object, as `TaskOptions::spawn` today, plus one record initialization.
-- `task_exit() -> !`: the current task ends. The host reaps the task object and its stack after switching away; the index is retired and its generation advanced. No kernelet destructor runs on the host's behalf.
+- `task_spawn(entry, arg, vcpus, prio, flags) -> name`: creates a host task whose body is the trampoline that calls `EntryTable::run_task(entry, arg)` on the kernelet's kernel page table, with a fresh 512 KiB kernel stack (measured on the tree), in the kernelet's scheduling group, with affinity the host CPUs of the virtual-CPU set `*vcpus`, and makes it runnable unless `SPAWN_SUSPENDED`; the insertion into the task table re-checks `dying` under the table's lock, and the trampoline checks `DYING` before entering `run_task`, so a task spawned during a kill never runs kernelet code. `SPAWN_IDLE` marks an idle task ([Tasks](virtualizing-ostd/tasks.md)). *Checks:* `entry > 1`; the task limit; `*vcpus` a nonempty subset of the CPU set. *Cost:* a kernel stack and a task object, as `TaskOptions::spawn` today, plus one record initialization.
+- `task_exit() -> !`: the current task ends. The host removes it from the task table before switching away, and the reaper task frees the task object and its stack afterward ([Faults, termination, and reclamation](faults-and-reclamation.md)); the index is retired and its generation advanced. No kernelet destructor runs on the host's behalf.
 - `task_destroy(name)`: ends a task that was spawned `SPAWN_SUSPENDED` and never unparked, freeing its stack; `-STATE` if it has ever run. *Cost:* the reap.
 - `task_yield()`: the current task yields within its group.
 - `task_park() -> 0 | -CANCEL`: parks the current task until `task_unpark(name)` or a cancellation. A park token is remembered: an unpark that arrives while the task is running sets `PARK_TOKEN`, and the next park consumes it and returns at once, so no wakeup is lost between a wait queue's enqueue and its park, which is the rule OSTD's own `park_current(has_unparked)` enforces today. A park that finds `CANCEL_PARK` set, or is interrupted by `kill`, returns `-CANCEL`; the epilogue then terminates the task.
@@ -286,7 +290,7 @@ The window's own level-2 tables under `KW_HEAP` are written by OSTD (kernelet bu
 
 - `log_write(level, module, text)`: copies the text into the host's rate limiter and, if under the kernelet's limit, delivers it to `KerneletHooks::log`; otherwise drops it and counts. Formatting happened in the kernelet. *Checks:* both buffers readable; `text_len ≤ 1024`. *Cost:* the copy and the hook.
 - `console_write(bytes, len)`: the early console, same rules.
-- `oops(msg, len) -> 0 | -DYING`: a task of the kernelet caught a panic and continues. The host charges the oops budget, calls `KerneletHooks::on_oops`, and, at the budget, kills the kernelet with `KillReason::OopsBudget`, which the epilogue then enforces.
+- `oops(msg, len) -> 0`: a task of the kernelet caught a panic and continues. The host charges the oops budget, calls `KerneletHooks::on_oops`, and, at the budget, kills the kernelet with `KillReason::OopsBudget`, which the epilogue then enforces.
 - `exit(code) -> !`: the kernelet has finished (`power::poweroff`, `restart` or `exit_with_code` in the kernel proper; `restart` sets `EXIT_RESTART`, bit 31). Sets `dying`, records `Exited(code)`, calls `on_dying`, then terminates the calling task; the other tasks are cancelled and terminated at their next quiescent point.
 - `panic(msg) -> !`: a panic in the kernelet that its own handler could not turn into an oops, or an allocation failure the kernel could not absorb. Sets `dying`, records `Panicked(msg)`, calls `on_dying`, and terminates the calling task. Nothing unwinds across the boundary.
 
