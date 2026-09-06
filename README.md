@@ -31,4 +31,4 @@ make clean            # remove the built HTML
 
 ## Publishing
 
-Every push to `main` runs `.github/workflows/pages.yml`, which installs pinned mdBook and mdbook-mermaid binaries, runs `make`, and deploys `book/` to GitHub Pages at <https://tatetian.github.io/kernelet-book/>. One-time setup: in the repository's Settings, under Pages, set the source to "GitHub Actions". No `gh-pages` branch is involved; the workflow can also be started by hand from the Actions tab.
+Every push to the `main` branch deploys the Book to GitHub Pages at <https://tatetian.github.io/kernelet-book/>.

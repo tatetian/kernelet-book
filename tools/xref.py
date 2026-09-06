@@ -19,8 +19,8 @@ import re
 import sys
 
 LINK_RE = re.compile(r"\[([^\[\]]*)\]\(([^)\s]+)\)")  # link text may not contain brackets, so `[a, b)` … `[§1](x)` is not one match
-SECTION_LINK_RE = re.compile(r"\[§[0-9]+(?:\.[0-9]+)?\]\(([^)\s]+)\)")
-BARE_REF_RE = re.compile(r"§([0-9]+(?:\.[0-9]+)?)")
+SECTION_LINK_RE = re.compile(r"\[§[0-9]+(?:\.[0-9]+)*\]\(([^)\s]+)\)")
+BARE_REF_RE = re.compile(r"§([0-9]+(?:\.[0-9]+)*)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*(?:\{#([A-Za-z0-9_-]+)\})?\s*$")
 SUMMARY_ITEM_RE = re.compile(r"^(\s*)[-*]\s+\[([^\]]*)\]\(([^)]+)\)\s*$")
 SUMMARY_PREFIX_RE = re.compile(r"^\[([^\]]*)\]\(([^)]+)\)\s*$")
@@ -237,6 +237,13 @@ def cmd_check(src):
                 if resolved is None:
                     continue
                 target, anchor = resolved
+                rel_from = os.path.relpath(path, src)
+                rel_to = os.path.relpath(target, src)
+                if rel_from.startswith("paper" + os.sep) and not rel_to.startswith("paper" + os.sep):
+                    # The Paper is self-contained: it cites external work and refers to nothing else in the book.
+                    print("PAPER %s:%d -> %s (pages under paper/ may link only within paper/)"
+                          % (rel_from, i + 1, href))
+                    ok = False
                 if os.path.basename(target) == "README.md":
                     # mdBook renders a README.md chapter as index.html but rewrites a link to it as
                     # README.html, which does not exist. Index pages are named index.md for that reason.

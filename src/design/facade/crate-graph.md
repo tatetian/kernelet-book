@@ -1,5 +1,0 @@
-# The crate graph, still the boundary
-
-Everything [§2](../../background/index.md) said about the crate graph holds and is not repeated at length. `aster-kernelet` depends on `kernelet-abi`, `core`, `alloc`, and library crates that themselves reach OSTD only through the facade; it is built `#![forbid(unsafe_code)]`, a one-word change from today's `deny`; it has no dependency, direct or transitive, on the real `ostd` or on `endovisor`; and one `cargo metadata` query over the transitive closure checks that on every build. Of the five library crates that depend on `ostd` today, `aster-bigtcp` and `ring-buffer` build against the facade unchanged, `aster-util` splits (its DMA half goes to the host), `xarray` is rewritten without the RCU write side, and `aster-fuse` moves to the host as the virtio-fs backend's transport.
-
-The closure is also what the linker script of [§4.1.4](../process/data-window.md) places: the set of crates whose writable objects go into the data window is the set of crates reachable from `aster-kernelet`. One list, two consumers.

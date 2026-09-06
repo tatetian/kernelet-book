@@ -1,3 +1,0 @@
-# What this design deliberately does not do
-
-It does not load kernelet kernels at run time; all kernelet kinds are compiled into the image ([§4.2.5](../design/facade/split.md)). It does not let a kernelet choose which of its tasks runs; the host's scheduler does, within the kernelet's group ([§4.4.3](../design/threads/scheduler.md)). It does not move object graphs between kernelets; it moves flat buffers ([§4.6](../design/channels/index.md)). It does not depend on any hardware beyond ring 0/3, page tables and, for passthrough, an IOMMU. It does not make blocking asynchronous; a blocked kernelet thread keeps its kernel stack. It does not virtualize interrupt masking; a kernelet's "disable interrupts" is "disable preemption" ([§4.4.4](../design/threads/guardians.md)).

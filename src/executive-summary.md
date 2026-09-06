@@ -2,9 +2,9 @@
 
 This book is written for two kinds of reader, and it tries to serve both without shortchanging either.
 
-**Asterinas developers** will build this. For them the book is a specification: the [Architecture](architecture/index.md) chapter says what runs where, the [Design](design/index.md) chapter fixes every layer down to the types and the checks, and the [Implementation](implementation/index.md) chapter lists the OSTD changes, the enforcement checks and the staged plan in the order they should be done. It is meant to be precise enough that a coding agent can work from it.
+**Asterinas developers** will build this. For them the book is a specification: [The Blueprint](blueprint/index.md), whose chapters will say what runs where, fix every layer down to the types and the checks, and list the OSTD changes, the enforcement checks and the staged plan in the order they should be done. It is meant to be precise enough that a coding agent can work from it; today only its Overview is written.
 
-**Academic readers** will judge it. For them the book is the long form of a paper: the motivation and the isolation trilemma below, the earlier prototype it grew out of in [Background](background/index.md), the mechanisms and their costs, an honest account of [where the design loses](limitations/losses.md) and of [what has not been verified](limitations/todos.md), and the [prior art](related-work.md) it is compared with.
+**Academic readers** will judge it. For them the book is the long form of a paper: the motivation and the isolation trilemma below, the earlier prototype it grew out of, the mechanisms and their costs, an honest account of where the design loses and of what has not been verified, and the [prior art](paper/related-work.md) it is compared with.
 
 The two pitches below are the same idea told to each audience.
 
@@ -117,6 +117,12 @@ Asterinas Kernelets are a third point in that space, and this book calls the ide
 
 ## How to read this book {#how-to-read}
 
-You need to know Rust and roughly how an operating-system kernel is put together. Nothing else is assumed: the [Introduction](introduction/index.md) defines the terms, the requirements and the five ideas; the two pitches above make the case; [Background and Motivation](background/index.md) supplies the Asterinas internals the design leans on and the earlier prototype this design grew out of; [Architecture](architecture/index.md) is the whole system on a few pages; [Design](design/index.md) is the specification, one layer at a time, followed by three paths walked end to end; [Implementation](implementation/index.md) lists the OSTD changes, the checks and the staged plan a coding agent executes; [Evaluations](evaluation/index.md) holds the cost accounting and the numbers, and says which ones exist; [Limitations and Discussions](limitations/index.md) is where the design loses and what must be verified before it is believed; [Related Work](related-work.md) and [References](references.md) place it among prior art.
+You need to know Rust and roughly how an operating-system kernel is put together. Nothing else is assumed. The book is three volumes, and they are meant to be read in the order that suits the reader rather than the order they were written in.
 
-If you read only three chapters, read the Introduction, the Design, and the Limitations.
+- [**The Paper**](paper/abstract.md) is the idea in its most concise form, written as a research paper.
+- [**The Blueprint**](blueprint/index.md) is the design document: every mechanism down to the types and the checks, the OSTD changes, the staged plan, the numbers that exist, and what must be verified. It is written so that a coding agent can implement from it. Its Overview is written; the chapters after it are being rewritten.
+- **The Notes** will hold the working material behind the other two: the earlier design studies and the booted prototype, the cost accounting, and the survey of related technologies. It is empty for now.
+
+Logically the Notes came first, the Blueprint was built from them, and the Paper was distilled from the Blueprint.
+
+If you read only one volume, read the Paper. If you will build it, read the Blueprint.

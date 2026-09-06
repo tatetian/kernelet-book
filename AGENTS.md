@@ -25,7 +25,8 @@ Use exactly these words, and use them consistently:
 
 ## Structure
 
-- `src/SUMMARY.md` is the single source of order and numbering. The Executive Summary is an unnumbered prefix chapter; everything else is numbered by mdBook in order.
+- `src/SUMMARY.md` is the single source of order and numbering. The Executive Summary is an unnumbered prefix chapter; after it come three parts, **The Paper** (`src/paper/`), **The Blueprint** (`src/blueprint/`) and **The Notes** (`src/notes/`), numbered continuously by mdBook in order.
+- The Paper is the concise, research-paper form of the idea. It is self-contained: a page under `src/paper/` may link only to other pages under `src/paper/` (the checker enforces this), it cites external work by number against `paper/references.md`, and it should convert to LaTeX with little effort, so keep it to plain Markdown, one table and one Mermaid figure. The Blueprint is the design document a coding agent implements from. The Notes hold working material, outdated baselines and surveys; where a Note disagrees with the Blueprint, the Blueprint wins, and where either disagrees with the Paper, the Paper wins.
 - Every chapter directory has an `index.md`. Where the original section had a preamble, that is the page; otherwise it is a short summary plus the list of subsections (mdBook does not generate a child list on the parent page, so the list is written by hand and must be kept in step with `SUMMARY.md`).
 - Files are named for their content, never numbered. Numbers live only in `SUMMARY.md` order.
 - Unwritten material is a `> **To be written.** …` blockquote stating scope and sources, never invented content.

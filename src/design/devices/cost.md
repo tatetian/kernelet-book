@@ -1,3 +1,0 @@
-# What the backend costs and what it does not solve
-
-A block request crosses the boundary twice (notify, completion job) and touches the owner array once per descriptor. A network packet crosses once per batch. Alternative A's estimate of "one crossing per I/O" holds. I/O *bandwidth* accounting is deferred ([§5.3](../../implementation/plan.md)); what exists at the first milestones is queue depth and in-flight bounds per device, which bound memory and interrupt rate but not throughput share. The CPU time of the host's completion path and of the physical driver's interrupt handler is host time a tenant can induce; it is the residual under H5 Alternative A also carried.
