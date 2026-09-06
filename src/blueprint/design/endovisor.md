@@ -57,7 +57,7 @@ impl KerneletHooks for SandboxHooks {
 }
 ```
 
-The early console reaches the endovisor as `log` records at `LogLevel::Console`, so it and the kernel log share the **log endpoint**: a kernelet's boot and panic output is an operator's concern, not the tenant process's standard output, which is the virtio console's ([kernelet runtime](kernelet-runtime.md)). `push_log` never sleeps, since `log` and `console_write` are called from kernelet tasks that cannot: when the log endpoint does not exist yet or is full, the line is dropped and counted in `dropped`, which `KERNELET_STATS` reports as `log_records_dropped` beside the rate limiter's count.
+The early console reaches the endovisor as `log` records at `LogLevel::Console`, so it and the kernel log share the **log endpoint**: a kernelet's boot and panic output is an operator's concern, not the tenant process's standard output, which is the virtio console's ([kernelet runtime](kernelet-runtime.md)). `push_log` never sleeps, since `log` is called from kernelet tasks that cannot: when the log endpoint does not exist yet or is full, the line is dropped and counted in `dropped`, which `KERNELET_STATS` reports as `log_records_dropped` beside the rate limiter's count.
 
 An **`Endpoint`** is a pair of bounded byte queues in host memory with a wait queue and a `Pollee` each way, one end held by the sandbox and the other surfaced to user space as a file descriptor; it is what a log stream, a console, a user-space network backend and a vsock stream are made of. Its bytes are charged to the kernelet with `charge_host_bytes` in both directions, and its bound is the policy's. In the kernel-to-user direction a device thread blocks on a full queue and a hook drops; in the user-to-kernel direction a `write(2)` blocks on a full queue, or returns `EAGAIN` if the descriptor is non-blocking, and wakes the device thread's wait queue, while a device thread's pop wakes the `Pollee`.
 
@@ -97,7 +97,7 @@ type KerneletCreate = ioc!(KERNELET_CREATE, MAGIC, 0x01, InOutData<CreateArgs>);
     pub image: u16,                  // kind: 0 = the Linux kernelet
     pub num_vcpus: u16,              // the endovisor picks the host CPUs at START
     pub initial_grains: u32, pub max_grains: u32,
-    pub cpu_weight: u32, pub cpu_quota_us: u32, pub cpu_period_us: u32,   // 0 = uncapped
+    pub nice: i8, pub cpu_quota_us: u32, pub cpu_period_us: u32,           // per-thread `nice`; 0 = uncapped
     pub oops_budget: u32, pub preempt_off_ticks: u32, pub log_bytes_per_sec: u32, pub idle_tick_hz: u32,
     pub cmdline_ptr: u64, pub cmdline_len: u32,   // copied in during the call
     pub out_cid: u32,                // written: the sandbox's vsock CID

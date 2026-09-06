@@ -34,7 +34,7 @@ pub fn register_image(name: &'static str, elf: &'static [u8]) -> Result<ImageId,
 pub enum ImageError {
     NotElf, WrongArch, HasRelocations, HasUndefinedSymbols, SegmentOutsideWindow,
     WritableAndExecutable, EntryOutsideText, EntryTableMisplaced,
-    EntryTableVersion { found: u32, expected: u32 }, BadTableBounds, SourceHashMismatch, NoMemory,
+    BadTableBounds, SourceHashMismatch, NoMemory,
 }
 
 pub struct ImageInfo {
@@ -42,12 +42,11 @@ pub struct ImageInfo {
     pub text_bytes: usize,        // shared, read-only
     pub template_bytes: usize,    // `.data` + `.bss`, copied per kernelet
     pub cpu_local_bytes: usize,   // replicated per virtual CPU
-    pub entry_table_version: u32,
 }
 pub fn image_info(id: ImageId) -> Option<&'static ImageInfo>;
 ```
 
-Registration repeats, in trusted code and on the bytes actually booted, every check of the [audit](builds-and-images.md#audit) that can be made on the ELF alone: no relocations, no undefined symbols, every segment inside `KW_TEXT` or `KW_DATA` and none both writable and executable, `e_entry` inside `KW_TEXT`, the entry table at its fixed offset with the expected size and version, the exception-table and `.cpu_local` bounds inside their segments, and the source hash equal to the host build's. The bounds check is what invariant I5 needs before the host ever jumps to an exception-table fixup. A failure is a boot-time error for that kind, not for the host.
+Registration repeats, in trusted code and on the bytes actually booted, every check of the [audit](builds-and-images.md#audit) that can be made on the ELF alone: no relocations, no undefined symbols, every segment inside `KW_TEXT` or `KW_DATA` and none both writable and executable, `e_entry` inside `KW_TEXT`, the entry table at its fixed offset with the expected size, the exception-table and `.cpu_local` bounds inside their segments, and the source hash equal to the host build's. The bounds check is what invariant I5 needs before the host ever jumps to an exception-table fixup. A failure is a boot-time error for that kind, not for the host.
 
 ## Identity
 
@@ -151,7 +150,7 @@ pub enum CreateError {
 
 ## Hooks: how OSTD calls the endovisor
 
-The endovisor customizes a kernelet's behavior by implementing one trait per kernelet and passing it at creation. The four *request* hooks (`mmio_read`, `mmio_write`, `log`, `on_grant_exhausted`) and `on_oops` run on the kernelet's own task, inside a service call, with the kernelet's page table active, and their time is charged to the kernelet. They must not sleep: a driver holds a spin lock across a register write as it would for real hardware, so a hook is a bounded amount of state manipulation, and anything that needs host I/O is handed to a device thread ([Devices](virtualizing-ostd/devices.md)). The service wrapper runs each of them on the CPU's **hook stack**, a per-CPU host stack it switches to with the host's preemption disabled, so that a hook's depth, which is the depth of the endovisor's device models and of the Linux functionality beneath them, never counts against the kernelet task's own stack reserve, and under `catch_unwind`, so that a panic in a hook unwinds to the wrapper and ends the kernelet with `KillReason::HookPanicked` rather than the machine (register D63). `spawn_task` runs on the kernelet's task too, on its own stack, and may allocate. `on_dying` and `on_exited` run on the host's **reaper task**, never on a kernelet's task or in the context that detected the death, which may be an interrupt handler; `on_dying` and `on_exited` are therefore the two hooks that may sleep, and `on_exited` runs after the last kernelet task's stack has been freed ([Faults, termination, and reclamation](faults-and-reclamation.md)). The hooks are the only path from a kernelet's requests into the host kernel's Linux functionality.
+The endovisor customizes a kernelet's behavior by implementing one trait per kernelet and passing it at creation. The four *request* hooks (`mmio_read`, `mmio_write`, `log`, `on_grant_exhausted`) and `on_oops` run on the kernelet's own task, inside a service call, with the kernelet's page table active, and their time is charged to the kernelet. They must not sleep: a driver holds a spin lock across a register write as it would for real hardware, so a hook is a bounded amount of state manipulation, and anything that needs host I/O is handed to a device thread ([Devices](virtualizing-ostd/devices.md)). The service wrapper runs each of them on the CPU's **hook stack**, a per-CPU host stack it switches to with the host's preemption disabled, so that a hook's depth, which is the depth of the endovisor's device models and of the Linux functionality beneath them, never counts against the kernelet task's own stack reserve, and under `catch_unwind`, so that a panic in a hook unwinds to the wrapper and ends the kernelet with `KillReason::HostHookPanicked` rather than the machine (register D63). `spawn_task` runs on the kernelet's task too, on its own stack, and may allocate. `on_dying` and `on_exited` run on the host's **reaper task**, never on a kernelet's task or in the context that detected the death, which may be an interrupt handler; `on_exited` is therefore the one hook that may sleep, and it runs after the last kernelet task's stack has been freed ([Faults, termination, and reclamation](faults-and-reclamation.md)). The hooks are the only path from a kernelet's requests into the host kernel's Linux functionality.
 
 ```rust
 pub trait KerneletHooks: Send + Sync + 'static {
@@ -287,10 +286,9 @@ impl Kernelet {
     pub fn raise_irq(&self, virq: Virq) -> Result<(), StateError>;
 
     /// Asks the kernelet to die. `Created → Exited` at once, since nothing has run.
-    /// `Running → Dying`: sets `dying` on the info page and `DYING` in every task
-    /// record, wakes every parked task with a cancellation, and lets each task reach
-    /// its next quiescent point, where it is terminated. Idempotent in `Dying`.
-    /// Returns at once.
+    /// `Running → Dying`: marks the kernelet dying (register D56); the reaper task then
+    /// cancels every parked task and lets each task reach its next quiescent point, where
+    /// it is terminated. Idempotent in `Dying`. Returns at once.
     pub fn kill(&self, reason: KillReason) -> Result<(), StateError>;
 
     /// Blocks the calling host task until the kernelet is `Exited`, or until `timeout`.
@@ -385,7 +383,7 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 | `timer_deadlines: [AtomicU64; MAX_VCPUS]`, tick-list membership | the per-virtual-CPU `timer_arm` deadlines, and whether the host tick posts to this kernelet | `timer_arm`; `start` and `mark_dying` |
 | `tasks` | the kernel threads that are this kernelet's tasks, by name, each an `Arc<Task>` the `spawn_task` hook returned, with its stack charged to the host-overhead account; the boot task and the workers among them, with each worker's virtual CPU; at most `max_tasks` live | the service half's spawn and exit |
 | `devices`, `virq_pending: [AtomicU64; 4]` | the device table and the pending-interrupt bitmap | creation; `raise_irq`; `job_wait` clears a bit when it hands the job over |
-| `shared` | the frames mapped read-only (`BootArgs`, the info page) and read-write (the task records) into `KW_SHARED` | creation; the scheduler writes task records |
+| `shared` | the frames mapped read-only (`BootArgs`, the info page) and read-write (the task records and the per-virtual-CPU records) into `KW_SHARED` | creation; the scheduler writes task records |
 | `accounts` | the counters behind `stats()`, the host-bytes charge, and the host-overhead account | the service half, the host tick, the hooks |
 | `exit: Once<ExitStatus>`, `exit_waiters: WaitQueue` | the outcome, and who is waiting for it | the reaper; `wait_exited` |
 
@@ -395,13 +393,13 @@ Two host-wide tables complete the picture. The **slot table** maps `KerneletId::
 
 ## Costs
 
-Per kernelet, `create` costs, in host memory charged to the kernelet's host-overhead account: two level-3 tables; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); the level-2 tables of `KW_PHYS` and the level-2 and level-1 tables of `KW_META` that the initial grant touches; one level-2 and one or two level-1 tables for `KW_SHARED`; the data template copy padded to 2 MiB, of which under 128 KiB is used (*estimated*, [Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; the shared pages, including the grant table; eight metadata frames per grain; and one kernel thread per virtual CPU plus the boot thread, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item and the reason `max_tasks` exists. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per run: one `alloc_segment_aligned`, the zeroing, the window and metadata mappings, one grant-table append, the owner-array writes, and, after boot, one `JOB_GRANT` wakeup. `raise_irq` is one atomic or and one wakeup. `kill` is one store to the info page plus one store and one wakeup per task. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
+Per kernelet, `create` costs, in host memory charged to the kernelet's host-overhead account: two level-3 tables; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); the level-2 tables of `KW_PHYS` and the level-2 and level-1 tables of `KW_META` that the initial grant touches; one level-2 and one or two level-1 tables for `KW_SHARED`; the data template copy padded to 2 MiB, of which under 128 KiB is used (*estimated*, [Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; the shared pages, including the grant table; eight metadata frames per grain; and one kernel thread per virtual CPU plus the boot thread, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item and the reason `max_tasks` exists. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per run: one `alloc_segment_aligned`, the zeroing, the window and metadata mappings, one grant-table append, the owner-array writes, and, after boot, one `JOB_GRANT` wakeup. `raise_irq` is one atomic or and one wakeup. `kill` is a compare-and-swap, one store and a signal; the per-task work is the reaper's. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
 
 Per hook call, the endovisor pays whatever its device model does; the control half adds, in `guest_memory`, one owner-array read and one pin increment and decrement per grain touched.
 
 ## What this page decides
 
-- **Hooks are a trait object per kernelet, called synchronously on the kernelet's task** (register D5). The alternative, a queue of requests served by an endovisor thread, would keep host Linux code off the kernelet's task and its stack, but it turns every device register access into a cross-task round trip with a wakeup; the booted prototype measured a cross-domain round trip at 9.4 µs where a call into its virtualization layer cost 35 cycles against 34 for a plain call (see the Paper's Evaluation section). Synchronous hooks keep a register access at function-call cost; the price is that the hook runs on a stack shared with kernelet frames below it, must respect the stack reserve of the service half, cannot sleep, and cannot be terminated while it runs. What needs host I/O goes to a device thread at the cost of one wakeup per queue notification, which is what a real device's DMA engine costs a driver too (register D12).
+- **Hooks are a trait object per kernelet, called synchronously on the kernelet's task** (register D5). The alternative, a queue of requests served by an endovisor thread, would keep host Linux code off the kernelet's task and its stack, but it turns every device register access into a cross-task round trip with a wakeup; the booted prototype measured a cross-domain round trip at 9.4 µs where a call into its virtualization layer cost 35 cycles against 34 for a plain call (see the Paper's Evaluation section). Synchronous hooks keep a register access at function-call cost; the price is that the hook runs with the host's preemption disabled on the CPU's hook stack, cannot sleep, and cannot be terminated while it runs. What needs host I/O goes to a device thread at the cost of one wakeup per queue notification, which is what a real device's DMA engine costs a driver too (register D12).
 - **Memory only grows** (register A1). Reclaiming memory from a running kernelet needs its cooperation, a balloon, and a story for pages the kernelet has mapped to user space; none of that is needed to give every agent a sandbox that exits when it is done.
 - **Device models live in the endovisor, not in OSTD** (register D6). OSTD knows a device only as a register window and an interrupt line, because a device model over host files and sockets is Linux functionality, written in the safe-Rust kernel proper, not in OSTD's `unsafe`-bearing framework.
 - **The host maps every grain and its metadata into the window when it grants the grain** (register D58, on the [Memory](virtualizing-ostd/memory.md) page). The kernelet writes no page-table entry of the window.

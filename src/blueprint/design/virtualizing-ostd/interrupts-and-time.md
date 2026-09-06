@@ -2,7 +2,7 @@
 
 *Part of question 2. Virtualizes `irq` and `timer`. Discharges the interrupt-context half of invariant I7: no kernelet code ever runs in interrupt context, so a kernelet task can always be terminated where it stands.*
 
-A kernelet has no interrupts. The host owns the interrupt descriptor table, the interrupt controller and every physical line; nothing a kernelet does can register a handler with them, mask them, or send one (absent `smp`, `IRQ_CHIP`, `disable_local` in its real sense). What a kernelet has instead is **virtual interrupt lines** raised by the endovisor, **jobs** delivered to its per-virtual-CPU **workers**, and a **tick** the host posts at the kernel's own frequency while the kernelet is busy. The kernel proper's drivers, bottom halves and timers keep their code and run in task context on the worker.
+A kernelet has no interrupts. The host owns the interrupt descriptor table, the interrupt controller and every physical line; nothing a kernelet does can register a handler with them, mask them, or send one (absent `smp`, `IRQ_CHIP`, `disable_local` in its real sense). What a kernelet has instead is **virtual interrupt lines** raised by the endovisor, **jobs** delivered to its per-virtual-CPU **workers**, and a **tick** the host counts at the kernel's own frequency while the kernelet is busy and posts while it is idle. The kernel proper's drivers, bottom halves and timers keep their code and run in task context on the worker.
 
 ## Virtual interrupt lines
 

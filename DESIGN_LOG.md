@@ -107,3 +107,9 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 
 **Verified.** `make check` → `check: OK`; `make build` exits 0. A cross-chapter consistency review follows in iteration 9.
 
+
+## Iteration 9: consistency after the maintainer review
+
+**Reviewed.** One cross-chapter consistency review: 23 findings, all applied, none changing a decision. The four that mattered: the taxonomy still parked the boot task; the control and faults pages still let `on_dying` sleep; the control page's decision summary still had hooks on the kernelet task's stack; the faults page's exempt list still named `exit` and `panic`. The rest were stale names (`task_set_prio`, `HookPanicked`, `EntryTableVersion`, `cpu_weight`), stale attributions (`kill` doing the per-task work, metadata at the head of runs, scheduler groups) and register drift (D9, D10, D12, D15, D19, A10).
+
+**Verified.** `make check` → `check: OK`; `make build` exits 0.

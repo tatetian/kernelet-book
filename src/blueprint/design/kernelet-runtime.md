@@ -30,7 +30,7 @@ Every CLI invocation after `create` talks to a **holder process** per sandbox th
 | `config.json` | kernelet configuration |
 |---|---|
 | `linux.resources.cpu.cpus` | `num_vcpus` from the cpuset's size when present, otherwise the runtime's configured default, 2 (chosen); the host picks which CPUs |
-| `linux.resources.cpu.shares`, `.quota`, `.period` | `cpu_weight` is `shares`, clamped to 2 to 262144, the cgroup range, since both are proportional weights; `cpu_quota_us` is `quota` when positive and 0, uncapped, when absent or `-1`; `cpu_period_us` as given |
+| `linux.resources.cpu.shares`, `.quota`, `.period` | `nice` from `shares` by the cgroup convention (`shares` 1024 is `nice` 0, each doubling one step lower, clamped to −20 to 19), which the kernelet applies to every thread; it is a per-thread weight, not a share for the sandbox ([control half](kernelet-api-control.md)); `cpu_quota_us` is `quota` when positive and 0, uncapped, when absent or `-1`; `cpu_period_us` as given |
 | `linux.resources.memory.limit` | `max_grains = limit / 2 MiB` when present; the user's policy cap when absent or `-1`; `initial_grains` is the runtime's policy, by default a quarter of `max_grains` or 16 grains, whichever is larger (*estimated*; to be tuned against the floor the Evaluation chapter measures) |
 | `process` | sent to the agent at `create` and started at `start`: args, env, cwd, user, capabilities, rlimits, terminal |
 | `root.path`, `root.readonly` | the block image below, attached read-only if asked |

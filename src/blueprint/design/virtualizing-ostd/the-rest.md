@@ -15,7 +15,7 @@ A kernelet is not booted; it is entered. `_kernelet_entry` runs on the boot task
 7. Clear `IN_BOOTSTRAP_CONTEXT`, which the template initializes `true` and which silences `might_sleep` while set (checked on the tree: `ostd/src/task/atomic_mode.rs`), since from here on the kernelet is on a task.
 8. Call `__ostd_main`, which is the kernel proper's `main`.
 
-`boot::boot_info` is virtualized without a crossing: a `BootInfo` synthesized from `BootArgs` with the bootloader name `"kernelet"`, the command line, `memory_regions` holding one `Usable` region per initial run, beginning after the run-head metadata so that the kernel proper's `MemTotal`, which is the sum of the `Usable` regions (checked on the tree: `kernel/core/src/vm/mod.rs`), counts only allocatable frames; and no ACPI, framebuffer or initramfs arguments. An initial RAM file system, if the endovisor provides one, arrives as a block device, not as a boot module. `MemoryRegion`, `MemoryRegionType` and `EarlyCmdline` are identical types; the two constructors `MemoryRegion::kernel` and `MemoryRegion::module`, which use the absent kernel offset and linear map (checked: `ostd/src/boot/memory_region.rs`), are absent, and nothing in the kernel proper calls them.
+`boot::boot_info` is virtualized without a crossing: a `BootInfo` synthesized from `BootArgs` with the bootloader name `"kernelet"`, the command line, `memory_regions` holding one `Usable` region per initial run, so that the kernel proper's `MemTotal`, which is the sum of the `Usable` regions (checked on the tree: `kernel/core/src/vm/mod.rs`), is the initial grant; and no ACPI, framebuffer or initramfs arguments. An initial RAM file system, if the endovisor provides one, arrives as a block device, not as a boot module. `MemoryRegion`, `MemoryRegionType` and `EarlyCmdline` are identical types; the two constructors `MemoryRegion::kernel` and `MemoryRegion::module`, which use the absent kernel offset and linear map (checked: `ostd/src/boot/memory_region.rs`), are absent, and nothing in the kernel proper calls them.
 
 `boot::smp::register_ap_entry(entry)` is virtualized. On the host kernel the entry is stored and each application processor runs it when OSTD boots the processors during `init`, before `main` (checked on the tree: `ostd/src/boot/smp.rs`, `arch/x86/mod.rs`); the kernel proper's entry, `ap_init`, initializes that CPU's per-CPU state and spawns its idle thread (checked: `kernel/core/src/init.rs`). In the kernelet build `register_ap_entry` spawns, at once, one task per virtual CPU above 0, pinned there, whose body runs `entry` and then ends with `task_exit`; the tasks run concurrently with the rest of `main`, as the processors do on hardware. The kernel proper's `init_on_each_cpu` therefore runs on every virtual CPU as it does on every real one; its per-CPU idle thread is not spawned in the kernelet build, since a virtual CPU with nothing to run is a host CPU the host uses ([Tasks](tasks.md), register D67). `smp::inter_processor_call` is absent.
 
@@ -51,7 +51,7 @@ The kernel's unit tests run inside a kernel; a test of the kernel proper in its 
 
 ## What a tenant sees
 
-- `/proc/cmdline` is the configured command line; `/proc/meminfo`'s total is the initial grant less its metadata; there are no ACPI tables, no framebuffer, no serial ports.
+- `/proc/cmdline` is the configured command line; `/proc/meminfo`'s total is the initial grant; there are no ACPI tables, no framebuffer, no serial ports.
 - `reboot(2)` ends the sandbox with a code the runtime sees, and a restart is marked as one; whether the sandbox comes back is the runtime's choice. `init` exiting ends it with init's status.
 - A kernel panic ends the sandbox, not the machine; a kernel oops kills the thread and continues, up to a budget the runtime sets. The host kernel today halts on every panic, so a tenant's kernel is more forgiving than the host's.
 - Kernel log records reach the host's log hook and the tenant's console, cut at 1 KiB each; `dmesg` is unsupported, as on the host kernel. The early console is always on.
@@ -59,7 +59,7 @@ The kernel's unit tests run inside a kernel; a test of the kernel proper in its 
 
 ## Costs
 
-- Entry: a few microseconds of initialization on the boot task (*estimated*); the grain mapping and replica setup dominate. The boot task's stack is returned when `main` returns, and each application-processor entry costs a transient task and stack, `num_vcpus − 1` of them.
+- Entry: a few microseconds of initialization on the boot task (*estimated*); handing the runs to the allocator and the replica setup dominate. The boot task's stack is returned when `main` returns, and each application-processor entry costs a transient task and stack, `num_vcpus − 1` of them.
 - Per log record: the formatting into a kernelet-side buffer, one crossing, a copy of up to 1 KiB, and the hook, when under the rate limit; a dropped record costs the crossing and a counter; the console write the `logger` component makes, as today.
 - Per oops: the kernel's own `format!` and `Box` for the `OopsInfo` and the unwinding, as on a host kernel with oopses enabled; plus the stash copy, one crossing and the hook.
 
