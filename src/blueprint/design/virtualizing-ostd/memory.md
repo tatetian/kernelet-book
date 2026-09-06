@@ -2,120 +2,88 @@
 
 *Part of question 2. Virtualizes `mm`: frames and their metadata, the heap, `paddr_to_vaddr`, address spaces and page tables, TLB shootdown, and the DMA objects. Discharges invariants I2 (ownership) and I3 (privacy) on the kernelet side.*
 
-A kernelet's memory is a set of **runs**: physically contiguous, 2 MiB-aligned sequences of **grains** the host has granted it, and nothing else. Everything the kernel proper allocates, every frame of every process, every page-table node, every slab, every DMA buffer, comes from a run; OSTD (kernelet build) addresses its frames only through the **heap window**, `KW_HEAP`, where every grain is mapped at a fixed offset given by its **slot**; and the metadata OSTD keeps per frame lives inside the run the frame belongs to. The host's own frame metadata is never shared with a kernelet, which is what makes reclamation a release of whole runs with no per-frame obligation. The kernelet never writes a page-table entry that lives in host memory: the host installs the window's level-2 tables, in frames of the kernelet's own grant, and maps the initial grant itself; the kernelet maps later grains by writing entries into those same frames.
+A kernelet's memory is a set of **runs**: physically contiguous, 2 MiB-aligned sequences of **grains** the host has granted it, and nothing else. Everything the kernel proper allocates, every frame of every process, every page-table node, every slab, every DMA buffer, comes from a run. OSTD (kernelet build) addresses a frame exactly as the host build addresses one, by adding a constant to its physical address: the host's linear map becomes the kernelet's **physical window** `KW_PHYS`, and the host's frame-metadata array becomes the kernelet's **metadata window** `KW_META` ([Builds and images](../builds-and-images.md#window)). Both windows are sparse, holding only what the kernelet has been granted, and both are mapped by the host at the moment it grants a grain. The kernelet never writes a page-table entry of its window, and the host's own frame metadata is never shared with a kernelet, which is what makes reclamation a release of whole runs with no per-frame obligation.
 
-## Runs, grains, slots, and the grant table
+## What is identical, and why
 
-A run of `n` grains occupies `n` consecutive slots, so it is contiguous in the window as it is in physical memory. The grant table records every run and is **written by the host, read by the kernelet**: it lives in `KW_SHARED`, appended by `create`, `grant` and `grains_request`, with its length published in the info page. Beside it the host keeps, also in `KW_SHARED`, a per-kernelet radix from physical grain number to slot, so that the kernelet can turn any physical address of its own into a slot with two loads and no bookkeeping of its own.
+On the tree, `paddr_to_vaddr` is `pa + LINEAR_MAPPING_BASE_VADDR` (checked: `ostd/src/mm/kspace/mod.rs`), and the `mapping` module places frame `pa`'s 64-byte `MetaSlot` at `FRAME_METADATA_RANGE.start + (pa / PAGE_SIZE) × 64` (checked: `ostd/src/mm/frame/meta.rs`, `META_SLOT_SIZE`). The kernelet build changes the two base constants and nothing else:
+
+```rust
+// OSTD (kernelet build): the same functions as the host build, over the window's constants.
+pub const KW_PHYS: Vaddr = KERNELET_WINDOW_PHYS;            // entry 500
+pub const KW_META: Vaddr = KERNELET_WINDOW + (8 << 30);     // entry 501, offset 8 GiB
+pub fn paddr_to_vaddr(pa: Paddr) -> Vaddr { KW_PHYS + pa }
+pub(crate) fn frame_to_meta(pa: Paddr) -> Vaddr { KW_META + (pa / PAGE_SIZE) * META_SLOT_SIZE }
+pub(crate) fn meta_to_frame(va: Vaddr) -> Paddr { (va - KW_META) / META_SLOT_SIZE * PAGE_SIZE }
+```
+
+Everything built on them is the tree's code: `Frame`, `UniqueFrame`, `Segment`, `FrameRef`, the intrusive `LinkedList` over metadata, `HeapSlot::paddr` and `as_ptr`, `alloc_large`, `DynCpuLocalChunk`, and the page-table code's access to its own nodes (checked: `ostd/src/mm/page_table/node`, `cursor/locking.rs` call `mm::paddr_to_vaddr`). `get_slot` keeps its alignment and bounds checks, with `max_paddr()` the end of the highest granted run, monotone and published in the info page before the run's frames are usable; a physical address below it that was never granted meets an unmapped metadata page, which is a kernel-mode fault in kernelet code and ends the kernelet ([User mode](user-mode.md), register D22). Only OSTD (kernelet build)'s own `unsafe` code can produce such an address; the kernel proper's safe code cannot.
+
+## Runs and the grant table
+
+The grant table records every run and is **written by the host, read by the kernelet**: it lives in `KW_SHARED`, appended by `create`, `grant` and `grains_request`, with its length published in the info page.
 
 ```rust
 // ostd::kernelet::abi, host-written, kernelet-read. In `KW_SHARED`.
-#[repr(C)] pub struct RunDesc {
-    pub paddr: u64,        // 2 MiB-aligned physical base of the run
-    pub first_slot: u32,   // slot of its first grain; the run occupies first_slot .. first_slot + grains
-    pub grains: u32,
-    /// Frames at the head of the run reserved by the host for the window's level-2
-    /// tables that this run brought with it; `0` for most runs.
-    pub l2_frames: u32,
-    pub _pad: u32,
-}
-// `InfoPage::runs` is the published length of the `RunDesc` array at `BootArgs::grant_table`.
-// `BootArgs::grain_radix` is a two-level table: 4096 top entries of 512 MiB each, sized to
-// the machine's physical memory, each pointing at a 256-entry leaf of `u32` slots (`NONE` if
-// not the kernelet's); leaves are host frames mapped as they are needed.
-
-// OSTD (kernelet build)
-pub const KW_HEAP: Vaddr = KERNELET_WINDOW + (4 << 30);
+#[repr(C)] pub struct RunDesc { pub paddr: u64 /* 2 MiB-aligned */, pub grains: u32, pub _pad: u32 }
+// `InfoPage::runs` is the published length of the `RunDesc` array at `BootArgs::grant_table`;
+// `InfoPage::max_paddr` is the end of the highest run.
 pub const GRAIN_SIZE: usize = 2 << 20;
-pub const MAX_SLOTS: usize = 65_536;            // 128 GiB per kernelet in this version; `KW_HEAP` is 508 GiB
-
-/// The slot of one of the kernelet's own physical addresses: two loads in the shared radix.
-pub(crate) fn slot_of(pa: Paddr) -> Option<u32>;
-
-/// Virtualized `paddr_to_vaddr` and its inverse. A frame outside the grant is a bug in
-/// OSTD (kernelet build), not a condition the kernel proper can cause, and panics.
-pub fn paddr_to_vaddr(pa: Paddr) -> Vaddr { KW_HEAP + slot_of(pa).unwrap() as usize * GRAIN_SIZE + (pa & (GRAIN_SIZE - 1)) }
-pub(crate) fn vaddr_to_paddr(va: Vaddr) -> Paddr { let slot = (va - KW_HEAP) / GRAIN_SIZE; run_of_slot(slot).paddr + (slot - run.first_slot) * GRAIN_SIZE + (va & (GRAIN_SIZE - 1)) }
 ```
-
-The radix is sized by the host from physical memory, so a kernelet can hold a grain anywhere in the machine; the cap on slots, 65,536, is this version's limit on a kernelet's memory and is checked against `max_grains` at `create`.
 
 ## How memory arrives
 
-**At creation**, the host does the whole bootstrap, so that the kernelet's first instruction runs with memory it can use:
+For every run, at creation or later, the host does the same six things, through its linear map, before it publishes the run:
 
-1. Allocates the initial grant as runs, with `alloc_segment_aligned` ([control half](../kernelet-api-control.md)), records them in the grant table and the owner array.
-2. Reserves, at the head of the first run, enough frames for the window's level-2 tables covering `max_grains` slots (one table per 512 slots; four frames for a 4 GiB maximum), records the count in `RunDesc::l2_frames`, zeroes them through the linear map, and writes the corresponding level-3 entries into the window's level-3 table, which is a host frame.
-3. Writes, into those level-2 tables, one 2 MiB page entry per initial grain, read-write, non-executable, not Global.
-4. Fills the radix.
+1. Allocates the run with `alloc_segment_aligned` ([control half](../kernelet-api-control.md)) and zeroes it (register D55).
+2. Maps each grain as one 2 MiB page at `KW_PHYS + paddr`, read-write, non-executable, not Global, allocating a level-2 table for entry 500 for each GiB of physical address the kernelet touches for the first time; those tables are host frames charged to the kernelet's host-overhead account.
+3. Allocates and zeroes eight frames per grain for its metadata, host frames charged to the kernelet, and maps them at `KW_META + paddr / 64`, allocating the level-2 and level-1 tables under entry 501 that the range needs for the first time (one level-1 table per 128 MiB of physical address, one level-2 per 64 GiB).
+4. Writes the owner array.
+5. Appends the `RunDesc` and raises `max_paddr` if the run is the highest.
+6. Publishes the new length with a release store.
 
-**After creation**, `grant` (from the endovisor) and `grains_request` (from the kernelet) append runs the same way, except that the kernelet maps them: it reads the new `RunDesc` entries past the length it last saw, and writes each grain's level-2 entry into the level-2 tables the host installed, which are frames of its own first run, reachable through the window. If a run raises `max_grains` past the installed coverage, the host reserves level-2 frames at that run's head, installs them, and writes the level-3 entries before publishing the run; the kernelet never writes a level-3 entry. A `JOB_GRANT` job tells the kernelet's worker to look at the table again.
+Nothing the kernelet sees is partial: a run it can read in the table is mapped, its metadata is mapped and zero, and its frames are zero. OSTD (kernelet build) then hands the run's frames to the kernel proper's frame allocator with the identical `GlobalFrameAllocator::add_free_memory` hook, one call per run, under one kernelet-side spin lock that also holds the count of runs already added, so that the two paths that learn of new runs, a `JOB_GRANT` job on a worker after the endovisor's `grant`, and the returning `grains_request` on the requesting task, never add a run twice. From then on the kernel's own allocator, the buddy allocator of `osdk/deps/frame-allocator`, manages the frames with its code unchanged, initializing each frame's metadata slot with `Frame::from_unused` as on the tree; its per-CPU pools and caches use `cpu_local!` and `LocalIrqDisabled` locks, which are virtualized per virtual CPU and to preemption guards ([Tasks](tasks.md), [Interrupts and time](interrupts-and-time.md)), so its correctness rests on the host honoring the preemption count across the allocator's slow path, which the host does.
 
-For every run, in either case, OSTD (kernelet build) then lays out the run's metadata (below), and hands the run's usable frames to the kernel proper's frame allocator with the identical `GlobalFrameAllocator::add_free_memory` hook, one call per run. From then on the kernel's own allocator, the buddy allocator of `osdk/deps/frame-allocator`, manages the frames with its code unchanged; its per-CPU pools and caches use `cpu_local!` and `LocalIrqDisabled` locks, which are virtualized per virtual CPU and to preemption guards ([Tasks](tasks.md), [Interrupts and time](interrupts-and-time.md)), so its correctness now rests on the host honoring the preemption count across the allocator's slow path, which the host does.
+Everything the kernelet writes here is in its own grant or in the metadata frames dedicated to it: the metadata slots, the allocator's free lists inside them, and the page-table nodes of its own address spaces, which are grant frames reached through `KW_PHYS`. Everything the host writes is host memory, or the grant at creation through the linear map. That is invariant I2 as this page discharges it, and it needs no exception for page-table nodes and no page-table entry written by the kernelet outside its own user page tables.
 
-Everything the kernelet writes here is in its own grant: the level-2 entries live in reserved frames of its runs, the metadata in its runs' frames, the allocator's free lists in its metadata. Everything the host writes is host memory or, at creation only, the kernelet's reserved frames through the linear map. That is invariant I2 as this page discharges it, and it needs no exception for page-table nodes: a user page-table node is a frame from the grant, mapped in the window, and OSTD's page-table code reaches it through the virtualized `paddr_to_vaddr` (checked on the tree: `ostd/src/mm/page_table/node`, `cursor/locking.rs` call `mm::paddr_to_vaddr`), which is the window.
-
-## Frame metadata inside the run
-
-OSTD keeps one 64-byte `MetaSlot` per physical frame (`META_SLOT_SIZE`, checked on the tree, `ostd/src/mm/frame/meta.rs`) in a global array indexed by frame number, through the `mapping` module's `frame_to_meta` and `meta_to_frame`, bounded by `max_paddr`. The kernelet build keeps the same slots for its own frames, but at the head of each run, after the level-2 frames if any: a run of `n` grains reserves `8n` frames for the metadata of its `512n` frames, 32 KiB per grain, and OSTD (kernelet build) replaces the `mapping` module, not just `get_slot`:
-
-```rust
-// OSTD (kernelet build), ostd/src/mm/frame/meta/mapping.rs under the feature
-pub(crate) fn frame_to_meta(pa: Paddr) -> Vaddr {
-    let run = run_of_slot(slot_of(pa).unwrap());
-    let meta_base = KW_HEAP + run.first_slot as usize * GRAIN_SIZE + run.l2_frames as usize * PAGE_SIZE;
-    meta_base + ((pa - run.paddr) / PAGE_SIZE) * META_SLOT_SIZE
-}
-pub(crate) fn meta_to_frame(va: Vaddr) -> Paddr {
-    let run = run_of_slot((va - KW_HEAP) / GRAIN_SIZE);
-    let meta_base = /* as above */;
-    run.paddr + ((va - meta_base) / META_SLOT_SIZE) * PAGE_SIZE
-}
-pub(crate) fn max_paddr() -> Paddr { /* the highest granted address; `is_initialized` as on the tree */ }
-```
-
-`get_slot` keeps its alignment check and its bounds check, the latter now "is in the grant". The reserved frames, level-2 and metadata alike, are never handed to the frame allocator, and their own slots are marked reserved when the run is laid out, so nothing can allocate or reset them. `Frame`, `UniqueFrame`, `Segment`, `FrameRef` and `LinkedList`, and the callers that reach `frame_to_meta` directly (`from_raw`, `inc_frame_ref_count`, the list nodes; checked on the tree) are the identical code over these slots.
-
-The cost is 32 KiB per grain, 1.56 percent of the grant, plus the level-2 frames of the runs that carry them; a run of `n` grains has `512n − 8n − l2_frames` usable frames, and since the reserved frames are at the run's head, the rest is one contiguous range for the buddy allocator. What it buys: the host's metadata array is untouched by kernelets, the kernelet's metadata dies with the run, and destroy has nothing per frame to reset.
+The cost is 32 KiB of host memory per grain, 1.56 percent, plus one level-2 frame per GiB of physical address the kernelet's grains touch and one level-1 frame per 128 MiB for the metadata window; a kernelet whose grains are scattered pays a few more page-table frames than one whose grains are adjacent, and the host allocator's preference for adjacent grains keeps the count small. What it buys: the host's metadata array is untouched by kernelets, `Frame::clone` and `drop`, which sit on every page fault and every `mmap`, cost a shift and an add as on the tree, and destroy has nothing per frame to reset.
 
 ## Allocation, contiguity, and exhaustion
 
-`FrameAllocOptions::alloc_frame` and `alloc_segment` are identical: they call the kernel proper's global frame allocator, which is the kernelet's own buddy allocator over its runs, and initialize the frame's slot with `Frame::from_unused`, identical over the virtualized mapping. The zeroing write goes through the virtualized `paddr_to_vaddr`.
-
-When the allocator returns `None`, OSTD (kernelet build) asks the host before giving up:
+`FrameAllocOptions::alloc_frame` and `alloc_segment` are the identical call into the kernel proper's global frame allocator, which is the kernelet's own buddy allocator over its runs. When the allocator returns `None`, OSTD (kernelet build) asks the host before giving up:
 
 ```rust
-// OSTD (kernelet build), the body behind the identical `FrameAllocOptions::alloc_*`
+// OSTD (kernelet build), the body behind `FrameAllocOptions::alloc_*` under the feature
 fn alloc_with_refill(layout: Layout) -> Option<Paddr> {
     if let Some(pa) = global_frame_allocator().alloc(layout) { return Some(pa); }
-    let grains = grains_for(layout);                                   // enough contiguous grains for `layout`, or REFILL_GRAINS (4, chosen)
+    let grains = grains_for(layout);                                   // enough contiguous grains for `layout`, or REFILL_GRAINS (2, chosen)
     if services().grains_request(grains, /* contiguous */ 1) > 0 {
-        map_new_runs();                                                 // read the grant table past the last seen length; map; lay out; add_free_memory
+        add_new_runs();                                                 // read the grant table past the count last added; add_free_memory
         return global_frame_allocator().alloc(layout);
     }
     None
 }
 ```
 
-`grains_request(count, contiguous)` asks for `count` grains as one run when `contiguous` is set; the host grants at once from its free memory up to `max_grains`, and at that limit consults the endovisor if the policy allows ([control half](../kernelet-api-control.md)). **Contiguity is what a run gives and no more**: the largest physically contiguous allocation a kernelet can make is the largest run the host can find for it, which fragmentation of the host's allocator bounds. The kernel proper does make large contiguous requests, a copy-up in the overlay file system and the block-group descriptors of `ext2` among them (checked on the tree: `kernel/core/src/fs`), so this is a tenant-visible limit: such a request fails with `ENOMEM` when the host cannot supply a run, as it would on a fragmented machine, and a heap object over the largest run the kernelet holds ends the kernelet through the allocation-error path below. The refill size `REFILL_GRAINS` trades the frequency of requests against the fragmentation each large run costs the host.
+`grains_request(count, contiguous)` asks for `count` grains as one run when `contiguous` is set; the host grants at once from its free memory up to `max_grains`, and at that limit consults the endovisor if the policy allows ([control half](../kernelet-api-control.md)). The call may arrive with the caller's preemption count nonzero, since a spin-lock holder may allocate, and it does not sleep; but it zeroes and maps 2 MiB per grain on the caller's task, *estimated* at 50 to 100 µs per grain, which is why `REFILL_GRAINS` is small and why that time counts against `policy.preempt_off_ticks` like any other preemption-off work. **Contiguity is what a run gives and no more**: the largest physically contiguous allocation a kernelet can make is the largest run the host can find for it, which fragmentation of the host's allocator bounds. The kernel proper does make large contiguous requests, a copy-up in the overlay file system and the block-group descriptors of `ext2` among them (checked on the tree: `kernel/core/src/fs`), so this is a tenant-visible limit: such a request fails with `ENOMEM` when the host cannot supply a run, as it would on a fragmented machine, and a heap object over the largest run the kernelet holds ends the kernelet through the allocation-error path below.
 
-A refused request becomes `Error::NoMemory` from `FrameAllocOptions`, the error the host kernel sees when its own allocator is empty, and the kernel proper's own handling applies: `ENOMEM` to the process that asked, or the kernelet's OOM killer. The host never kills a kernelet for memory. A kernelet whose kernel cannot absorb the failure, because an infallible path, a slab refill for a `Box`, met it, reaches `#[alloc_error_handler]`, which in the kernelet build calls the `panic` service with "out of memory"; that ends the kernelet as `Panicked`, and only the kernelet ([Faults, termination, and reclamation](../faults-and-reclamation.md)).
+A refused request becomes `Error::NoMemory` from `FrameAllocOptions`, the error the host kernel sees when its own allocator is empty, and the kernel proper's own handling applies: `ENOMEM` to the process that asked, or the kernelet's OOM killer. The host never kills a kernelet for memory. A kernelet whose kernel cannot absorb the failure, because an infallible path, a slab refill for a `Box`, met it, reaches `#[alloc_error_handler]`, which in the kernelet build calls the `stop` service with "out of memory"; that ends the kernelet as `Panicked`, and only the kernelet ([Faults, termination, and reclamation](../faults-and-reclamation.md)).
 
 `dealloc` is identical: frames return to the kernelet's buddy allocator and never to the host. Memory only grows (register A1) and is returned in whole runs when the kernelet is destroyed. The buddy allocator's per-virtual-CPU pools can hold frames a request on another virtual CPU cannot see (the tree's own comment in `pools/alloc` admits it), so a small kernelet with many virtual CPUs may report `NoMemory` with free frames in a neighbor's pool; the floor estimate below counts it.
 
 ## The heap
 
-The kernel proper's slab allocator, `osdk/deps/heap-allocator`, is bound through the identical `GlobalHeapAllocator` hook, and the `core::alloc` global allocator of the kernelet image is OSTD (kernelet build)'s, which calls that hook. Three internals are virtualized without a crossing: `HeapSlot::paddr` and `HeapSlot::as_ptr`, which on the tree translate through the linear map (`ostd/src/mm/heap/slot.rs`), translate through the heap window; `HeapSlot::alloc_large`, which forgets a `Segment` and takes its address, takes the window address; and `DynCpuLocalChunk` with `DynamicCpuLocal`, which the heap allocator's per-CPU allocator uses (checked on the tree: `osdk/deps/heap-allocator/src/cpu_local_allocator.rs`), is virtualized so that a chunk is a grant `Segment` addressed through the window and `get_on_cpu` indexes by virtual CPU. The slab's per-CPU caches use `cpu_local!`, virtualized per virtual CPU ([Tasks](tasks.md)). Every heap object in a kernelet therefore lives at a `KW_HEAP` address, and a `Box` in a kernelet holds a pointer that resolves only on that kernelet's page tables, which is invariant I3's guarantee against a stray host pointer.
+The kernel proper's slab allocator, `osdk/deps/heap-allocator`, is bound through the identical `GlobalHeapAllocator` hook, and the `core::alloc` global allocator of the kernelet image is OSTD (kernelet build)'s, which calls that hook. `HeapSlot`, `alloc_large`, and `DynCpuLocalChunk` with `DynamicCpuLocal`, which the heap allocator's per-CPU allocator uses (checked on the tree: `osdk/deps/heap-allocator/src/cpu_local_allocator.rs`), are identical: they translate through `paddr_to_vaddr`, and `get_on_cpu` indexes by `CpuId`, whose namespace is the kernelet's virtual CPUs ([Tasks](tasks.md)). The slab's per-CPU caches use `cpu_local!`, virtualized per virtual CPU. Every heap object in a kernelet therefore lives at a `KW_PHYS` address, and a `Box` in a kernelet holds a pointer that resolves only on that kernelet's page tables, which is invariant I3's guarantee against a stray host pointer.
 
 ## Address spaces and page tables
 
-`VmSpace::new` is virtualized without a crossing: it allocates a root frame from the grant and copies the 256 kernel-half entries from `BootArgs::kernel_half_entries`, which the host filled from the kernelet's kernel page table; entry 500 among them is the kernelet's own window level-3 table, so every address space the kernelet creates sees its window. On the tree the copy is made from the host's `KERNEL_PAGE_TABLE` (checked: `ostd/src/mm/page_table/mod.rs`, `create_user_page_table`); in the kernelet build the source is the array, and the code is otherwise the same.
+`VmSpace::new` is virtualized without a crossing: it allocates a root frame from the grant and copies the 256 kernel-half entries from `BootArgs::kernel_half_entries`, which the host filled from the kernelet's kernel page table; entries 500 and 501 among them are the kernelet's own window tables, so every address space the kernelet creates sees its window. On the tree the copy is made from the host's `KERNEL_PAGE_TABLE` (checked: `ostd/src/mm/page_table/mod.rs`, `create_user_page_table`); in the kernelet build the source is the array, and the code is otherwise the same.
 
-`VmSpace::activate` is virtualized: on a space's first activation OSTD (kernelet build) calls `pt_root_register(root)`, and on every activation `pt_activate(root)`, which writes CR3 and records the root as the task's address space so that the host's scheduler restores it on every switch to the task. The tree's early return, which skips the CR3 write when the space is already active, is keyed by CPU on the tree (`ACTIVATED_VM_SPACE`, a per-CPU cell; checked) and **by task** in the kernelet build, since CR3 is restored per task: the kernelet-side task table records each task's last-activated root, and `activate` compares against that, so two tasks on one virtual CPU that activate the same space each call `pt_activate` once. Dropping a `VmSpace` first calls `pt_root_unregister(root)`; if the host refuses with `-STATE` because a task still records the root, the `PageTable` is moved to a kernelet-side pending list and the drop is retried at every successful `pt_activate` and at every task exit. A task's exit path, in `run_task` before `task_exit`, calls `pt_activate(kernel_pt_root)`, the kernelet's own kernel page table, which the host accepts as the "no user space" root, so that an exiting thread's process page table becomes unregisterable and is freed by the next retry; without that, every exited process would leak its page table.
+`VmSpace::activate` is virtualized: on a space's first activation OSTD (kernelet build) calls `pt_root_register(root)`, and on every activation `pt_activate(root)`, which writes CR3 and records the root as the task's address space so that the host's scheduler restores it on every switch to the task. At registration the host checks that the root frame is in the grant and, as a cheap backstop against a bug in OSTD (kernelet build), that its 256 kernel-half entries equal the ones it published: 256 loads, once per process. The tree's early return, which skips the CR3 write when the space is already active, is keyed by CPU on the tree (`ACTIVATED_VM_SPACE`, a per-CPU cell; checked) and **by task** in the kernelet build, since CR3 is restored per task: the kernelet-side task entry holds the `Arc<VmSpace>` it last activated, as the tree's per-CPU cell holds an `Arc` (checked: `ostd/src/mm/vm_space.rs`), and `activate` compares against it. That `Arc` is also what makes dropping a `VmSpace` simple: a space reaches `Drop` only when no task holds it as its active space, so `pt_root_unregister(root)` in `Drop` always succeeds, and the host invalidates the root's translations on every CPU it was active on before returning. A task's exit path, in `run_task` before `task_exit`, calls `pt_activate(kernel_pt_root)`, the kernelet's own kernel page table, which the host accepts as the "no user space" root, and then drops its entry's `Arc`; an exiting thread's process page table is therefore freed as soon as its last thread has exited, as on the tree.
 
 The cursors, `map`, `unmap`, `protect_next`, `query` and `find_next`, are the identical page-table walk: node frames from the grant, addressed through the window, leaf entries for `UFrame`s from the grant. Their `PageProperty`, `PageFlags` and `CachePolicy` are identical. `map_iomem` and `find_iomem_by_paddr` are unreachable in a kernelet: their only producer is the framebuffer device, a host-only component (checked on the tree: `kernel/core/src/device/fb.rs`), so the kernelet build makes the first a no-op and the second return `None`; a virtual device has a register file, not memory ([Devices](devices.md)).
 
-**TLB shootdown.** A local invalidation is the identical `invlpg`, a privileged instruction a kernelet may execute since it runs in ring 0. A remote one cannot be an inter-processor interrupt, since `smp` is absent, so `TlbFlusher::dispatch_tlb_flush` is virtualized: for each operation in its batch (the tree batches up to 32 page or range operations and collapses beyond that to a flush of everything non-Global; checked on the tree, `ostd/src/mm/tlb.rs`) it calls `tlb_shootdown(root, start, len)`, with `len == u64::MAX` meaning everything non-Global under that root, the user half and the window; the host, which knows on which CPUs the root has been active since `pt_activate` recorded them, sends the interrupts and waits before returning. Because the call is synchronous at dispatch, the frames the flusher keeps alive until the flush completes can be released at dispatch, which preserves the tree's `sync_tlb_flush` guarantee. Mapping a new grain needs no shootdown: it turns an absent entry present, and x86 does not cache absent translations; nothing in this design unmaps or downgrades a window mapping while a kernelet lives (register A1).
+**TLB shootdown.** A local invalidation is the identical `invlpg`, a privileged instruction a kernelet may execute since it runs in ring 0. A remote one cannot be an inter-processor interrupt, since `smp` is absent, so `TlbFlusher::dispatch_tlb_flush` is virtualized: the tree batches up to 32 page or range operations per dispatch and sends one interrupt batch for all of them (checked on the tree, `ostd/src/mm/tlb.rs`); the kernelet build makes at most one crossing per dispatch, `tlb_shootdown(root, start, len)` for a batch of one operation and a flush of everything non-Global under the root, `len == u64::MAX`, for a batch of more than four (chosen), so that a fragmented `munmap` costs one crossing and one interrupt per target rather than one per operation. The host, which knows on which CPUs the root has been active since `pt_activate` recorded them, sends the interrupts and waits; the call arrives with preemption disabled, as the tree's flusher holds a preemption guard (checked: `ostd/src/mm/vm_space.rs`, `cursor_mut`), and its wait is a spin on the host's own pending-interrupt set, bounded by the kernelet's CPU set. Because the call is synchronous at dispatch, the frames the flusher keeps alive until the flush completes can be released at dispatch, which preserves the tree's `sync_tlb_flush` guarantee. Mapping a new grain needs no shootdown: it turns an absent entry present, and x86 does not cache absent translations; nothing in this design unmaps or downgrades a window mapping while a kernelet lives (register A1).
 
 ## DMA objects
 
@@ -128,20 +96,21 @@ The memory the host holds for a kernelet, and what destroy does with each ([Faul
 | what | where the host keeps it | at destroy |
 |---|---|---|
 | the runs | the grant table and the owner array; each run is a host `Segment` | each `Segment` dropped, which returns its frames to the host allocator one frame at a time as `Segment::drop` does on the tree; owner-array entries cleared; the host's own `MetaSlot`s for the run's frames are intact, since no kernelet ever wrote them |
+| the metadata frames | host frames, eight per grain, charged | freed |
 | registered roots | the root set | forgotten; the frames are in the grant |
-| the window's level-3 table and the host-mapped subtrees | `window_l3` | the level-2 and level-1 tables under `KW_TEXT`, `KW_DATA` and `KW_SHARED` freed; the level-2 tables under `KW_HEAP` are reserved grant frames and go with their runs |
-| the data template copy, the replicas, the shared pages, the radix leaves | host frames | freed |
+| the window's two level-3 tables and every table beneath them | `window_l3` | freed: the level-2 tables of `KW_PHYS`, the level-2 and level-1 tables of `KW_META`, `KW_TEXT`, `KW_DATA` and `KW_SHARED`; the root `kernel_pt` |
+| the data template copy, the replicas, the shared pages | host frames | freed |
 | the kind's shared text frames | the image | reference count decremented; freed when no kernelet of the kind remains and the image is unregistered |
 
 Nothing per frame is reset, because the host's frame metadata was never the kernelet's to write.
 
 ## Costs
 
-- Per grain: 32 KiB of metadata (1.56 percent); one level-2 entry. Per run: one grant-table append, the radix writes, and, after boot, one `JOB_GRANT` wakeup and one pass over the new entries. Per 512 slots of coverage: one reserved level-2 frame.
-- Per metadata access: two dependent loads in the shared radix and one in the run table, instead of one shift and add; `paddr_to_vaddr` is the same; `vaddr_to_paddr` is one load fewer. *Estimated*: under ten cycles each; the Evaluation chapter measures the allocation path against native.
-- Per first activation of an address space: one crossing; per activation: one crossing and the CR3 write, which also drops the window's translations (register A2, **[unverified]** cost).
-- Per remote TLB flush batch: one crossing and one IPI per target CPU per operation, bounded by the kernelet's CPU set and the tree's 32-operation batch.
-- The memory floor of a kernelet is `initial_grains × 2 MiB` plus the fixed host-side items of the [control half](../kernelet-api-control.md). *Estimated* at 8 grains plus 4 per virtual CPU, from the initial slabs and the buddy allocator's per-virtual-CPU pools; to be measured, and the pools' hoarding tuned if it dominates.
+- Per grain: 32 KiB of metadata in host memory (1.56 percent), one 2 MiB page entry, eight 4 KiB metadata entries, and the 2 MiB zeroing at grant. Per GiB of physical address touched: one level-2 frame; per 128 MiB: one level-1 frame for the metadata. Per run: one grant-table append, and, after boot, one `JOB_GRANT` wakeup or the requesting task's own `add_free_memory`.
+- Per metadata access and per `paddr_to_vaddr`: a shift and an add, as on the tree.
+- Per first activation of an address space: one crossing and 256 loads; per activation: one crossing and the CR3 write, which also drops the window's translations (register A2, **[unverified]** cost); `KW_TEXT` and `KW_DATA` refill from a handful of 2 MiB entries.
+- Per remote TLB flush batch: one crossing and one interrupt per target CPU, bounded by the kernelet's CPU set.
+- The memory floor of a kernelet is `initial_grains × 2 MiB` plus the fixed host-side items of the [control half](../kernelet-api-control.md). *Estimated* at 8 grains plus 4 per virtual CPU, from the initial slabs and the buddy allocator's per-virtual-CPU pools; to be measured early, since it decides what a small sandbox costs before it runs a process, and the pools' hoarding tuned if it dominates.
 - Fragmentation of the host's allocator by aligned, contiguous requests; if a run cannot be had, the grant fails rather than falling back.
 
 ## What a tenant sees
@@ -150,7 +119,8 @@ Nothing per frame is reset, because the host's frame metadata was never the kern
 
 ## What this page decides
 
-- **Metadata at the head of the run** (register D13, revised): in-grant metadata that dies with the run, one contiguous range behind it. The alternative, a separate metadata region of the window, needs its own tables, a bootstrap for the first chunk, and a second mapping per grain.
-- **The host bootstraps memory at creation, and the grant table and radix are host-written shared pages** (register D10, revised, and D29). The alternative, the kernelet building its own tables from a descriptor list, has no memory to build them in before the first grain is mapped, and would have to write the host's level-3 table to hook its own level-2 tables. Host-written tables cost the host a few frames per kernelet and cost the kernelet nothing.
+- **The window is indexed by physical address and mapped by the host** (register D58, which supersedes D13 and the kernelet-mapped half of D10). The alternative, a dense slot space with the frame metadata at the head of each run, made `paddr_to_vaddr` and every metadata access a radix lookup on the page-fault path, made the kernelet write page-table entries the host had installed the parents of, and needed a grant table, a radix and reserved level-2 frames that this layout does not. What it gives up is a dense window: the physical window must cover the machine's physical range (register A13), and scattered grains cost a few more page-table frames.
+- **The grant table is a host-written shared page** (register D29): the kernelet learns its runs by reading, never by being told through a call it must answer.
 - **Memory is granted in contiguous runs** (register D30). Single grains would cap a kernelet's largest contiguous allocation at under 2 MiB, which the kernel proper's own file systems exceed; runs move the limit to the host's fragmentation, which is where it is for any kernel.
-- **Page-table nodes are addressed through the window like every other frame.** The earlier decision D14, a linear-map exception for them, is withdrawn: with the host bootstrapping the first run, nothing needs it.
+- **Each task holds the `Arc` of the space it last activated** (register D59), which is the tree's own invariant made per task; a `VmSpace` is dropped only when no task holds it, so unregistering never fails and no pending list is needed.
+- **A shootdown batch above four operations is one flush of the root** (register D60): one crossing and one interrupt per target, against up to 32 of each; the price is over-invalidation of a root's other translations on a large batch, which the tree itself accepts at 32.

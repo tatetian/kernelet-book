@@ -12,36 +12,24 @@ A line is raised only by the host, through `Kernelet::raise_irq(virq)` on the co
 
 ## Workers and the job loop
 
-Each virtual CPU has one worker, a host task spawned by `create` with `run_task(1, vcpu)`, pinned to that virtual CPU's host CPU and given the highest priority hint in the kernelet's group, so that the host serves a job before the kernelet's threads on that CPU, which is what interrupt priority gives a real kernel; under register D15 the hint is honored by the host's policy, not by a strict priority. The worker's body is in OSTD (kernelet build):
+Each virtual CPU has one worker, a host kernel thread the endovisor spawns for `create` through the `spawn_task` hook with `run_task(1, vcpu)`, pinned to that virtual CPU's host CPU and given the lowest `nice` of the kernelet's threads, so that the host serves a job before the kernelet's other threads on that CPU, which is what interrupt priority gives a real kernel. The worker delivers virtual interrupts, grants, and the ticks of an idle kernelet; a busy virtual CPU's ticks are consumed by its own tasks (below). The worker's body is in OSTD (kernelet build):
 
 ```rust
 // OSTD (kernelet build), ostd/src/kernelet_side/worker.rs
 extern "C" fn worker_main(vcpu: u64) -> ! {
     loop {
-        let mut job = JobDesc::default();
-        if services().job_wait(&mut job) < 0 { break; }            // -STATE only: a bug; a kill never returns here
+        let job = services().job_wait();                             // packed: kind in bits 0..8, argument above
+        if job < 0 { break; }                                        // -STATE only: a bug; a kill never returns here
         rcu::note_quiescent(vcpu);                                   // the top of the loop is a quiescent state
         rcu::run_callbacks_if_period_complete(vcpu);                 // pending `RcuDrop`s of a completed period
-        match job.kind {
-            JOB_VIRQ  => deliver_virq(job.arg as u8),
-            JOB_TICK  => deliver_tick(job.arg, job.arg2 as u32, job.arg2 >> 32 != 0),
-            JOB_GRANT => grant::map_new_runs(),
+        match job & 0xff {
+            JOB_VIRQ  => deliver_virq((job >> 8) as u8),
+            JOB_TICK  => tick::run(vcpu, (job >> 8) as u32, PrivilegeLevel::Kernel),   // an idle tick: nothing was interrupted
+            JOB_GRANT => grant::add_new_runs(),
             _ => {}
         }
     }
     services().task_exit()
-}
-
-fn deliver_tick(interrupted: u32, ticks: u32, user: bool) {
-    let _guard = disable_preempt();
-    let thread = resolve_live(interrupted);                    // `index:generation` against `RUNNING`; `None` if exited or reused
-    let level = if user { PrivilegeLevel::User } else { PrivilegeLevel::Kernel };   // the privilege the host sampled
-    level::enter_virtual(InterruptLevel::L1(level), || {
-        for _ in 0..ticks {
-            timer::call_timer_callback_functions(thread.as_ref()); // identical callbacks, given the interrupted thread
-        }
-        bottom_half::process(TIMER_VIRQ);                      // the timer softirq runs here, as after every interrupt on the tree
-    });
 }
 
 fn deliver_virq(virq: u8) {
@@ -54,13 +42,37 @@ fn deliver_virq(virq: u8) {
 }
 ```
 
-`job_wait` returns one job at a time; delivery is edge-triggered on the host side, so a line raised while its handler runs is the next job. A kill never returns from `job_wait`: a parked worker is terminated in the service epilogue like any parked task ([Faults, termination, and reclamation](../faults-and-reclamation.md)). The callbacks run as they would in a top half on the host kernel, with preemption disabled in place of interrupts disabled and with `InterruptLevel::current()` reporting `L1`. Four things on the tree read that level and must see `L1` here: `bottom_half::process`, which is `unreachable!` at level zero; the CPU-time statistics and the per-process CPU clocks, which charge time only at `L1` and split user from system by its privilege; and the softirq component's bottom-half guard, which runs pending softirqs on drop only in task context (checked on the tree: `ostd/src/irq/bottom_half.rs`, `time/cpu_time_stats.rs`, `process/process/timer_manager.rs`, `comps/softirq/src/lock.rs`). That makes `InterruptLevel` a virtualized item: OSTD's `level::enter` records the level in per-CPU state around a real top half (`ostd/src/irq/level.rs`), and the kernelet build records it in the replica around a delivered job.
+`job_wait` returns one job at a time; delivery is edge-triggered on the host side, so a line raised while its handler runs is the next job. A kill never returns from `job_wait`: a parked worker is terminated in the service epilogue like any parked task ([Faults, termination, and reclamation](../faults-and-reclamation.md)). The callbacks run as they would in a top half on the host kernel, with preemption disabled in place of interrupts disabled and with `InterruptLevel::current()` reporting `L1`. Four things on the tree read that level and must see `L1` here: `bottom_half::process`, which is `unreachable!` at level zero; the CPU-time statistics and the per-process CPU clocks, which charge time only at `L1` and split user from system by its privilege; and the softirq component's bottom-half guard, which runs pending softirqs on drop only in task context (checked on the tree: `ostd/src/irq/bottom_half.rs`, `time/cpu_time_stats.rs`, `process/process/timer_manager.rs`, `comps/softirq/src/lock.rs`). That makes `InterruptLevel` a virtualized item: OSTD's `level::enter` records the level in per-CPU state around a real top half (`ostd/src/irq/level.rs`), and the kernelet build records it in the replica around a delivered job or a consumed tick.
 
 The bottom-half dispatch is virtualized too, in one place: the tree's `process_l1` re-enables interrupts around the handler and then forgets the guard it took (checked: `bottom_half.rs`), which under the aliased guard would leak one preemption count per job; the kernelet build's `process_l1` drops its guard and enables nothing. `register_bottom_half_handler_l1` and `_l2` are the identical hooks, and `bottom_half::process` runs after every delivered line and after every tick, as it runs after every interrupt on the tree, the timer's included, which is where the kernel proper's timer softirq advances the timer wheel (checked: `kernel/core/src/time/softirq.rs`).
 
-**Whom a tick charges.** The kernel proper's tick callbacks charge CPU time to the thread the tick interrupted and split user from system by the privilege level at the tick (checked on the tree: `update_cpu_statistics`, `update_cpu_time`); on the tree that thread is `Thread::current()`, because the tick runs on the interrupted task's stack. On the worker it is not, so a `JOB_TICK` carries the task the host's tick found in the CPU slot on that virtual CPU's host CPU, and the two callbacks get one `cfg` line each that takes the interrupted thread as an argument instead of asking `Thread::current()`, listed in the [taxonomy](index.md)'s inventory. The worker resolves the name, index and generation, against its running-task table and passes a live `Arc` or `None`; a task that has exited or whose index was reused since the tick is charged nothing. The privilege is the one the host sampled. An idle tick, or a tick that found a host task or another kernelet on that CPU, carries `TASK_NONE` and charges nothing, which is what makes the accounting a sample: under contention for a host CPU a kernelet's `times(2)` undercounts, as a guest's does under a hypervisor. The worker's own preemption count and per-CPU addressing are keyed by the CPU slot's `task` and `vcpu`, never by the interrupted thread, so a tick's callbacks touch the worker's record and the worker's replica.
-
 What differs from a real top half is that the worker is a task: it can be preempted by the host if its preemption count is zero, which a top half never is, and it can sleep, which a top half must not. The first cannot happen inside a delivery, since the count is held for the whole of it, top half and up to the softirq's five rounds (checked: `comps/softirq/src/lib.rs`), so `policy.preempt_off_ticks` must exceed the longest delivery; the second is a bug in a driver that would also be a bug on the host kernel. A kernelet's worker is never entered by the host; it fetches its own work, which is what keeps the entry rule and the single-bit depth of invariant I7 true ([service half](../kernelet-api-service.md)).
+
+## The tick
+
+**Whom a tick charges, and who runs it.** The kernel proper's tick callbacks charge CPU time to `Thread::current()`, the thread the tick interrupted, and split user from system by the privilege level at the tick (checked on the tree: `update_cpu_statistics`, `update_cpu_time`); on the tree that is right because the tick runs on the interrupted task's stack. A kernelet cannot take the interrupt, but it can run the callbacks on the interrupted task itself, a little later, in task context: the host tick that finds a task of the kernelet running on a CPU adds one to that virtual CPU's `tick_pending` in the shared per-virtual-CPU record and notes whether it found the task in ring 3 ([service half](../kernelet-api-service.md)); the kernelet consumes the count at the next **tick point** on that virtual CPU, which is the top of `execute`'s loop after `user_run` returns for an interrupt ([User mode](user-mode.md)), the return from any service call, and `might_preempt`. The consumer swaps the count to zero, raises its preemption count, enters `InterruptLevel::L1` with the sampled privilege, and runs the per-CPU callbacks that many times, followed by the bottom halves:
+
+```rust
+// OSTD (kernelet build), ostd/src/kernelet_side/tick.rs; called at every tick point
+pub(crate) fn poll() {
+    let vcpu = cpu_slot().vcpu;                                      // under the count raised below
+    let pending = vcpu_record(vcpu).tick_pending.swap(0, Acquire);
+    if pending == 0 { return; }
+    let user = pending >> 31 != 0;
+    run(vcpu, pending & 0x7fff_ffff, if user { PrivilegeLevel::User } else { PrivilegeLevel::Kernel });
+}
+pub(crate) fn run(vcpu: u64, ticks: u32, level: PrivilegeLevel) {
+    let _guard = disable_preempt();
+    level::enter_virtual(InterruptLevel::L1(level), || {
+        for _ in 0..ticks { timer::call_timer_callback_functions(); }   // identical callbacks; `Thread::current()` is the consuming task
+        bottom_half::process(TIMER_VIRQ);                                 // the timer softirq, as after every tick on the tree
+    });
+}
+```
+
+`Thread::current()` inside the callbacks is the consuming task, which is the interrupted task whenever the task that was running at the tick reaches a tick point before another task of the kernelet runs on that virtual CPU; when the host's kernel-mode preemption switched tasks at the tick, the next task of the kernelet on that virtual CPU consumes it, and the charge lands on it. That is a sampling error of at most one tick per switch, and the accounting is a sample anyway: under contention for a host CPU a kernelet's `times(2)` undercounts, as a guest's does under a hypervisor, since a tick that found a host task or another kernelet on the CPU is charged to no one. What this buys against delivering ticks on the worker is two host context switches per millisecond per busy virtual CPU, 0.2 to 0.4 percent of the CPU (*estimated* from the tree's switch cost), and the two `cfg` lines the callbacks would otherwise need to take the interrupted thread as an argument; the tick callbacks are identical code.
+
+A tick that has been taken is consumed at the next tick point, which a task in ring 3 reaches at once, since the host's interrupt returns `user_run`; a task in kernel mode reaches it at its next service call or `might_preempt`. A task that computes in kernel mode without either is preempted by the host at the tick if its count is zero ([Tasks](tasks.md)), and the next task consumes the tick; a task that holds preemption off delays the tick as `cli` delays it on the tree, bounded by `policy.preempt_off_ticks`. The count is coalesced, so no jiffy of accounting is lost or duplicated; what can be late is the timer wheel's advance, by the longest such delay.
 
 ## `disable_local` and the guardians
 
@@ -68,22 +80,17 @@ What differs from a real top half is that the worker is a task: it can be preemp
 
 ## Time
 
-`TIMER_FREQ` is identical, 1000 Hz on the tree. `Jiffies::elapsed` is virtualized without a crossing: it reads the host-wide clock page's `jiffies`, so time inside a kernelet is the host's time, advancing whether or not the kernelet runs; the increment of `ELAPSED` inside `call_timer_callback_functions` on the boot CPU (checked on the tree: `ostd/src/timer/mod.rs`) is `cfg`'d out, since the host counts. `register_callback_on_cpu` stores its callback in the calling virtual CPU's replica, as on the host, and the callbacks run on that virtual CPU's worker when a `JOB_TICK` arrives, under a preemption guard, in the order registered, once per host tick the job carries.
+`TIMER_FREQ` is identical, 1000 Hz on the tree. `Jiffies::elapsed` is virtualized without a crossing: it reads the host-wide clock page's `jiffies`, so time inside a kernelet is the host's time, advancing whether or not the kernelet runs; the increment of `ELAPSED` inside `call_timer_callback_functions` on the boot CPU (checked on the tree: `ostd/src/timer/mod.rs`) is `cfg`'d out, since the host counts. `register_callback_on_cpu` stores its callback in the calling virtual CPU's replica, as on the host, and the callbacks run on that virtual CPU when a tick is consumed there, under a preemption guard, in the order registered, once per host tick the count carries.
 
-**When ticks arrive.** A real tick fires on every CPU every millisecond whether the CPU is busy or idle. Posting that to every kernelet would cost one worker wakeup per millisecond per virtual CPU per kernelet, most of them for kernelets with nothing to do, so the host posts ticks under two rules, enabled at `start`:
+**When ticks arrive.** A real tick fires on every CPU every millisecond whether the CPU is busy or idle. A *busy* virtual CPU, one on whose host CPU a task of the kernelet was running at the host's tick, gets that tick added to its `tick_pending` and consumes it as above, at `TIMER_FREQ`: no wakeup, no crossing, the callbacks run on the task that was there. An *idle* kernelet, one none of whose tasks the host's tick found running during the period, gets `JOB_TICK` on virtual CPU 0's worker at the reduced rate `policy.idle_tick_hz`, 100 Hz by default (chosen), coalesced with a count; the kernel proper's timer wheel is advanced by the tick softirq, so a sleeping process whose timer expires is woken within 10 ms rather than 1 ms while its kernelet is idle, and with `idle_tick_hz = 0` an idle kernelet costs nothing and its timers wait for the next event that wakes it.
 
-- A *busy* virtual CPU, one on whose host CPU a task of the kernelet other than a worker delivering a tick ran during the last tick period, gets `JOB_TICK` at `TIMER_FREQ`. This keeps the kernel proper's per-CPU accounting and timer wheel as timely as on the host kernel while the kernelet is running there.
-- An *idle* kernelet, one none of whose tasks ran during the period, gets `JOB_TICK` on virtual CPU 0 only, at the reduced rate `policy.idle_tick_hz`, 100 Hz by default (chosen). The kernel proper's timer wheel is advanced by the tick softirq, so a sleeping process whose timer expires is woken within 10 ms rather than 1 ms while its kernelet is idle; with `idle_tick_hz = 0` an idle kernelet costs nothing and its timers wait for the next event that wakes it.
-
-A tick that cannot be delivered at once, because the worker is not the task the host is running or the bound CPU's task holds preemption off, is not queued as a second job: the host keeps one pending bit per virtual CPU and a count of ticks since delivery, and the next `JOB_TICK` carries the count in `arg2`, so that the callbacks run once per host tick and no jiffy of accounting is lost or duplicated.
-
-`timer_arm(vcpu, deadline)` is a one-shot behind the second rule's extension: a `cfg` line in the kernel proper's real-time timer manager, the one driven by jiffies (checked on the tree: the per-process CPU-clock managers advance only on ticks charged to that process and have no deadline to arm), can report its earliest pending deadline, and OSTD (kernelet build) would arm it and let the host stop idle ticks entirely. A second `timer_arm` on a virtual CPU replaces its deadline; the resolution is one host tick, since the host's own timer is the tick. The design permits that line but does not require it; without it, `idle_tick_hz` is the tenant-visible timer latency of an idle sandbox.
+`timer_arm(vcpu, deadline)` is a one-shot behind the idle rule's extension: a `cfg` line in the kernel proper's real-time timer manager, the one driven by jiffies (checked on the tree: the per-process CPU-clock managers advance only on ticks charged to that process and have no deadline to arm), can report its earliest pending deadline, and OSTD (kernelet build) would arm it and let the host stop idle ticks entirely. A second `timer_arm` on a virtual CPU replaces its deadline and `u64::MAX` cancels it; the resolution is one host tick, since the host's own timer is the tick. The design permits that line but does not require it; without it, `idle_tick_hz` is the tenant-visible timer latency of an idle sandbox.
 
 ## What a tenant sees
 
 - Timer latency for a sleeping process in an idle kernelet is up to `1 / idle_tick_hz` (10 ms by default) instead of 1 ms; while the kernelet is busy it is 1 ms as on the host kernel.
 - Per-CPU `user`, `system` and `idle` jiffies in `/proc/stat` accrue only on delivered ticks, so a virtual CPU that was not busy shows frozen counters and the per-CPU sums no longer add up to uptime times the CPU count.
-- CPU-time charging is a sample at the host's tick instant: `times(2)`, `getrusage` and `ITIMER_PROF` undercount when another kernelet or a host task held the host CPU at that instant, as a guest's do under a hypervisor.
+- CPU-time charging is a sample at the host's tick instant, consumed by the task that next reaches a tick point on that virtual CPU: `times(2)`, `getrusage` and `ITIMER_PROF` undercount when another kernelet or a host task held the host CPU at that instant, as a guest's do under a hypervisor, and a tick taken across a kernel-mode preemption is charged to the next task.
 - `/proc/interrupts` shows the tick on line 0 and one virtual line per device from 32; every device interrupt of a kernelet is delivered on the worker of the virtual CPU its line is bound to, so unbound devices serialize on virtual CPU 0.
 - Interrupt latency for a virtual device is a worker wakeup after the endovisor raises the line plus the worker's scheduling; when the bound CPU is running a kernelet task at preemption count zero the reschedule interrupt bounds it by an interrupt return, otherwise by the task's next preemption point, and the Evaluation chapter measures it against a virtio interrupt in a microVM.
 - Nothing else: drivers, bottom halves and timers behave as on the host kernel.
@@ -91,15 +98,15 @@ A tick that cannot be delivered at once, because the worker is not the task the 
 ## Costs
 
 - Per virtual interrupt: one `raise_irq` (an atomic or, a wakeup, and a reschedule interrupt when the bound CPU is running a kernelet task), one `job_wait` return on the worker, the handler, and, for a virtio device, the two register crossings the transport's interrupt handler makes to read and acknowledge the interrupt status (checked on the tree: `transport/mmio/multiplex.rs`); *estimated* at one context switch and a few hundred cycles of bookkeeping, to be measured.
-- Per tick on a busy virtual CPU: one worker wakeup and the callbacks, replacing a hardware interrupt on the host kernel.
+- Per tick on a busy virtual CPU: one atomic add by the host, one swap and the callbacks on the consuming task; no wakeup and no crossing. Per tick point: one load of `tick_pending`.
 - Per idle kernelet: `idle_tick_hz` wakeups per second on one worker.
 - Per virtual CPU: the worker's task and stack.
 - Per `disable_local`: one store, against a `cli` and `sti` pair.
-- Reclamation of an `RcuDrop` waits for the next job or tick on its virtual CPU.
+- Reclamation of an `RcuDrop` waits for the next switch point or tick point on its virtual CPU.
 
 ## What this page decides
 
 - **Virtual interrupts are jobs on per-virtual-CPU workers, fetched, never pushed** (registers D9 and D11): the host never enters kernelet code except at task start.
 - **`InterruptLevel` is virtualized to report the delivered level** (register D18), because four places in OSTD and the kernel proper dispatch on it and would panic, skip, or misaccount at level zero.
 - **Ticks are rate-limited when a kernelet is idle** (register D19), with the rate a policy and a one-shot timer as the extension toward a tickless kernelet.
-- **The interrupted thread reaches the tick callbacks as an argument, through two `cfg` lines** (register D46), not by overriding `Task::current()` on the worker; an override would hand the callbacks a task that may have exited, and would redirect the worker's own preemption count.
+- **A busy virtual CPU's ticks are consumed in task context by the interrupted task, not delivered on the worker** (register D66, which withdraws D46). The alternative, delivering every tick as a job on the worker, costs two host context switches per millisecond per busy virtual CPU and needs the tick callbacks to take the interrupted thread as an argument; consuming the tick on the task itself makes the callbacks identical code and `Thread::current()` right by construction, at the price of a tick that waits while its task holds preemption off, bounded as on the tree.

@@ -15,7 +15,7 @@ kernel/core/src/endovisor/                a module of the kernel crate, `cfg(not
   models/{blk,console,rng,vsock,net}.rs   the virtio MMIO device models and their device threads
   vsock_switch.rs                         the host-wide switch of [Channels](channels.md)
   retry.rs                                the thread that finishes destroys and retries zombies
-  policy.rs                               limits, defaults, who may create
+  policy.rs                               limits, defaults, who may create; the vsock pair table
 ```
 
 It is a module of the kernel crate and not a component under `comps/`, because everything it needs from the kernel proper is crate-private to that crate (checked on the tree: `Device` and `PerOpenFileOps` in `device/mod.rs`, `Ioctl` and `ioc!` in `util/ioctl`, `FileLike` and `FileTable` in `fs/file`, `ThreadOptions` in `thread/kernel_thread.rs`), and no component depends on the kernel crate, since the kernel depends on them. It registers its device from `device::misc::init_in_first_kthread`, the `tdxguest::init()` pattern, which runs after the misc major number exists and after the component stage (checked: `kernel/core/src/init.rs`, `device/misc/mod.rs`). The device node is created by the registry from `devtmpfs_meta`, with mode `u+rw` by default, root only (checked: `fs_impls/devtmpfs/tree.rs`); the policy may widen it with `DevtmpfsNodeMeta::with_mode`.
@@ -44,10 +44,12 @@ struct SandboxHooks {
     policy: Policy,
 }
 impl KerneletHooks for SandboxHooks {
+    fn spawn_task(&self, k: &Kernelet, body: KerneletTaskBody, hints: SpawnHints) -> Result<Arc<Task>, SpawnError> {
+        ThreadOptions::new(move || body.run()).cpu_affinity(hints.vcpus).nice(hints.nice).build_task()   // not yet running
+    }
     fn mmio_read(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8) -> u64 { self.models.read()[dev].read(off, width) }
     fn mmio_write(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8, v: u64) { self.models.read()[dev].write(k, off, width, v) }
     fn log(&self, k: &Kernelet, level: LogLevel, module: &str, text: &str) { self.push_log(LogLine::Record(level, module, text)) }
-    fn console_write(&self, k: &Kernelet, bytes: &[u8]) { self.push_log(LogLine::Console(bytes)) }
     fn on_grant_exhausted(&self, k: &Kernelet) -> u32 { self.policy.extra_grains(k) }
     fn on_oops(&self, k: &Kernelet, task: TaskName, msg: &str) { self.push_log(LogLine::Oops(task, msg)) }
     fn on_dying(&self, k: &Kernelet, why: &ExitReason) { for m in self.models.read().iter() { m.cancel() } ; vsock_switch::mark_dead(k.id()) }
@@ -55,7 +57,7 @@ impl KerneletHooks for SandboxHooks {
 }
 ```
 
-The early console and the kernel log share the **log endpoint**: a kernelet's boot and panic output is an operator's concern, not the tenant process's standard output, which is the virtio console's ([kernelet runtime](kernelet-runtime.md)). `push_log` never sleeps, since `log` and `console_write` are called from kernelet tasks that cannot: when the log endpoint does not exist yet or is full, the line is dropped and counted in `dropped`, which `KERNELET_STATS` reports as `log_records_dropped` beside the rate limiter's count.
+The early console reaches the endovisor as `log` records at `LogLevel::Console`, so it and the kernel log share the **log endpoint**: a kernelet's boot and panic output is an operator's concern, not the tenant process's standard output, which is the virtio console's ([kernelet runtime](kernelet-runtime.md)). `push_log` never sleeps, since `log` and `console_write` are called from kernelet tasks that cannot: when the log endpoint does not exist yet or is full, the line is dropped and counted in `dropped`, which `KERNELET_STATS` reports as `log_records_dropped` beside the rate limiter's count.
 
 An **`Endpoint`** is a pair of bounded byte queues in host memory with a wait queue and a `Pollee` each way, one end held by the sandbox and the other surfaced to user space as a file descriptor; it is what a log stream, a console, a user-space network backend and a vsock stream are made of. Its bytes are charged to the kernelet with `charge_host_bytes` in both directions, and its bound is the policy's. In the kernel-to-user direction a device thread blocks on a full queue and a hook drops; in the user-to-kernel direction a `write(2)` blocks on a full queue, or returns `EAGAIN` if the descriptor is non-blocking, and wakes the device thread's wait queue, while a device thread's pop wakes the `Pollee`.
 
@@ -69,7 +71,7 @@ pub(crate) trait DeviceModel: Send + Sync {
 }
 ```
 
-The device thread behind a model is a kernel thread of the host kernel proper (`ThreadOptions::new(…).spawn()`), started at `START` and adopted into the kernelet's group with `adopt_current_task` until it finishes. `cancel` does not join it, because the reaper task that calls `on_dying` must not wait on one kernelet's host I/O, so it sets a flag and wakes the thread; the thread finishes the host I/O it is in, since no file operation on the tree can be interrupted, abandons the rest of its inbox, calls `disown_current_task`, and exits. `destroy` reports `Zombie` for exactly that interval, and the retry thread retries it. The backends of the first version and the host objects they hold, taken from the runtime's own file table at `ATTACH` (the `ioctl` runs on the runtime's process, so `FileTable::get_file(fd)` is the lookup, and the file is held as `Arc<dyn FileLike>`, an `InodeHandle` for a regular file or the block device's open file):
+The device thread behind a model is a kernel thread of the host kernel proper (`ThreadOptions::new(…).spawn()`), started at `START` and adopted with `adopt_current_task` until it finishes, so that its CPU time is charged to the kernelet. `cancel` does not join it, because the reaper task that calls `on_dying` must not wait on one kernelet's host I/O, so it sets a flag and wakes the thread; the thread finishes the host I/O it is in, since no file operation on the tree can be interrupted, abandons the rest of its inbox, calls `disown_current_task`, and exits. `destroy` reports `Zombie` for exactly that interval, and the retry thread retries it. The backends of the first version and the host objects they hold, taken from the runtime's own file table at `ATTACH` (the `ioctl` runs on the runtime's process, so `FileTable::get_file(fd)` is the lookup, and the file is held as `Arc<dyn FileLike>`, an `InodeHandle` for a regular file or the block device's open file):
 
 | backend | host object held | the device thread's work |
 |---|---|---|
@@ -146,7 +148,7 @@ A sandbox descriptor is pollable: readable when the kernelet has exited, so that
 
 ## Policy
 
-The endovisor is where the host's policy lives, and the control half has none. In the first version: a per-user cap on live kernelets, on total grains, on total virtual CPUs and on endpoint bytes; the set of host CPUs kernelets may use, from which `START` picks; the default `KerneletPolicy` values; the device models' `max_request_bytes` and the vsock credit cap and connection bound; and `on_grant_exhausted`'s answer, which is to grant up to the user's remaining cap. Which kernelets may reach which over vsock is the switch's policy, per pair of CIDs, default allow within one user and deny across.
+The endovisor is where the host's policy lives, and the control half has none. In the first version: a per-user cap on live kernelets, on total grains, on total virtual CPUs and on endpoint bytes; the set of host CPUs kernelets may use, from which `START` picks; the default `KerneletPolicy` values; the device models' `max_request_bytes` and the vsock credit cap and connection bound; and `on_grant_exhausted`'s answer, which is to grant up to the user's remaining cap. Which kernelets may reach which over vsock is the switch's policy, per pair of CIDs, and the default is deny: containerd runs every pod on a node as one user, so "allow within a user" would let every sandbox on the node reach every other. The runtime opens a pair with `KERNELET_VSOCK_POLICY` (`MAGIC`, `0x33`, `InData<VsockPolicyArgs>`: a peer CID and allow or deny) on the sandbox descriptor, and only a runtime that holds both sandboxes' descriptors can open a pair, which is what a pod's sandboxes share.
 
 ## What the endovisor is trusted for
 
@@ -165,4 +167,5 @@ Everything. It runs in ring 0 in the host kernel and holds every kernelet's hook
 - **The endovisor ABI is one character device with typed `ioctl`s and pollable descriptors** (register D41), the shape of `/dev/kvm`, because a container runtime already knows how to drive that shape and it needs no new syscalls.
 - **Closing the last sandbox descriptor destroys the kernelet** (register D42), so that no crashed runtime leaks a sandbox; the price is that a runtime that wants a kernelet to outlive it must hand the descriptor to another process first.
 - **`CREATE` configures; `START` creates** (register D52). The alternative, calling `Kernelet::create` at `CREATE`, needs a control-half `add_device` that mutates a created kernelet's boot arguments, against the rule that a kernelet's configuration is fixed at creation.
+- **Vsock reachability between sandboxes is deny by default** (register D68); a runtime that owns both descriptors opens a pair. The alternative, allow within one user, is no policy at all on a node where one user owns every sandbox.
 - **Possession of a descriptor is the capability** (register D53). The alternative, a per-call owner check, would cost a credential lookup on every `ioctl` and would make a descriptor passed to another process unusable, unlike every other descriptor on the host.

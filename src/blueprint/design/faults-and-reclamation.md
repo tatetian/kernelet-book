@@ -12,16 +12,17 @@ A kernelet dies in one of three ways: its kernel asks to (`exit`), its kernel fa
 
 | cause | who detects it | where it is detected | `ExitReason` |
 |---|---|---|---|
-| the kernel calls `power::poweroff`, `restart` or `exit_with_code` | the kernelet | the `exit` service call, task context | `Exited(code)` |
-| a panic the oops handler cannot recover, or an allocation failure no fallible path absorbs | the kernelet | the `panic` service call, task context | `Panicked(message)` |
+| the kernel calls `power::poweroff`, `restart` or `exit_with_code` | the kernelet | the `stop` service call with `STOP_EXIT`, task context | `Exited(code)` |
+| a panic the oops handler cannot recover, or an allocation failure no fallible path absorbs | the kernelet | the `stop` service call with `STOP_PANIC`, task context | `Panicked(message)` |
 | the endovisor asks | the endovisor | `Kernelet::kill(Requested)` or `HostPolicy(n)`, task context | `Killed(…)` |
 | the oops budget is exhausted | the `oops` service call | task context | `Killed(OopsBudget)` |
 | a task holds preemption off for `policy.preempt_off_ticks` ticks | the host tick | interrupt context, under the tick's interrupt guard | `Killed(PreemptOffTooLong)` |
 | a service call finds the stack below the reserve | the service prologue | task context, on a stack already below the reserve | `Killed(StackReserve)` |
 | a stack overflow in kernelet code | the double-fault handler on its own stack (assumption A6) | exception context, interrupts off | `Killed(StackOverflow)` |
 | a page fault in kernelet code with no exception-table entry | the host's page-fault handler | exception context | `Killed(KernelFault { addr, ip })` |
+| a panic in an endovisor hook on the kernelet's task | the service wrapper's `catch_unwind` | task context, on the hook stack | `Killed(HostHookPanicked)` |
 
-**Tier 3: the host fails.** A panic in host code, in OSTD or in the endovisor, halts the machine as it does today. A kernelet cannot cause one except through a bug in host code, which is the trusted base's to fix, or through the one gap the design names: a host path deeper than the service half's stack reserve (assumption A3, *estimated* at 64 KiB) double-faults outside `KW_TEXT` and halts the machine, and a kernelet chooses which call it makes from how deep a stack. The service half's pointer checks, the device models' descriptor checks and the fallible copies on window addresses are what keep every other kernelet input from reaching a host panic ([User mode](virtualizing-ostd/user-mode.md)).
+**Tier 3: the host fails.** A panic in host code, in OSTD or in the endovisor's own threads, halts the machine as it does today; a panic in an endovisor hook on a kernelet's task is tier 2, since the service wrapper catches it ([service half](kernelet-api-service.md)). A kernelet cannot cause a tier-3 failure except through a bug in host code, which is the trusted base's to fix, or through the one gap the design names: a service path of OSTD's own deeper than the stack reserve (assumption A3, *estimated* at 64 KiB) double-faults outside `KW_TEXT` and halts the machine. The endovisor's hooks, which are the deep paths, run on a per-CPU host stack and do not count against the reserve, so A3 covers only OSTD's own shallow service code, which is measurable. The service half's pointer checks, the device models' descriptor checks and the fallible copies on window addresses are what keep every other kernelet input from reaching a host panic ([User mode](virtualizing-ostd/user-mode.md)).
 
 ## Marking
 
@@ -29,13 +30,16 @@ Every tier-2 cause converges on one host function, `Kernelet::mark_dying(reason)
 
 1. Records the reason and the time.
 2. Stores `dying` on the info page, so that every service call from now on terminates its caller at the prologue, and removes the kernelet from the host tick's list, so that no further `JOB_TICK` is posted.
-3. For every task of the kernelet, under the task table's lock: sets `DYING` in its host-private flags and the mirror; if it is parked, sets `CANCEL_PARK` and unparks it; if it was spawned suspended and has never run, reaps it as `task_destroy` does, so that no never-run task is left to keep the table from emptying. A `task_spawn` racing with this step re-checks `dying` under the same lock after inserting and reaps its own task if set; the trampoline checks `DYING` before entering `run_task`, so a task unparked by the race never runs kernelet code.
-4. Sends a reschedule interrupt to every host CPU on which a task of the kernelet is running, so that each returns from user mode or reaches its next interrupt return.
-5. Signals the **reaper task**.
+3. Signals the **reaper task**.
 
-Everything that may sleep or take long is the reaper's: it calls `KerneletHooks::on_dying(reason)`, which is where the endovisor cancels its device threads' outstanding host I/O and marks the kernelet's vsock connections dead ([control half](kernelet-api-control.md), [Channels](channels.md)), and it clears the kernelet's pending jobs and its per-virtual-CPU `timer_arm` deadlines. The reaper is one host task per machine, spawned by the host build of OSTD when the kernelet API initializes, with the host's ordinary 512 KiB stack; `on_dying` is the one hook that may sleep, because it never runs on a kernelet's task.
+That is all, because the double-fault handler that detects a stack overflow runs on its interrupt stack on a CPU that may itself hold the task table's lock, inside a `task_spawn` whose host frames overflowed, and a tick handler runs under an interrupt guard; neither may take a lock or send an interrupt and wait. The reaper does the rest, microseconds later:
 
-`kill` from `Created`, before anything ran, skips steps 3 to 5 and moves to `Exited` at once.
+4. For every task of the kernelet, under the task table's lock: sets `DYING` in its host-private flags and the mirror; if it is parked, sets `CANCEL_PARK` and unparks it; if it was spawned suspended and has never run, reaps it as `task_destroy` does, so that no never-run task is left to keep the table from emptying. A `task_spawn` racing with this step re-checks `dying` under the same lock after inserting and reaps its own task if set; the trampoline checks `DYING` before entering `run_task`, so a task unparked by the race never runs kernelet code.
+5. Sends a reschedule interrupt to every host CPU on which a task of the kernelet is running, so that each returns from user mode or reaches its next interrupt return.
+
+Everything else that may sleep or take long is the reaper's too: it calls `KerneletHooks::on_dying(reason)`, which is where the endovisor shuts down the host objects its device threads hold and marks the kernelet's vsock connections dead, without blocking, so that one stuck backend does not hold every other kernelet's death behind the single reaper ([control half](kernelet-api-control.md), [Channels](channels.md)), and it clears the kernelet's pending jobs and its per-virtual-CPU `timer_arm` deadlines. The reaper is one host task per machine, spawned by the host build of OSTD when the kernelet API initializes, with the host's ordinary 512 KiB stack; `on_dying` is the one hook that may sleep, because it never runs on a kernelet's task.
+
+`kill` from `Created`, before anything ran, skips steps 3 to 5 and the reaper's work and moves to `Exited` at once.
 
 ## Stopping a task
 
@@ -62,8 +66,8 @@ A task is stopped by **terminating it at its next quiescent point**, which is an
 3. **Jobs, timers, interrupts.** Clear the pending-interrupt bitmap, the per-virtual-CPU tick bits and counts, and the `timer_arm` deadlines; assert the kernelet is off the host tick's list, which the mark did.
 4. **Roots.** Assert every registered root's active set is empty, which the switch-away rule guarantees; forget the roots. Their frames are in the grant.
 5. **Devices and channels.** Drop the device table; the endovisor's models and threads were told to stop at `on_dying` and have disowned by step 1; assert the vsock switch holds no connection naming the id.
-6. **The scheduler group.** Remove the kernelet's group from the host scheduler; it has no members, since the tasks are gone and the adopted threads have disowned.
-7. **The window.** Free the host's level-2 and level-1 tables under `KW_TEXT`, `KW_DATA` and `KW_SHARED`; decrement the kind's text reference count; free the template frames, the replicas, the shared pages and the radix leaves; free the private level-3 table and the kernel page-table root `kernel_pt`. The level-2 tables under `KW_HEAP` are reserved frames of the runs and go with them.
+6. **The budget.** Remove the kernelet from the host tick's charge and throttle bookkeeping and free its throttle queue, which is empty, since the tasks are gone and the adopted threads have disowned.
+7. **The window.** Free every page-table frame under the two private level-3 tables, the level-2 tables of `KW_PHYS`, the level-2 and level-1 tables of `KW_META`, `KW_TEXT`, `KW_DATA` and `KW_SHARED`; decrement the kind's text reference count; free the template frames, the replicas, the shared pages and the metadata frames; free the two level-3 tables and the kernel page-table root `kernel_pt`. The window level-3 tables outlive every root registered under them, which step 4's order guarantees.
 8. **Memory.** For every run, in grant-table order: clear its owner-array entries, then drop the host `Segment` that holds it, which returns its frames to the host's allocator through OSTD's own frame lifecycle (checked on the tree: `Segment::drop` releases one frame per page and `dealloc` returns them unzeroed). The frames were zeroed when they were granted ([control half](kernelet-api-control.md), register D55), so a tenant's data never reaches the next holder of the frame, and the host's metadata for those frames was never written by the kernelet and needs no reset.
 9. **Accounts.** Uncharge the host bytes; produce the `ReclaimReport`.
 10. **Identity.** Retire the slot: advance its generation, drop the slot table's `Arc`, move to `Destroyed`, drop the hooks.
@@ -85,7 +89,7 @@ An exit status the runtime reports: the code its kernel passed, the panic messag
 
 ## Costs
 
-- `mark_dying`: one store to the info page; per task, one flag store and, if parked, one unpark; one reschedule interrupt per CPU running the kernelet's tasks; a signal to the reaper. `on_dying` and the job and deadline clearing are the reaper's.
+- `mark_dying`: one compare-and-swap, one store to the info page, a signal to the reaper. The task walk, one flag store and, if parked, one unpark per task, one reschedule interrupt per CPU running the kernelet's tasks, `on_dying`, and the job and deadline clearing are the reaper's.
 - Per task stopped: the host's task-exit path; the stack's virtual-area teardown on the reaper, one unmap and flush of 128 pages plus the guard; nothing kernelet-side.
 - Per grain granted: a 2 MiB zeroing, *estimated* at tens of microseconds, paid at grant rather than at destroy (register D55).
 - `destroy`: linear in tasks, runs, devices and the tables of step 7; per run, `Segment::drop` at one frame per page, which is OSTD's own cost for freeing a segment; no flush, since the switch-away rule paid it.
@@ -96,6 +100,6 @@ An exit status the runtime reports: the code its kernel passed, the panic messag
 - **A dying kernelet's tasks are terminated at depth zero regardless of their preemption count** (register D34). The alternative, honoring the count until a budget expires, would let a dying kernelet delay its own reclamation by the budget for no one's benefit.
 - **Termination discards the stack rather than unwinding it** (register D35): unwinding would run kernelet code, the tenant's destructors, on the host's behalf, and could not be done at all beneath a trap frame.
 - **Destroy never waits for a pin or an adoption** (register D36); it returns `Zombie` and is retried by the endovisor. Waiting inside `destroy` on a device thread's host I/O would block the caller for as long as that I/O takes.
-- **The mark does only interrupt-safe work; the reaper task does the rest, and reaches `Exited`** (register D56). The alternative, running `on_dying` on the detecting context, would run a Linux-side hook inside the tick's interrupt handler, the double-fault handler, or a task already below its stack reserve.
+- **The mark is a compare-and-swap, a store and a signal; the reaper task does the rest, and reaches `Exited`** (register D56, revised). The alternative, walking the task table and sending interrupts in the detecting context, would take a lock inside the double-fault handler on a CPU that may hold it, and would run a Linux-side hook inside the tick's interrupt handler or on a task already below its stack reserve.
 - **The switch away from a kernelet task loads the host root into CR3** (register D57). The alternative, flushing at destroy, leaves a freed frame as some CPU's live page-table root between the last task's death and the flush.
 - **Grains are zeroed at grant** (register D55). The alternative, scrubbing at destroy, puts 2 MiB per grain on the destroy path and leaves the data in the frame while the kernelet is a zombie.

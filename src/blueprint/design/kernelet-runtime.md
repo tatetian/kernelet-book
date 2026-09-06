@@ -34,14 +34,14 @@ Every CLI invocation after `create` talks to a **holder process** per sandbox th
 | `linux.resources.memory.limit` | `max_grains = limit / 2 MiB` when present; the user's policy cap when absent or `-1`; `initial_grains` is the runtime's policy, by default a quarter of `max_grains` or 16 grains, whichever is larger (*estimated*; to be tuned against the floor the Evaluation chapter measures) |
 | `process` | sent to the agent at `create` and started at `start`: args, env, cwd, user, capabilities, rlimits, terminal |
 | `root.path`, `root.readonly` | the block image below, attached read-only if asked |
-| `mounts` | a bind mount of a *file* is copied into the image at `create` and is stale afterward, which is stated; a read-only bind of a directory is a second image; a read-write bind of a directory, `rbind` and mount propagation are rejected at `create`; the standard pseudo-file-systems are mounted by the agent inside |
+| `mounts` | a bind mount of a *file* is sent to the agent at `create`, which writes it into the overlay's upper layer inside, so that it never enters the shared, content-keyed image and a secret mounted into one pod cannot surface in another's; it is stale afterward, which is stated; a read-only bind of a directory is a second image; a read-write bind of a directory, `rbind` and mount propagation are rejected at `create`; the standard pseudo-file-systems are mounted by the agent inside |
 | `hostname` | set by the agent |
 | `linux.namespaces` | ignored: the sandbox is the namespace |
 | `linux.uidMappings`, `gidMappings` | rejected: there is no user namespace to map into |
 | `linux.seccomp`, `linux.devices`, cgroup paths | ignored in the first version; a kernelet's isolation does not rest on them |
 | `hooks` | as above |
 
-Bind-mounted files matter because containerd's CRI mounts `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf` and a termination log into every pod, plus secret and config directories; the copy rule is what lets a Kubernetes pod start at all in the first version, and the staleness is its price.
+Bind-mounted files matter because containerd's CRI mounts `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf` and a termination log into every pod, plus secret and config directories; the copy rule is what lets a Kubernetes pod start at all in the first version, and the staleness is its price; copying through the agent rather than into the image is what keeps the image cache shareable and keeps one pod's secrets out of another's root.
 
 ## The root file system
 
