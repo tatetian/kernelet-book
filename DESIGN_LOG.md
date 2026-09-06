@@ -6,7 +6,11 @@ Working log of the Blueprint › Design rewrite. One entry per iteration: what w
 
 Changes the design forces in the Paper or the Overview. Not applied; listed for the owner.
 
-- (none yet)
+- **Overview › Terminology**, bullets "endovisor ABI" and "crossing", and the definition paragraph's "implements the endovisor ABI through which a kernelet reaches it": the Design chapter uses *endovisor ABI* for the endovisor's user-space interface to the kernelet runtime and *image ABI* (service table and entry table) for the function-pointer tables; a crossing is any call through the service table. The Terminology page should adopt these; the "kernelet build of OSTD" bullet should say "virtualized over the service table".
+- **Overview › API virtualization, in one page**, paragraph "The kernelet" and "Three lines, not one": same rename, "endovisor ABI" → "the image ABI's service table"; "the ABI is one struct" → "the service table is one struct".
+- **Overview › Why it is hard**, C5: "the kernelet build of OSTD, the endovisor ABI and the device backends" → "…, the image ABI and the device models".
+- **Paper › API Virtualization**: the paragraph on the kernelet image uses "endovisor ABI" for the function table; should become "the service table". Table row "Reach decided by: names and imports" stands.
+- **Paper › API Virtualization** and **Overview › Builds** claims of "exactly two global symbols": drop; the checkable property is "no undefined symbols and no relocations".
 
 ## Iteration 0: plan
 
@@ -29,3 +33,15 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Process note.** One command changed directory into the Asterinas tree and ran `make check` there by mistake; it failed at once on a missing Python module and `git status` shows the tree unchanged. Every later command is run from the book's directory with absolute paths.
 
 **Next.** Iteration 2: Boundaries and trust, then Builds and images, which takes the three open mechanism decisions.
+
+## Iteration 2: Boundaries and trust; Builds and images
+
+**Written.** `principles.md` (parties, the four interfaces named, crossings, threat model, invariants I1–I8 each with its standing) and `builds-and-images.md` (D1 feature build, D2 tables at entry, D3 fixed addresses in the window at entry 500, the window layout with `KW_TEXT`/`KW_DATA`/`KW_META`/`KW_SHARED`/`KW_HEAP`, the data template, embedding by copy at registration, the kernelet linker script, the seven-item audit). Also drafted `kernelet-api-control.md` and `kernelet-api-service.md` (to be reviewed in iteration 3). Register entries D1–D9 and A1–A4.
+
+**Reviewed.** Two subagent reviews, one per page. Principles: 21 findings; 19 applied (host-kernel composition, "unmodified" → "same source under the feature", confinement claim about OSTD (kernelet build) corrected to "a memory-safety bug is a host compromise", data crosses through shared pages, I1/I2/I3/I5 restated to what the mechanisms deliver, I6 says how interrupt and deferred work is charged, I7 defines depth zero, crossing defined as any service-table call, first uses linked, standings labeled, dangling references removed); 2 rejected as the reviewer's misreading of `AGENTS.md` (spelling is American; there is no facade row). Builds: 27 findings; 25 applied, the decisive one being the code model (the kernel model cannot link at entry 500; now PIC small model, static non-PIE link), plus: empty level-3 table at 500, section order and `.cpu_local` bounds in the entry table, `.eh_frame_hdr` and the unwinder's symbols, `compile_error!` instead of a build script, `e_entry` and a fixed-offset entry table instead of symbol lookup, `KW_META` 8 GiB, `KW_SHARED`, copy at registration billed at ~14 MiB per kind, `-F unsafe_code` and the fourteen-crate allowlist, `--no-default-features`, boot code absent under the feature, a second linker-script template, source hash in the entry table, why Global is impossible, linear-map consequence in D3's cost; 2 were the same spelling misreading and the terminology divergence, which is upstream.
+
+**Decided.** D1–D9 (register). The kernelet image's code model (PIC, small) is a consequence of D3 rather than a decision of its own.
+
+**Open.** Whether the boot image should carry kernelet images as bootloader modules (A: extension). The exact stack reserve (A3).
+
+**Next.** Iteration 3: review and commit the control and service pages; then Virtualizing OSTD (index and memory).
