@@ -67,3 +67,13 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Decided.** D10, D13 revised; D14 withdrawn; D23–D32. A7–A9.
 
 **Next.** Iteration 5: reviews of the taxonomy, interrupts and time, user mode, devices and the rest; then faults and reclamation, channels, the endovisor, the runtime.
+
+## Iteration 5: the last pages drafted; reviews in flight
+
+**Written.** `faults-and-reclamation.md` (three tiers, the marking sequence, how a task is stopped in each of its four states, the ten-step destroy, why release is safe), `channels.md` (the vsock switch, the copy path, the frame-move extension), `endovisor.md` (the component, the `Sandbox`, `Endpoint`, `DeviceModel`, the `/dev/kernelet` ABI with typed ioctls, policy), `kernelet-runtime.md` (OCI lifecycle mapping, `config.json` mapping, the ext2 image and `virtiofs`, user-space NAT, the agent, containerd shim). Register D34–D45, A11. No `To be written` remains under Design.
+
+**Applied.** The taxonomy review's 21 findings across six pages: `GsBase` virtualized to MSR accesses (D33), ticks carry the interrupted task and privilege with `Task::current()` overridden during delivery (A10), bottom halves after tick callbacks, `map_iomem` unreachable rather than failing, the exit-code path through a new `exit_with_code`, the panic-handler expansion capturing the message, `IoMem` impls and `mmio_base`, the counting paragraph and the `cfg` inventory corrected (16 component-naming files counted on the tree).
+
+**In flight.** Reviews of interrupts and time, user mode, devices, the rest, faults, channels, the endovisor, the runtime.
+
+**Next.** Apply the eight reviews; final pass over the whole chapter; final report.
