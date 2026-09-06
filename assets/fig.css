@@ -16,3 +16,8 @@ main:has(.fwd-fig){max-width:920px}
 .fwd-fig .name{margin:4px 0 10px;font-size:15px;font-weight:650;color:#fff}
 .fwd-fig figcaption{margin:14px 0 0;font-size:12.5px;line-height:1.5;color:#7F86A8;text-align:center}
 @media(max-width:700px){.fwd-fig .cmp{grid-template-columns:1fr}}
+
+/* Raster figures in the Blueprint: a light panel so white-background diagrams read as intended on the navy theme. */
+.bp-fig{margin:24px 0 28px;padding:16px;background:#fff;border:1px solid rgba(255,255,255,.12);border-radius:14px}
+.bp-fig img{display:block;width:100%;height:auto;margin:0 auto}
+.bp-fig figcaption{margin:14px 0 0;font-size:12.5px;line-height:1.5;color:#5A607A;text-align:center}
