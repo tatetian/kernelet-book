@@ -31,8 +31,8 @@ The boundary is not drawn by the compiler alone, and the paper does not claim it
 
 ## Three obligations {#obligations}
 
-*Every instance needs its own state.* The Asterinas kernel proper has 96 statics holding per-tenant state. Rewriting each into a field threaded through every call touches, by a call-graph estimate, some 700 functions and hundreds of types; Asterinas Kernelets uses page tables instead. The kernelet image's writable sections are linked at one fixed address, and each instance's page tables map its own copy of them there, so the statics keep their addresses and no source changes ([§5.2](design.md#process)).
+*Every instance needs its own state.* The Asterinas kernel proper has 96 statics holding per-tenant state. Rewriting each into a field threaded through every call touches, by a call-graph estimate, some 700 functions and hundreds of types; Asterinas Kernelets uses page tables instead. The kernelet image's writable sections are linked at one fixed address, and each instance's page tables map its own copy of them there, so the statics keep their addresses and no source changes.
 
-*The host must retain no reference into an instance,* or killing it leaves dangling references and reclaiming it hands the next tenant frames the host still points at. The host remembers instances by *names*, integers meaningful only to the instance that minted them ([§5.1](design.md#facade)).
+*The host must retain no reference into an instance,* or killing it leaves dangling references and reclaiming it hands the next tenant frames the host still points at. The host remembers instances by *names*, integers meaningful only to the instance that minted them.
 
-*Misbehavior must end one instance.* A panic, an unmet allocation, a spin with preemption disabled, or an operator's kill must end the instance without leaving the host inconsistent and without relying on the instance's destructors ([§5.6](design.md#faults)).
+*Misbehavior must end one instance.* A panic, an unmet allocation, a spin with preemption disabled, or an operator's kill must end the instance without leaving the host inconsistent and without relying on the instance's destructors.
