@@ -45,3 +45,15 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Open.** Whether the boot image should carry kernelet images as bootloader modules (A: extension). The exact stack reserve (A3).
 
 **Next.** Iteration 3: review and commit the control and service pages; then Virtualizing OSTD (index and memory).
+
+## Iteration 3: the two halves of the kernelet API
+
+**Written.** `kernelet-api-control.md` (images, identity, configuration and its validation, hooks and what they may call, `guest_memory`, the lifecycle with its state machine and concurrency rules, the per-kernelet host state, the two host-wide tables, costs) and `kernelet-api-service.md` (the CPU slot, host-private per-task state, the shared pages including a host-wide clock page, the entry table, the twenty-five-function service table with the prologue and epilogue, every function's checks and cost). Also `virtualizing-ostd/index.md`, the taxonomy (72 rows; to be reviewed in iteration 4).
+
+**Reviewed.** Two subagent reviews. Control half: 28 findings, all applied; the decisive one was that the two halves disagreed on who maps grains into the window (now D10: the kernelet does). Also removed the epoch and handle vocabulary that had leaked from the earlier design, added the `oops` wire, gave the workers an origin (entry index 1, one per virtual CPU, D11), closed the `Created` dead end and made `destroy` retryable by reference, chose Zombie-and-retry for pins, made the grant table append-only and chunked, added an operation count so control operations cannot race destroy, listed hook-safe methods, named the no-process problem for device I/O (A5), added explicit host-bytes accounting, listed `CreateError`, made the generation non-zero so the owner array is 8 bytes per grain, named `alloc_segment_aligned`. Service half: 30 findings, all applied; the decisive one was that the termination counter and kill flags lived on a page the kernelet could write (now host-private, D8 revised); also the prologue's error paths and memory ordering, the boot task through `e_entry`, generation-checked task names, park tokens against lost wakeups, edge-triggered job delivery, `root == 0` shootdowns, unregister-in-use errors, writable-pointer ranges, `-CANCEL`, `task_exit` exempt from the dying check, a stack-reserve breach killing the kernelet, the double-fault gap named (A6), the scheduler's CR3 restore and the `ACTIVATED_VM_SPACE` cache, the user-mode round trip's TLS and FPU state kept in the CPU under the kernelet's preemption count, non-sleeping hooks with device threads (D12), the clock page.
+
+**Decided.** D10, D11, D12; D8 revised. A5, A6 added.
+
+**Open.** Whether device threads can drive host file and socket objects without a process (A5).
+
+**Next.** Iteration 4: review the taxonomy index; write Memory and Tasks.
