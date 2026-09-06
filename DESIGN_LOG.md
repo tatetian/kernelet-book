@@ -89,3 +89,11 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 
 **Next.** Final pass: a cross-chapter consistency review; render the Design index; final report.
 
+
+## Iteration 7: final pass
+
+**Reviewed.** One cross-chapter consistency review over all sixteen Design pages, the register and the inventory: 20 findings, all applied. The substantive ones: `exit` and `panic` on the service page still said they call `on_dying` themselves (now `mark_dying` and the reaper); the window table and the principles page listed the grant table under `KW_DATA` and omitted the clock page from the shared pages; two pages still called the endovisor a crate; the taxonomy's waker row contradicted Tasks; the function count was wrong (24); the tick delivery dropped the sampled privilege; the control page's D10 bullet described the pre-revision division of labor; item 7 of the cfg inventory still listed `aster_logger` as host-only. Register rows reordered numerically; D9, D23, D8 reworded; D10 points at Memory.
+
+**Verified.** `make check` → `check: OK`; `make build` exits 0; `make render PAGE=blueprint/design/index.html` painted the figure and the question table (looked at). Working tree clean at commit `9500c42`.
+
+**Exit criterion.** All four questions answered (Q1 control half; Q2 taxonomy of 73 rows plus six resource pages; Q3 service half; Q4 endovisor and runtime); no undeferred "To be written" (the Blueprint index's block defers the implementation, evaluation and limitations chapters with scope); 57 decisions (one withdrawn) and 12 assumptions (one withdrawn) in the register; 10 **[unverified]** marks in the chapter, each an assumption row.
