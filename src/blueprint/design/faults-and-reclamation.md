@@ -32,7 +32,7 @@ Every tier-2 cause converges on one host function, `Kernelet::mark_dying(reason)
 3. For every task of the kernelet, in the task table: sets `DYING` in its host-private flags and the mirror; if it is parked, sets `CANCEL_PARK` and unparks it; if it is running in user mode on some CPU, that CPU is included in the reschedule interrupt sent in the next step.
 4. Sends a reschedule interrupt to every host CPU on which a task of the kernelet is running, so that each returns from user mode or reaches its next interrupt return.
 5. Calls `KerneletHooks::on_dying(reason)`, on the calling task, whichever it is. This is where the endovisor cancels its device threads' outstanding host I/O ([control half](kernelet-api-control.md)).
-6. Cancels the kernelet's timers on the host timer wheel and clears its pending jobs; the workers' `job_wait` returns `JOB_CANCEL`, which the worker loop turns into `task_exit`.
+6. Cancels the kernelet's timers on the host timer wheel and clears its pending jobs; the workers, parked in `job_wait`, are terminated in the service epilogue like every other parked task.
 
 `kill` from `Created`, before anything ran, skips steps 3 to 6 and moves to `Exited` at once.
 

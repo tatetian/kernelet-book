@@ -87,7 +87,7 @@ pub struct BootArgs {
     pub cmdline_len: u32,
 }
 #[repr(C)] pub struct RunDesc { pub paddr: u64, pub first_slot: u32, pub grains: u32, pub l2_frames: u32, pub _pad: u32 }
-#[repr(C)] pub struct DeviceEntry { pub id: u16, pub kind: u16, pub irq: u8, pub _pad: [u8; 3], pub reg_bytes: u32, pub device_type: u32, pub mmio_base: u64 }
+#[repr(C)] pub struct DeviceEntry { pub id: u16, pub kind: u16, pub irq: u8, pub _pad: u8, pub vcpu: u16, pub reg_bytes: u32, pub device_type: u32, pub mmio_base: u64 }
 ```
 
 **The clock page**, read-only, one page, shared by every kernelet on the machine: the host tick writes it once, not once per kernelet.
@@ -204,10 +204,11 @@ pub struct ServiceTable {
 
 #[repr(C)]
 pub struct JobDesc { pub kind: u32, pub arg: u32, pub arg2: u64 }
-// JOB_VIRQ: arg = the line. JOB_TICK: arg = the task the tick interrupted on this virtual CPU
-// (`TASK_NONE` if none), arg2 = its privilege level (0 kernel, 3 user, 2 idle), so that the
-// kernel proper's tick accounting charges the right thread ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)).
-pub const JOB_VIRQ: u32 = 1; pub const JOB_TICK: u32 = 2; pub const JOB_GRANT: u32 = 3; pub const JOB_CANCEL: u32 = 4;
+// JOB_VIRQ: arg = the line. JOB_TICK: arg = the task the host's tick found in the CPU slot on this
+// virtual CPU's host CPU (`TASK_NONE` if none), arg2 = the number of host ticks since the last
+// delivery (low 32 bits) and the sampled privilege level (bit 32: user), so that the kernel
+// proper's tick accounting charges the right thread once per tick ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)).
+pub const JOB_VIRQ: u32 = 1; pub const JOB_TICK: u32 = 2; pub const JOB_GRANT: u32 = 3;
 
 // Error codes: negative return values.
 pub const DYING: i32 = 1; pub const NOT_OWNED: i32 = 2; pub const INVALID: i32 = 3;
@@ -269,9 +270,9 @@ The window's own level-2 tables under `KW_HEAP` are written by OSTD (kernelet bu
 
 ### Jobs and time
 
-- `job_wait(out) -> 0`: parks the calling task, which must be a worker, until a job for its virtual CPU is posted, then writes the job into `out`. Jobs are: a virtual interrupt (`JOB_VIRQ`, with the line number), a timer tick (`JOB_TICK`), a new grant to read from the grant table (`JOB_GRANT`), or a cancellation because the kernelet is dying (`JOB_CANCEL`). Delivery is edge-triggered: the host clears a line's pending bit when it hands the job over, so a `raise_irq` that arrives while the handler runs becomes the next job rather than being lost; a line raised twice before delivery is one job. *Checks:* the caller is a worker. *Cost:* a park and an unpark per job; the delivery latency of a virtual interrupt is therefore a wakeup, which the Evaluation chapter will measure.
-- `tick_enable(vcpu, enable)`: turns the timer tick for one virtual CPU on or off. While on, the host posts `JOB_TICK` to that virtual CPU's worker at `TIMER_FREQ` (1000 Hz, on the tree) after any tick during which a task of the kernelet ran on that virtual CPU's host CPU; an idle virtual CPU gets no ticks. *Cost:* one worker wakeup per millisecond per busy virtual CPU.
-- `timer_arm(vcpu, deadline_ns)`: a one-shot: post `JOB_TICK` to the virtual CPU's worker at `deadline_ns` on the host's monotonic clock, or at once if past.
+- `job_wait(out) -> 0`: parks the calling task, which must be a worker, until a job for its virtual CPU is posted, then writes the job into `out`. Jobs are: a virtual interrupt (`JOB_VIRQ`, with the line number), a timer tick (`JOB_TICK`, with the interrupted task and the count of ticks coalesced), or a new grant to read from the grant table (`JOB_GRANT`). Delivery is edge-triggered: the host clears a line's pending bit, or the virtual CPU's tick bit and count, when it hands the job over, so a `raise_irq` that arrives while the handler runs becomes the next job rather than being lost; a line raised twice before delivery is one job, and ticks are coalesced with their count. A kill does not return from `job_wait`: the parked worker is terminated in the epilogue like any parked task. *Checks:* the caller is a worker. *Cost:* a park and an unpark per job; the delivery latency of a virtual interrupt is therefore a wakeup, which the Evaluation chapter will measure.
+- `tick_enable(vcpu, enable)`: turns the timer tick for one virtual CPU on or off; ticks are on at `start`, and this call exists for the tickless extension. While on, the host posts `JOB_TICK` to that virtual CPU's worker at `TIMER_FREQ` (1000 Hz, on the tree) after any tick during which a task of the kernelet other than a worker delivering a tick ran on that virtual CPU's host CPU, and at the kernelet's idle rate on virtual CPU 0 otherwise ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)). *Cost:* one worker wakeup per millisecond per busy virtual CPU.
+- `timer_arm(vcpu, deadline_ns)`: a one-shot: post `JOB_TICK` to the virtual CPU's worker at the first host tick at or after `deadline_ns` on the host's monotonic clock, or at once if past; a second call replaces the virtual CPU's deadline.
 
 ### User mode
 

@@ -6,11 +6,13 @@ A kernelet sees devices the way a guest of a microVM does: virtio devices on an 
 
 ## Enumeration
 
-The virtio MMIO bus on x86-64 already probes devices from the kernel command line in Linux's `virtio_mmio.device=<size>@<base>:<irq>` form (checked on the tree: `transport/mmio/bus/arch/x86.rs`, `probe_from_kernel_cmdline`), then maps the interrupt through the host's interrupt chip. The endovisor composes that line from the kernelet's device descriptors, and the kernelet's bus probe runs unchanged except for the interrupt step, which is one `cfg` line: in the kernelet build the probe calls `IrqLine::alloc_specific(irq)` instead of asking the absent `IRQ_CHIP` to map the line. Each device has a **pseudo-physical MMIO base**, chosen by the endovisor and listed in `BootArgs` beside its size, type and line:
+The virtio MMIO bus on x86-64 already probes devices from the kernel command line in Linux's `virtio_mmio.device=<size>@<base>:<irq>` form (checked on the tree: `transport/mmio/bus/arch/x86.rs`, `probe_from_kernel_cmdline`), then maps the interrupt through the host's interrupt chip. The endovisor composes that line from the kernelet's device descriptors, and the kernelet's bus probe runs unchanged except for the interrupt step, which is a `cfg` line in the bus and in its common device: in the kernelet build the bus calls `IrqLine::alloc_specific(irq)` and stores an `IrqLine` where the host build maps the line through the absent `IRQ_CHIP` and stores a `MappedIrqLine` (checked on the tree: `transport/mmio/bus/mod.rs`, `bus/common_device.rs`). Each device has a **pseudo-physical MMIO base**, chosen by the endovisor and listed in `BootArgs` beside its size, type and line:
 
 ```rust
 #[repr(C)] pub struct DeviceEntry {
-    pub id: u16, pub kind: u16, pub irq: u8, pub _pad: [u8; 3],
+    pub id: u16, pub kind: u16, pub irq: u8, pub _pad: u8,
+    /// The virtual CPU whose worker delivers this device's interrupts.
+    pub vcpu: u16,
     pub reg_bytes: u32, pub device_type: u32,
     /// The pseudo-physical address the kernelet's bus probe finds the register file at.
     pub mmio_base: u64,

@@ -105,10 +105,11 @@ pub struct DeviceDesc {
     pub kind: DeviceKind,      // `VirtioMmio { device_type: u32 }` for now
     pub reg_bytes: u32,        // size of the register window, a multiple of 4 KiB
     pub irq: Virq,             // the virtual interrupt line the device raises
+    pub vcpu: u16,             // the virtual CPU whose worker delivers it; 0 if unbound
     pub mmio_base: u64,        // the pseudo-physical address the kernelet's bus probe finds it at
 }
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct DeviceId(pub u16);
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct Virq(pub u8);   // 32..=255
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct Virq(pub u8);   // 32..=255; 0 is the tick, 1..=31 reserved
 
 pub struct KerneletPolicy {
     /// Oopses (caught panics, reported through the `oops` service call) allowed before the kernelet is killed.
@@ -131,7 +132,7 @@ pub struct KerneletPolicy {
 ```rust
 pub enum CreateError {
     UnknownImage, NoCpus, TooManyCpus, CpuNotOnline(CpuId),
-    InitialExceedsMax, ZeroMaxGrains, DuplicateDevice(DeviceId), ReservedVirq(Virq),
+    InitialExceedsMax, ZeroMaxGrains, DuplicateDevice(DeviceId), ReservedVirq(Virq), BadVcpu(DeviceId),
     RegBytesNotPageMultiple(DeviceId), TooManyDevices, CmdlineTooLong,
     SlotsExhausted, NoMemory,
 }
@@ -340,7 +341,7 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 | `grant` | the grant table: each run's physical base, first slot, length and reserved level-2 frames, mirrored read-only into `KW_SHARED`, plus each run's pin count and its host `Segment`; append-only, chunked | `create`, `grant`, `grains_request`; pins by `guest_memory` |
 | `roots` | the user page-table roots the kernelet has registered | the service half |
 | `tasks` | the host tasks that are this kernelet's, by name; the boot task and the workers among them, with each worker's virtual CPU | the service half's spawn and exit |
-| `devices`, `virq_pending: [AtomicU64; 4]` | the device table and the pending-interrupt bitmap | creation; `raise_irq`; the workers clear bits through `irq_ack` |
+| `devices`, `virq_pending: [AtomicU64; 4]`, `tick_pending: [(AtomicBool, AtomicU32); MAX_VCPUS]` | the device table, the pending-interrupt bitmap, and per virtual CPU the pending tick bit and the count of ticks since delivery | creation; `raise_irq` and the host tick; `job_wait` clears them when it hands a job over |
 | `shared` | the frames mapped read-only (`BootArgs`, the info page) and read-write (the task records) into `KW_SHARED` | creation; the scheduler writes task records |
 | `accounts` | the counters behind `stats()`, the host-bytes charge, and the CPU quota's period accounting | the service half, the scheduler, the hooks |
 | `exit: Once<ExitStatus>`, `exit_waiters: WaitQueue` | the outcome, and who is waiting for it | the reaper; `wait_exited` |
