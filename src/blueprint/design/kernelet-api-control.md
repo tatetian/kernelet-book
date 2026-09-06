@@ -185,7 +185,8 @@ pub enum LogLevel { Emerg, Alert, Crit, Error, Warn, Notice, Info, Debug }
 ```rust
 impl Kernelet {
     /// Charges the calling host task's CPU time to this kernelet until `disown_current_task`.
-    /// Used by the endovisor's device threads. Hook-safe. Fails once the kernelet is `Exited`.
+    /// Used by the endovisor's device threads. Hook-safe. Fails once the kernelet is `Dying`,
+    /// so that nothing adopts into a kernelet that is being drained.
     pub fn adopt_current_task(&self) -> Result<(), StateError>;
     pub fn disown_current_task(&self);
 }

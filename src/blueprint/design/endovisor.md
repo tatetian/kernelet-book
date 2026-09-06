@@ -2,149 +2,167 @@
 
 *Answers question 4, kernel side: how is the endovisor implemented on OSTD, and what user-space ABI does it expose to the kernelet runtime?*
 
-The endovisor is a component of the host kernel, the blue box beside "Linux functionality" in the [figure](index.md): safe Rust in the kernel proper's host configuration, with no `unsafe` of its own, built over two things and nothing else. Downward it uses the [control half](kernelet-api-control.md) of OSTD's kernelet API to create, feed, watch, kill and destroy kernelets and to receive their hooks; sideways it uses the host kernel's ordinary Linux functionality, files, threads, pipes, the random source, to give those hooks something to do. Upward it exposes the **endovisor ABI**: a character device, `/dev/kernelet`, whose operations are how the kernelet runtime in host user space does everything it does. It is to the kernelet API what a VMM is to KVM, except that it lives in the kernel and its device models are function calls away from the kernelets they serve.
+The endovisor is a part of the host kernel, the blue box beside "Linux functionality" in the [figure](index.md): safe Rust in the kernel proper's host configuration, with no `unsafe` of its own, built over two things and nothing else. Downward it uses the [control half](kernelet-api-control.md) of OSTD's kernelet API to create, feed, watch, kill and destroy kernelets and to receive their hooks; sideways it uses the host kernel's ordinary Linux functionality, files, threads, wait queues, the random source, to give those hooks something to do. Upward it exposes the **endovisor ABI**: a character device, `/dev/kernelet`, whose operations are how the kernelet runtime in host user space does everything it does. It is to the kernelet API what a VMM is to KVM, except that it lives in the kernel and its device models are function calls away from the kernelets they serve.
 
 ## Where it lives
 
 ```
-kernel/core/comps/endovisor/            a component like `block` or `network`, host build only
-  src/lib.rs                            #[init_component]: registers images, creates the device node
-  src/images.rs                         include_bytes! of every kernelet image the build produced
-  src/device.rs                         `/dev/kernelet`: the misc character device and its ioctls
-  src/sandbox.rs                        one `Sandbox` per created kernelet: hooks, devices, endpoints
-  src/models/{blk,console,rng,vsock,net}.rs   the virtio MMIO device models and their device threads
-  src/vsock_switch.rs                   the host-wide switch of [Channels](channels.md)
-  src/policy.rs                         limits, defaults, who may create
+kernel/core/src/endovisor/                a module of the kernel crate, `cfg(not(feature = "kernelet"))`
+  mod.rs                                  registration from `device::misc::init_in_first_kthread`
+  images.rs                               include_bytes! of every kernelet image the build produced
+  device.rs                               `/dev/kernelet`: the misc character device and its ioctls
+  sandbox.rs                              one `Sandbox` per created kernelet: hooks, devices, endpoints
+  models/{blk,console,rng,vsock,net}.rs   the virtio MMIO device models and their device threads
+  vsock_switch.rs                         the host-wide switch of [Channels](channels.md)
+  reaper.rs                               the thread that finishes destroys and retries zombies
+  policy.rs                               limits, defaults, who may create
 ```
 
-It registers itself through the component system the kernel proper already has (`#[init_component]` and `.init_array`; checked on the tree), at the initialization stage at which the misc character devices are created (`init_in_first_kthread`, `device/misc/mod.rs`), and it uses the kernel's own device registry, `Device` and `PerOpenFileOps` traits and typed `ioctl` helpers (checked on the tree: `device/misc/tdxguest.rs` is the pattern, `util/ioctl`).
+It is a module of the kernel crate and not a component under `comps/`, because everything it needs from the kernel proper is crate-private to that crate (checked on the tree: `Device` and `PerOpenFileOps` in `device/mod.rs`, `Ioctl` and `ioc!` in `util/ioctl`, `FileLike` and `FileTable` in `fs/file`, `ThreadOptions` in `thread/kernel_thread.rs`), and no component depends on the kernel crate, since the kernel depends on them. It registers its device from `device::misc::init_in_first_kthread`, the `tdxguest::init()` pattern, which runs after the misc major number exists and after the component stage (checked: `kernel/core/src/init.rs`, `device/misc/mod.rs`). The device node is created by the registry from `devtmpfs_meta`, with mode `u+rw` by default, root only (checked: `fs_impls/devtmpfs/tree.rs`); the policy may widen it with `DevtmpfsNodeMeta::with_mode`.
 
 ## The `Sandbox`
 
 One object per created kernelet, owned by the file description that created it:
 
 ```rust
-// endovisor/src/sandbox.rs
+// endovisor/sandbox.rs
 pub(crate) struct Sandbox {
-    kernelet: Arc<Kernelet>,                       // the control-half object
+    state: Mutex<SandboxState>,                    // Configuring | Live(Arc<Kernelet>) | Gone
+    cid: u32,                                      // allocated at CREATE, never reused
+    config: Mutex<PendingConfig>,                  // devices, budgets, cmdline, gathered before START
     hooks: Arc<SandboxHooks>,                      // implements `KerneletHooks`
-    devices: Vec<AttachedDevice>,                  // model + backend + device thread, per device
-    console: Option<Endpoint>,                     // the virtio-console backend's host end
-    log: Endpoint,                                 // the log hook's host end
-    net: Option<Endpoint>,                         // the user-space network backend's host end
+    devices: Mutex<Vec<AttachedDevice>>,           // model + backend + device thread, per device
     exit: Once<ExitStatus>,
-    owner: Uid,                                    // who created it; who may operate on it
+    pollee: Pollee,                                // readable once exited
+    owner: Uid,                                    // who created it; for the policy's per-user caps
 }
 
-struct SandboxHooks { models: RwLock<Vec<Arc<dyn DeviceModel>>>, log: Endpoint, console: Endpoint, policy: Policy }
+struct SandboxHooks {
+    models: RwLock<Vec<Arc<dyn DeviceModel>>>,
+    log: Once<Endpoint>,                           // kernel log records and early-console bytes
+    dropped: AtomicU64,                            // log or console bytes dropped for want of an endpoint or space
+    policy: Policy,
+}
 impl KerneletHooks for SandboxHooks {
-    fn mmio_read(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8) -> u64 { self.models[dev].read(off, width) }
-    fn mmio_write(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8, v: u64) { self.models[dev].write(k, off, width, v) }
-    fn log(&self, k: &Kernelet, level: LogLevel, module: &str, text: &str) { self.log.push_line(level, module, text) }
-    fn console_write(&self, k: &Kernelet, bytes: &[u8]) { self.console.push(bytes) }
+    fn mmio_read(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8) -> u64 { self.models.read()[dev].read(off, width) }
+    fn mmio_write(&self, k: &Kernelet, dev: DeviceId, off: u32, width: u8, v: u64) { self.models.read()[dev].write(k, off, width, v) }
+    fn log(&self, k: &Kernelet, level: LogLevel, module: &str, text: &str) { self.push_log(LogLine::Record(level, module, text)) }
+    fn console_write(&self, k: &Kernelet, bytes: &[u8]) { self.push_log(LogLine::Console(bytes)) }
     fn on_grant_exhausted(&self, k: &Kernelet) -> u32 { self.policy.extra_grains(k) }
-    fn on_oops(&self, k: &Kernelet, task: TaskName, msg: &str) { self.log.push_line(LogLevel::Error, "oops", msg) }
-    fn on_dying(&self, k: &Kernelet, why: &ExitReason) { for m in self.models.read().iter() { m.cancel() } ; vsock_switch::reset_all(k.id()) }
-    fn on_exited(&self, k: &Kernelet, st: &ExitStatus) { /* record; wake pollers of the sandbox fd */ }
+    fn on_oops(&self, k: &Kernelet, task: TaskName, msg: &str) { self.push_log(LogLine::Oops(task, msg)) }
+    fn on_dying(&self, k: &Kernelet, why: &ExitReason) { for m in self.models.read().iter() { m.cancel() } ; vsock_switch::mark_dead(k.id()) }
+    fn on_exited(&self, k: &Kernelet, st: &ExitStatus) { /* record `st`; wake the sandbox's pollee */ }
 }
 ```
 
-An **`Endpoint`** is a pair of bounded byte queues in host memory with a wakeup each way, one end held by the sandbox and the other surfaced to user space as a file descriptor; it is what a console, a log stream, a user-space network backend and a vsock stream are made of. Its bytes are charged to the kernelet with `charge_host_bytes`, and its bound is the policy's.
+The early console and the kernel log share the **log endpoint**: a kernelet's boot and panic output is an operator's concern, not the tenant process's standard output, which is the virtio console's ([kernelet runtime](kernelet-runtime.md)). `push_log` never sleeps, since `log` and `console_write` are called from kernelet tasks that cannot: when the log endpoint does not exist yet or is full, the line is dropped and counted in `dropped`, which `KERNELET_STATS` reports as `log_records_dropped` beside the rate limiter's count.
+
+An **`Endpoint`** is a pair of bounded byte queues in host memory with a wait queue and a `Pollee` each way, one end held by the sandbox and the other surfaced to user space as a file descriptor; it is what a log stream, a console, a user-space network backend and a vsock stream are made of. Its bytes are charged to the kernelet with `charge_host_bytes` in both directions, and its bound is the policy's. In the kernel-to-user direction a device thread blocks on a full queue and a hook drops; in the user-to-kernel direction a `write(2)` blocks on a full queue, or returns `EAGAIN` if the descriptor is non-blocking, and wakes the device thread's wait queue, while a device thread's pop wakes the `Pollee`.
 
 A **`DeviceModel`** is the virtio MMIO register file of [Devices](virtualizing-ostd/devices.md) over a backend:
 
 ```rust
 pub(crate) trait DeviceModel: Send + Sync {
     fn read(&self, off: u32, width: u8) -> u64;                       // never sleeps
-    fn write(&self, k: &Kernelet, off: u32, width: u8, v: u64);        // never sleeps; a notify hands work to the thread
-    fn cancel(&self);                                                  // from `on_dying`: stop the thread's outstanding I/O
+    fn write(&self, k: &Kernelet, off: u32, width: u8, v: u64);        // never sleeps; a notify records into the inbox; status 0 is reset
+    fn cancel(&self);                                                  // from `on_dying`: sets a flag and wakes the thread, nothing more
 }
 ```
 
-The device thread behind a model is a host kernel thread (`ThreadOptions::new(…).spawn()` on the tree), started at attach and stopped at `cancel`, adopted into the kernelet's group with `adopt_current_task` for its whole life. The backends of the first version and the host objects they hold, opened on the runtime's process at attach:
+The device thread behind a model is a kernel thread of the host kernel proper (`ThreadOptions::new(…).spawn()`), started at `START` and adopted into the kernelet's group with `adopt_current_task` until it finishes. `cancel` cannot join it, because `on_dying` may run on the dying kernelet's own task inside a service call, so it sets a flag and wakes the thread; the thread finishes the host I/O it is in, since no file operation on the tree can be interrupted, abandons the rest of its inbox, calls `disown_current_task`, and exits. `destroy` reports `Zombie` for exactly that interval, and the reaper retries it. The backends of the first version and the host objects they hold, taken from the runtime's own file table at `ATTACH` (the `ioctl` runs on the runtime's process, so `FileTable::get_file(fd)` is the lookup, and the file is held as `Arc<dyn FileLike>`, an `InodeHandle` for a regular file or the block device's open file):
 
 | backend | host object held | the device thread's work |
 |---|---|---|
-| block | an inode of a regular file or a block device, opened read-write by the runtime and passed as a descriptor | `read_at` and `write_at` on the inode inside `guest_memory`; `sync` for flush |
+| block | the runtime's open file for a regular file or a block device, opened read-write | `read_at` and `write_at` inside `guest_memory`; `sync` for flush |
 | console | an `Endpoint` | moves bytes between the virtio-console queues and the endpoint |
 | entropy | nothing | fills request buffers from the host's random source |
 | vsock | the switch | transmit-queue packets into the switch, switch deliveries into the receive queue |
-| network | an `Endpoint` carrying Ethernet frames | moves frames between the virtio-net queues and the endpoint; the runtime bridges the other end into the host's network |
+| network | an `Endpoint` carrying Ethernet frames | moves frames between the virtio-net queues and the endpoint; the runtime's user-space NAT terminates them |
 
-Assumption A5 applies to every row: the inode and endpoint operations are driven by a kernel thread without a process. If a host path turns out to need one, the thread borrows the runtime's process context for that call.
+Assumption A5 applies to every row: the file and endpoint operations are driven by a kernel thread without a process. If a host path turns out to need one, the thread borrows the runtime's process context for that call.
 
 ## The endovisor ABI
 
-The ABI is the misc character device `/dev/kernelet` and two kinds of file descriptor it hands out: a **sandbox descriptor**, one per created kernelet, and **endpoint descriptors** for streams. Every operation is an `ioctl` in the typed form the kernel proper uses (`Ioctl<MAGIC, NR, IS_MODERN, D>` with `InData`, `OutData` and `InOutData`; checked on the tree), with magic `'K'`. Permission to open `/dev/kernelet` is the device node's mode; a sandbox descriptor is usable only by the user that created it, and the policy caps how many kernelets, grains and CPUs one user may hold.
+The ABI is the misc character device `/dev/kernelet` and two kinds of file descriptor it hands out, both `FileLike` implementors inserted into the caller's file table with `FdFlags::CLOEXEC`, the way the tree hands a pseudo-terminal's descriptor out of an `ioctl` (checked on the tree: `device/tty/pty`): a **sandbox descriptor**, one per created kernelet, and **endpoint descriptors** for streams. `CLOEXEC` is what keeps an OCI hook process the runtime forks from inheriting a sandbox and keeping it alive. Possession of a descriptor is the capability to operate on the sandbox, as with `/dev/kvm`; no per-call credential check is made, and the `owner` field serves only the policy's per-user caps. Every operation is an `ioctl` in the typed form the kernel proper uses (`ioc!(NAME, MAGIC, NR, DataSpec)` over `Ioctl<MAGIC, NR, IS_MODERN, D>` with `InData`, `OutData` and `InOutData`, whose `T: Pod`; checked on the tree: `util/ioctl/mod.rs`). The magic is `MAGIC = 0xC7` (chosen; `'K'` is Linux's virtual-terminal family, which the tree already uses in `device/tty/vt`; **[unverified]** that `0xC7` is free in Linux's `ioctl-number` list, to be checked before the first build). Argument structures contain no pointers, since no pointer type is `Pod`; a user buffer is passed as a `u64` address and length and read with the tree's user-space reader.
 
 **On `/dev/kernelet`:**
 
 ```rust
-/// Creates a kernelet in state `Created` and returns a sandbox descriptor.
-const KERNELET_CREATE: Ioctl<'K', 0x01, true, InOutData<CreateArgs>>;
+/// Creates a sandbox in the endovisor's `Configuring` state and returns a sandbox descriptor.
+/// No kernelet exists yet; `START` creates it from what `ATTACH`, `ENDPOINT` and `BUDGET` gathered.
+type KerneletCreate = ioc!(KERNELET_CREATE, MAGIC, 0x01, InOutData<CreateArgs>);
 #[repr(C)] pub struct CreateArgs {
     pub image: u16,                  // kind: 0 = the Linux kernelet
-    pub num_vcpus: u16,              // the host picks the CPUs from the caller's allowed set
+    pub num_vcpus: u16,              // the endovisor picks the host CPUs at START
     pub initial_grains: u32, pub max_grains: u32,
     pub cpu_weight: u32, pub cpu_quota_us: u32, pub cpu_period_us: u32,   // 0 = uncapped
     pub oops_budget: u32, pub preempt_off_ticks: u32, pub log_bytes_per_sec: u32, pub idle_tick_hz: u32,
-    pub cmdline: *const u8, pub cmdline_len: u32,   // read during the call
-    pub out_cid: u32,                // written: the kernelet's vsock CID
+    pub cmdline_ptr: u64, pub cmdline_len: u32,   // copied in during the call
+    pub out_cid: u32,                // written: the sandbox's vsock CID
 }
-/// Enumerates registered kinds.
-const KERNELET_LIST_IMAGES: Ioctl<'K', 0x02, true, OutData<[ImageInfoRaw; 8]>>;
+/// Enumerates registered kinds; at most 8 (chosen).
+type KerneletListImages = ioc!(KERNELET_LIST_IMAGES, MAGIC, 0x02, OutData<[ImageInfoRaw; 8]>);
 ```
 
-**On a sandbox descriptor**, before `START`:
+**On a sandbox descriptor**, in `Configuring`, before `START`:
 
 ```rust
 /// Attaches a virtual device; returns its index on the kernelet's MMIO bus.
-const KERNELET_ATTACH: Ioctl<'K', 0x10, true, InOutData<AttachArgs>>;
+type KerneletAttach = ioc!(KERNELET_ATTACH, MAGIC, 0x10, InOutData<AttachArgs>);
 #[repr(C)] pub struct AttachArgs {
     pub kind: u16,                   // BLOCK, CONSOLE, RNG, VSOCK, NET
     pub backing_fd: i32,             // BLOCK: a file or block device; CONSOLE, NET: an endpoint descriptor from `ENDPOINT`; else -1
     pub flags: u32,                  // BLOCK: read-only; NET: the MAC address in `arg`
+    pub vcpu: u16,                   // the virtual CPU whose worker delivers its interrupts
     pub arg: u64,
     pub out_index: u16,              // written
 }
 /// Creates a two-ended byte stream and returns the user-space end; the sandbox keeps the other.
-const KERNELET_ENDPOINT: Ioctl<'K', 0x11, true, InOutData<EndpointArgs>>;   // kind: CONSOLE, LOG, NET
+type KerneletEndpoint = ioc!(KERNELET_ENDPOINT, MAGIC, 0x11, InOutData<EndpointArgs>);   // kind: CONSOLE, LOG, NET
+/// Creates the kernelet from the gathered configuration and starts it: `Configuring → Live`.
+type KerneletStart = ioc!(KERNELET_START, MAGIC, 0x20, NoData);
 ```
 
 **On a sandbox descriptor**, at any time:
 
 ```rust
-const KERNELET_START:   Ioctl<'K', 0x20, true, NoData>;
-const KERNELET_KILL:    Ioctl<'K', 0x21, true, InData<u32>>;                // a reason code the status reports
-const KERNELET_GRANT:   Ioctl<'K', 0x22, true, InOutData<u32>>;             // grains asked, grains given
-const KERNELET_BUDGET:  Ioctl<'K', 0x23, true, InData<BudgetArgs>>;
-const KERNELET_STATS:   Ioctl<'K', 0x24, true, OutData<StatsRaw>>;          // `KerneletStats` plus state and CID
-const KERNELET_STATUS:  Ioctl<'K', 0x25, true, OutData<StatusRaw>>;         // state, and the exit status once exited
-/// A vsock stream to the kernelet: connect to `port`, or listen on host port `port` for one connection from it.
-const KERNELET_VSOCK_CONNECT: Ioctl<'K', 0x30, true, InOutData<VsockArgs>>; // returns an endpoint descriptor
-const KERNELET_VSOCK_LISTEN:  Ioctl<'K', 0x31, true, InOutData<VsockArgs>>;
-/// Reclaims everything. Also what closing the last sandbox descriptor does, after a kill and a wait.
-const KERNELET_DESTROY: Ioctl<'K', 0x2f, true, NoData>;                     // EBUSY while a pin or a device thread is outstanding
+type KerneletKill   = ioc!(KERNELET_KILL,   MAGIC, 0x21, InData<u32, PassByVal>);   // a reason code the status reports
+type KerneletGrant  = ioc!(KERNELET_GRANT,  MAGIC, 0x22, InOutData<u32>);           // grains asked, grains given; EINVAL before START
+type KerneletBudget = ioc!(KERNELET_BUDGET, MAGIC, 0x23, InData<BudgetArgs>);       // before START: the initial budget; after: `set_budget`
+type KerneletStats  = ioc!(KERNELET_STATS,  MAGIC, 0x24, OutData<StatsRaw>);        // `KerneletStats` plus state and CID; zeros before START
+type KerneletStatus = ioc!(KERNELET_STATUS, MAGIC, 0x25, OutData<StatusRaw>);       // state, and the exit status once exited
+/// A vsock stream: connect to the kernelet's `port`, or listen on a port scoped to this sandbox for one connection from it.
+type KerneletVsockConnect = ioc!(KERNELET_VSOCK_CONNECT, MAGIC, 0x30, InOutData<VsockArgs>);   // returns an endpoint descriptor
+type KerneletVsockListen  = ioc!(KERNELET_VSOCK_LISTEN,  MAGIC, 0x31, InOutData<VsockArgs>);
+/// Reclaims everything. `EBUSY` unless the kernelet has exited or never started; a `Zombie` is queued for the reaper and the call succeeds.
+type KerneletDestroy = ioc!(KERNELET_DESTROY, MAGIC, 0x2f, NoData);
 ```
 
-A sandbox descriptor is pollable: readable when the kernelet has exited, so that the runtime waits with `poll` rather than a blocking `ioctl`. Endpoint descriptors are ordinary readable, writable, pollable streams. Closing the last sandbox descriptor of a running kernelet kills it, waits for it to exit, and destroys it, so that a runtime that crashes leaves no sandbox behind; a destroy that finds a pin outstanding is retried by a host kernel thread until it succeeds.
+**On a vsock endpoint descriptor:** `KERNELET_VSOCK_SHUTDOWN` (`MAGIC`, `0x32`, `NoData`) sends a send-side `Shutdown` for a half-close ([Channels](channels.md)). Endpoint descriptors are otherwise ordinary readable, writable, pollable streams.
+
+`START` is where `Kernelet::create` and `Kernelet::start` are called, back to back: the control half fixes a kernelet's devices, CPUs and command line at creation ([control half](kernelet-api-control.md)), so the endovisor gathers them first and creates once. It picks `num_vcpus` host CPUs from the policy's set, the ones with the fewest virtual CPUs of other kernelets already placed on them (chosen), and fails with `EINVAL` if the set is smaller than `num_vcpus`. The kernel boot inside the kernelet begins at `START`, so a runtime that must know the sandbox is viable before reporting success starts it and waits for its agent ([kernelet runtime](kernelet-runtime.md)).
+
+A sandbox descriptor is pollable: readable when the kernelet has exited, so that the runtime waits with `poll` rather than a blocking `ioctl`. Closing the last sandbox descriptor of a live kernelet kills it and hands the wait-and-destroy to the **reaper**, a host kernel thread the endovisor starts at registration, so that a runtime that crashes leaves no sandbox behind and no `close` or `exit_group` blocks on a kernelet's death; the reaper also retries every `destroy` that returned `Zombie` whenever a pin or an adoption is released, and runs `on_exited` for the control half.
 
 ## Policy
 
-The endovisor is where the host's policy lives, and the control half has none. In the first version: a per-user cap on live kernelets, on total grains and on total virtual CPUs; the set of host CPUs kernelets may use, from which `CREATE` picks; the default `KerneletPolicy` values; and `on_grant_exhausted`'s answer, which is to grant up to the user's remaining cap. Which kernelets may reach which over vsock is the switch's policy, per pair of CIDs, default allow within one user and deny across.
+The endovisor is where the host's policy lives, and the control half has none. In the first version: a per-user cap on live kernelets, on total grains, on total virtual CPUs and on endpoint bytes; the set of host CPUs kernelets may use, from which `START` picks; the default `KerneletPolicy` values; the device models' `max_request_bytes` and the vsock credit cap and connection bound; and `on_grant_exhausted`'s answer, which is to grant up to the user's remaining cap. Which kernelets may reach which over vsock is the switch's policy, per pair of CIDs, default allow within one user and deny across.
 
 ## What the endovisor is trusted for
 
-Everything. It runs in ring 0 in the host kernel and holds every kernelet's hooks; a bug in it is a host bug. What limits the damage a *tenant* can do through it is that every tenant input reaches it through a checked path: register accesses through the service half's bounds, descriptors through `guest_memory`'s owner checks, packets through the switch's credit. Its own code is safe Rust with `forbid(unsafe_code)` like the rest of the kernel proper, and it is the second-largest piece of new code in the design after the kernelet build of OSTD, *estimated* at 8,000 to 12,000 lines with the five device models.
+Everything. It runs in ring 0 in the host kernel and holds every kernelet's hooks; a bug in it is a host bug. What limits the damage a *tenant* can do through it is that every tenant input reaches it through a checked path: register accesses through the service half's bounds, descriptors through `guest_memory`'s owner checks, packets through the switch's credit. Its own code carries `forbid(unsafe_code)`, stricter than the host kernel proper's `deny` (checked on the tree: `kernel/core/src/lib.rs`), and it is the second-largest piece of new code in the design after the kernelet build of OSTD, *estimated* at 8,000 to 12,000 lines with the five device models.
 
 ## Costs
 
 - Per sandbox: the `Sandbox` object, its endpoints' queues, one device thread per device with a 512 KiB stack, and the kernelet's own cost from the [control half](kernelet-api-control.md).
 - Per `ioctl`: a system call on the host; none is on a kernelet's fast path.
 - Per byte through an endpoint: one copy into the queue and one out, one wakeup each way when the queue was empty or full.
+- Per host: the reaper thread; per kind, the boot-time copy of its image ([Builds and images](builds-and-images.md)).
 
 ## What this page decides
 
-- **The endovisor is a component of the kernel proper, in safe Rust, over the control half** (register D40), not a module of OSTD: it holds Linux functionality, files and threads, that OSTD does not have and should not.
+- **The endovisor is a module of the kernel crate, in safe Rust, over the control half** (register D40), not a module of OSTD and not a component: it holds Linux functionality, files and threads, that OSTD does not have and should not, and that the kernel crate keeps private.
 - **The endovisor ABI is one character device with typed `ioctl`s and pollable descriptors** (register D41), the shape of `/dev/kvm`, because a container runtime already knows how to drive that shape and it needs no new syscalls.
 - **Closing the last sandbox descriptor destroys the kernelet** (register D42), so that no crashed runtime leaks a sandbox; the price is that a runtime that wants a kernelet to outlive it must hand the descriptor to another process first.
+- **`CREATE` configures; `START` creates** (register D52). The alternative, calling `Kernelet::create` at `CREATE`, needs a control-half `add_device` that mutates a created kernelet's boot arguments, against the rule that a kernelet's configuration is fixed at creation.
+- **Possession of a descriptor is the capability** (register D53). The alternative, a per-call owner check, would cost a credential lookup on every `ioctl` and would make a descriptor passed to another process unusable, unlike every other descriptor on the host.
