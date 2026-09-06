@@ -74,9 +74,11 @@ pub struct BootArgs {
     /// user page table the kernelet creates must copy.
     pub kernel_pt_root: u64, pub window_l3: u64,
     pub kernel_half_entries: [u64; 256],
-    /// The initial grant: `num_grains` entries of `GrainDesc` follow the struct.
-    pub num_grains: u32, pub max_grains: u32,
-    /// Devices: `num_devices` entries of `DeviceEntry` follow the grains.
+    /// Memory: the most grains the kernelet may take, and the offsets, from `KW_SHARED`,
+    /// of the host-written grant table (an array of `RunDesc`, its length in the info page)
+    /// and the physical-grain-to-slot radix ([Memory](virtualizing-ostd/memory.md)).
+    pub max_grains: u32, pub grant_table: u32, pub grain_radix: u32,
+    /// Devices: `num_devices` entries of `DeviceEntry` follow the struct.
     pub num_devices: u16,
     /// Offsets, from `KW_SHARED`, of the clock page, the info page and the task-record array.
     pub clock_page: u32, pub info_page: u32, pub task_records: u32, pub max_tasks: u32,
@@ -84,8 +86,8 @@ pub struct BootArgs {
     /// The command line follows the devices: `cmdline_len` bytes.
     pub cmdline_len: u32,
 }
-#[repr(C)] pub struct GrainDesc { pub paddr: u64, pub slot: u32, pub _pad: u32 }
-#[repr(C)] pub struct DeviceEntry { pub id: u16, pub kind: u16, pub irq: u8, pub _pad: [u8; 3], pub reg_bytes: u32, pub device_type: u32 }
+#[repr(C)] pub struct RunDesc { pub paddr: u64, pub first_slot: u32, pub grains: u32, pub l2_frames: u32, pub _pad: u32 }
+#[repr(C)] pub struct DeviceEntry { pub id: u16, pub kind: u16, pub irq: u8, pub _pad: [u8; 3], pub reg_bytes: u32, pub device_type: u32, pub mmio_base: u64 }
 ```
 
 **The clock page**, read-only, one page, shared by every kernelet on the machine: the host tick writes it once, not once per kernelet.
@@ -107,9 +109,8 @@ pub struct ClockPage {
 pub struct InfoPage {
     /// Set once by `kill`, `exit` or `panic`; every service call after it fails with `-DYING`.
     pub dying: AtomicU32,
-    /// Grains granted since boot, in total; grains granted after boot are queued
-    /// host-side and copied out by `grains_take`.
-    pub grains_granted: AtomicU32,
+    /// The published length of the grant table: runs the kernelet may read and map.
+    pub runs: AtomicU32,
 }
 ```
 
@@ -124,7 +125,11 @@ pub struct TaskRecord {
     /// A read-only mirror, for the kernelet, of the host-private flags NEED_RESCHED,
     /// DYING and CANCEL_PARK; the host writes it whenever it writes the private copy.
     pub flags_mirror: AtomicU32,
-    pub _reserved: [u32; 14],
+    /// Written by the host's page-fault handler before it jumps to an exception-table
+    /// recovery address: the faulting address and error code, for the kernelet's retry
+    /// loop ([User mode](virtualizing-ostd/user-mode.md)).
+    pub fault_addr: AtomicU64, pub fault_code: AtomicU32,
+    pub _reserved: [u32; 11],
 }
 ```
 
@@ -161,8 +166,7 @@ pub struct ServiceTable {
     pub size: u32, pub version: u32,
 
     // Memory
-    pub grains_take: extern "C" fn(out: *mut GrainDesc, cap: u32) -> i32,
-    pub grains_request: extern "C" fn(count: u32) -> i32,
+    pub grains_request: extern "C" fn(count: u32, contiguous: u32) -> i32,
     pub pt_root_register: extern "C" fn(root_paddr: u64) -> i32,
     pub pt_root_unregister: extern "C" fn(root_paddr: u64) -> i32,
     pub pt_activate: extern "C" fn(root_paddr: u64) -> i32,
@@ -171,6 +175,7 @@ pub struct ServiceTable {
     // Tasks
     pub task_spawn: extern "C" fn(entry: u32, arg: u64, vcpus: *const [u64; 4], prio: u32, flags: u32) -> i64,
     pub task_exit: extern "C" fn() -> !,
+    pub task_destroy: extern "C" fn(name: u32) -> i32,
     pub task_yield: extern "C" fn(),
     pub task_park: extern "C" fn() -> i32,
     pub task_unpark: extern "C" fn(name: u32) -> i32,
@@ -199,6 +204,9 @@ pub struct ServiceTable {
 
 #[repr(C)]
 pub struct JobDesc { pub kind: u32, pub arg: u32, pub arg2: u64 }
+// JOB_VIRQ: arg = the line. JOB_TICK: arg = the task the tick interrupted on this virtual CPU
+// (`TASK_NONE` if none), arg2 = its privilege level (0 kernel, 3 user, 2 idle), so that the
+// kernel proper's tick accounting charges the right thread ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)).
 pub const JOB_VIRQ: u32 = 1; pub const JOB_TICK: u32 = 2; pub const JOB_GRANT: u32 = 3; pub const JOB_CANCEL: u32 = 4;
 
 // Error codes: negative return values.
@@ -207,12 +215,13 @@ pub const LIMIT: i32 = 4; pub const STATE: i32 = 5; pub const CANCEL: i32 = 6;
 
 // `task_spawn` flags.
 pub const SPAWN_SUSPENDED: u32 = 1;   // created but not runnable until `task_unpark`
-pub const SPAWN_IDLE: u32 = 2;        // an idle task: runs only when its virtual CPU has nothing else
+pub const SPAWN_IDLE: u32 = 2;        // an idle task: runs only when its virtual CPU has no other runnable task of the kernelet,
+                                      // and is unparked once each time that becomes true
 ```
 
 Twenty-five functions. Return values are `0` or a positive count on success and `-code` on failure: `-DYING` (the kernelet was killed), `-NOT_OWNED` (a physical address outside the grant), `-INVALID` (a bad name, index, width or pointer), `-LIMIT` (a quota or `max_grains` reached), `-STATE` (the call is not legal now, including a sleeping call with preemption disabled), `-CANCEL` (a park cut short by a kill).
 
-**Pointer arguments.** A pointer the host writes through (`out`, `ctx`) must lie in `KW_DATA`, `KW_META` or `KW_HEAP` and be aligned to its pointee; a pointer the host only reads (`module`, `text`, `bytes`, `msg`, `vcpus`) may also lie in `KW_TEXT` or `KW_SHARED`. The host checks the range before touching it, since a write to a read-only window page would fault in ring 0. Every pointer is used only during the call; the host copies what it needs and keeps no pointer afterward (invariant I4). This is the one class of host access to a kernelet's memory besides `guest_memory` on the control half, and both are bounded by a call.
+**Pointer arguments.** A pointer the host writes through (`out`, `ctx`) must lie in `KW_DATA`, in `KW_HEAP`, or in the calling task's own kernel stack (the kernel proper keeps its `UserMode` as a local of the task's entry closure; checked on the tree: `kernel/core/src/thread/task.rs`), and be aligned to its pointee; a pointer the host only reads (`module`, `text`, `bytes`, `msg`, `vcpus`) may also lie in `KW_TEXT` or `KW_SHARED`. The host checks the range before touching it, since a write to a read-only window page would fault in ring 0. Every pointer is used only during the call; the host copies what it needs and keeps no pointer afterward (invariant I4). This is the one class of host access to a kernelet's memory besides `guest_memory` on the control half, and both are bounded by a call.
 
 ### The prologue and epilogue every function shares
 
@@ -241,18 +250,18 @@ The depth is stored only after every check has passed, so no error return leaves
 
 ### Memory
 
-- `grains_take(out, cap)`: copies up to `cap` descriptors of grains granted since the last call, which the host queued when `grant` or `grains_request` recorded them, into `out`; returns the count. The initial grant is in `BootArgs`. Each descriptor's `slot` fixes the grain's address in `KW_HEAP`; the host has already recorded the grain in the owner array. *Cost:* a copy of `count × 16` bytes.
-- `grains_request(count)`: asks for more memory now. Grants at once, from the host's free memory, up to what `max_grains` allows; at `max_grains`, consults `KerneletHooks::on_grant_exhausted` if the policy allows, which may raise the limit. Returns the number granted, possibly `0`. The grains are queued for `grains_take`. *Cost:* `count` aligned segment allocations, or the hook.
+- `grains_request(count, contiguous)`: asks for more memory now, `count` grains, as one physically contiguous run if `contiguous` is set. Grants at once, from the host's free memory, up to what `max_grains` allows; at `max_grains`, consults `KerneletHooks::on_grant_exhausted` if the policy allows, which may raise the limit. Appends the run to the host-written grant table, fills the radix, installs level-2 tables if the run raises the installed coverage, and publishes the new length in the info page before returning the number granted, possibly `0`; the kernelet maps the run itself ([Memory](virtualizing-ostd/memory.md)). *Cost:* one aligned segment allocation, the table and radix writes, or the hook.
 - `pt_root_register(root)`, `pt_root_unregister(root)`: the kernelet built a user page table whose root frame is `root`; the host records it so that `pt_activate` and the scheduler accept it, and so that destroy can find every root. Unregistering a root that any task has recorded as its address space, or that is active on any CPU, fails with `-STATE`; a successful unregister invalidates the root's translations on every CPU it was active on before returning. *Checks:* `root` in the grant and not already registered. *Cost:* one owner-array read, one insertion in the kernelet's root set; on unregister, a shootdown.
 - `pt_activate(root)`: writes CR3 with `root` for the current task and records `root` in the task's host-private state, so that the host's `switch_to_task` restores it on every switch to this task and records the CPU in the root's active set; when the host switches from a kernelet task to a host task it also clears its own `ACTIVATED_VM_SPACE` cache, so that the host thread's post-schedule handler re-activates its space rather than trusting a stale pointer (checked on the tree: `VmSpace::activate` early-returns when the cache matches). *Checks:* `root` registered. *Cost:* the CR3 write and, since window mappings are not Global, the loss of the window's translations.
 - `tlb_shootdown(root, start, len)`: invalidates `[start, start+len)` on every host CPU in `root`'s active set, by inter-processor call, and waits; `root == 0` means every root of this kernelet, which is what a change to the window's own mappings needs, since those are shared by every root. A kernelet cannot send interrupts (absent `smp`), so this is how its `TlbFlusher` completes. *Checks:* `root` registered or zero; the range inside the user half or the window. *Cost:* one IPI per target CPU plus the wait; the target set is bounded by the kernelet's CPU set.
 
-The window's own sub-tables (level 2 and level 1 under the window's level-3 table) are written by OSTD (kernelet build) with frames from its grant, so mapping a grain into `KW_HEAP` or a metadata chunk into `KW_META` needs no service call ([Memory](virtualizing-ostd/memory.md)). The host owns only the level-3 table and its mappings of `KW_TEXT`, `KW_DATA` and `KW_SHARED`.
+The window's own level-2 tables under `KW_HEAP` are written by OSTD (kernelet build) with frames from its grant, so mapping a grain into `KW_HEAP` needs no service call ([Memory](virtualizing-ostd/memory.md)). The host owns only the level-3 table and its mappings of `KW_TEXT`, `KW_DATA` and `KW_SHARED`.
 
 ### Tasks
 
 - `task_spawn(entry, arg, vcpus, prio, flags) -> name`: creates a host task whose body is the trampoline that calls `EntryTable::run_task(entry, arg)` on the kernelet's kernel page table, with a fresh 512 KiB kernel stack (measured on the tree), in the kernelet's scheduling group, with affinity the host CPUs of the virtual-CPU set `*vcpus`, and makes it runnable unless `SPAWN_SUSPENDED`. `SPAWN_IDLE` marks an idle task ([Tasks](virtualizing-ostd/tasks.md)). *Checks:* `entry > 1`; the task limit; `*vcpus` a nonempty subset of the CPU set. *Cost:* a kernel stack and a task object, as `TaskOptions::spawn` today, plus one record initialization.
 - `task_exit() -> !`: the current task ends. The host reaps the task object and its stack after switching away; the index is retired and its generation advanced. No kernelet destructor runs on the host's behalf.
+- `task_destroy(name)`: ends a task that was spawned `SPAWN_SUSPENDED` and never unparked, freeing its stack; `-STATE` if it has ever run. *Cost:* the reap.
 - `task_yield()`: the current task yields within its group.
 - `task_park() -> 0 | -CANCEL`: parks the current task until `task_unpark(name)` or a cancellation. A park token is remembered: an unpark that arrives while the task is running sets `PARK_TOKEN`, and the next park consumes it and returns at once, so no wakeup is lost between a wait queue's enqueue and its park, which is the rule OSTD's own `park_current(has_unparked)` enforces today. A park that finds `CANCEL_PARK` set, or is interrupted by `kill`, returns `-CANCEL`; the epilogue then terminates the task.
 - `task_unpark(name)`: makes the named task runnable if parked, or sets its token if running. *Checks:* the name's index and generation are this kernelet's and live. *Cost:* the scheduler's enqueue.
@@ -260,7 +269,7 @@ The window's own sub-tables (level 2 and level 1 under the window's level-3 tabl
 
 ### Jobs and time
 
-- `job_wait(out) -> 0`: parks the calling task, which must be a worker, until a job for its virtual CPU is posted, then writes the job into `out`. Jobs are: a virtual interrupt (`JOB_VIRQ`, with the line number), a timer tick (`JOB_TICK`), a new grant (`JOB_GRANT`), or a cancellation because the kernelet is dying (`JOB_CANCEL`). Delivery is edge-triggered: the host clears a line's pending bit when it hands the job over, so a `raise_irq` that arrives while the handler runs becomes the next job rather than being lost; a line raised twice before delivery is one job. *Checks:* the caller is a worker. *Cost:* a park and an unpark per job; the delivery latency of a virtual interrupt is therefore a wakeup, which the Evaluation chapter will measure.
+- `job_wait(out) -> 0`: parks the calling task, which must be a worker, until a job for its virtual CPU is posted, then writes the job into `out`. Jobs are: a virtual interrupt (`JOB_VIRQ`, with the line number), a timer tick (`JOB_TICK`), a new grant to read from the grant table (`JOB_GRANT`), or a cancellation because the kernelet is dying (`JOB_CANCEL`). Delivery is edge-triggered: the host clears a line's pending bit when it hands the job over, so a `raise_irq` that arrives while the handler runs becomes the next job rather than being lost; a line raised twice before delivery is one job. *Checks:* the caller is a worker. *Cost:* a park and an unpark per job; the delivery latency of a virtual interrupt is therefore a wakeup, which the Evaluation chapter will measure.
 - `tick_enable(vcpu, enable)`: turns the timer tick for one virtual CPU on or off. While on, the host posts `JOB_TICK` to that virtual CPU's worker at `TIMER_FREQ` (1000 Hz, on the tree) after any tick during which a task of the kernelet ran on that virtual CPU's host CPU; an idle virtual CPU gets no ticks. *Cost:* one worker wakeup per millisecond per busy virtual CPU.
 - `timer_arm(vcpu, deadline_ns)`: a one-shot: post `JOB_TICK` to the virtual CPU's worker at `deadline_ns` on the host's monotonic clock, or at once if past.
 

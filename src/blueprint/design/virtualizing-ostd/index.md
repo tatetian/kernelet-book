@@ -10,11 +10,11 @@ This page is the taxonomy. Every public item of OSTD that the kernel proper uses
 - **Virtualized.** The item keeps its public name and signature and gets a second body under the feature. The body serves the request from the kernelet's own state in its window, from a shared page, or through a service-table call. Some virtualized items never cross into the host (a `cpu_local!` read, `Jiffies::elapsed`); some always do (`Task::spawn`, an `IoMem` register write); the table says which.
 - **Absent.** The item is `cfg(not(feature = "kernelet"))`. A use of it fails to compile in the kernelet build with an unresolved name. Every absent item is either a machine operation a tenant must never have, or something whose only users are the components that stay in the host kernel.
 
-The classification is executable, not a list to be trusted. For every item marked identical, a test in `ostd`'s kernelet-build test suite calls it under instrumentation that counts host lock acquisitions, records every physical address written, and scans host structures for window addresses afterward; an identical item must leave all three unchanged. The test is what keeps the table true as OSTD changes (invariant I8).
+The classification is executable, not a list to be trusted. For every item marked identical, a test in `ostd`'s kernelet-build test suite is to call it under instrumentation that counts host lock acquisitions, records every physical address written, and scans host structures for window addresses afterward; an identical item must leave all three unchanged. The test is what keeps the table true as OSTD changes (invariant I8).
 
 ## Counting
 
-Over the inventory's items, grouped as the tables below group them and counted per row: 26 rows identical, 37 virtualized (of which 21 never cross into the host), 8 absent, and one internal to OSTD. Of the absent rows, every one but the interrupt-remapping index has its users in host-only components; the four `cfg` lines the kernel proper's own code needs are listed at the end of the page. Counted over this page's tables; the inventory's import counts say how widely each item is depended on.
+Over the inventory's items, grouped as the tables below group them and counted per row: 26 rows identical, 37 virtualized (of which 21 never cross into the host), 8 absent, and one internal to OSTD. The absent rows have their users in host-only components, except three items (`IoPort`, its access types and `ACPI_INFO`) used by the kernel proper's own `arch/x86/power.rs`; the places in the kernel proper's own code that need a `cfg` line are listed at the end of the page, and the files that name host-only components are counted there too. Counted over this page's tables; the inventory's import counts say how widely each item is depended on.
 
 ## `mm`: memory
 
@@ -26,19 +26,19 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `Fallible`, `Infallible`, `FallibleVmRead`, `FallibleVmWrite`, `PodOnce`, `PodAtomic` | identical | markers and traits | none | nothing |
 | `PAGE_SIZE`, `Vaddr`, `Paddr`, `Daddr`, `PagingLevel`, `MAX_USERSPACE_VADDR`, `KERNEL_VADDR_RANGE` | identical | constants | none | nothing |
 | `HasPaddr`, `HasSize`, `HasDaddr`, `HasPaddrRange`, `Split` | identical | traits | none | nothing |
-| `FrameAllocOptions` | identical | calls the kernel proper's own global frame allocator, which manages the kernelet's grains; zeroing writes through the virtualized `paddr_to_vaddr` | none per call; a grain request when the allocator is empty | `ENOMEM` when the grant is exhausted ([Memory](memory.md)) |
-| `GlobalFrameAllocator` (hook) | identical | the kernel's allocator is fed grains by `add_free_memory` at boot and on each `JOB_GRANT` | none | nothing |
-| `Frame<M>`, `UFrame`, `Segment<M>`, `USegment`, `UniqueFrame<M>`, `FrameRef` | virtualized, no crossing | same API; the metadata slot lives in the kernelet's own `KW_META` array, found through the grant table, not in the host's global array | one grant-table lookup per metadata access | nothing |
+| `FrameAllocOptions` | virtualized | the identical call into the kernel proper's own global frame allocator, which manages the kernelet's runs; when that allocator is empty the body calls `grains_request` before returning `NoMemory`; zeroing writes through the virtualized `paddr_to_vaddr` | none per call; one crossing per refill | `ENOMEM` when the grant is exhausted ([Memory](memory.md)) |
+| `GlobalFrameAllocator` (hook) | identical | the kernel's allocator is fed runs by `add_free_memory` at boot and on each `JOB_GRANT` | none | physically contiguous allocations are bounded by the largest run the host can supply ([Memory](memory.md)) |
+| `Frame<M>`, `UFrame`, `Segment<M>`, `USegment`, `UniqueFrame<M>`, `FrameRef` | virtualized, no crossing | same API; the metadata slot lives at the head of the frame's own run, found through the host-written radix, not in the host's global array | one radix lookup per metadata access | nothing |
 | `AnyFrameMeta`, `AnyUFrameMeta`, `impl_frame_meta_for!`, `impl_untyped_frame_meta_for!`, `GetFrameError`, `FRAME_METADATA_MAX_SIZE` | identical | the metadata protocol, over the kernelet's own slots | none | nothing |
 | `frame::linked_list::{LinkedList, Link, CursorMut}` | identical | intrusive lists over the kernelet's own metadata | none | nothing |
-| `heap::GlobalHeapAllocator` (hook), `HeapSlot`, `SlotInfo`, `Slab`, `SlabMeta`, `SlabSlotList` | virtualized, no crossing | same API; `HeapSlot::paddr` and `as_ptr` translate through the heap window, and `alloc_large` maps its segment there | one translation per slot operation | nothing |
+| `heap::GlobalHeapAllocator` (hook), `HeapSlot`, `SlotInfo`, `Slab`, `SlabMeta`, `SlabSlotList` | virtualized, no crossing | same API; `HeapSlot::paddr` and `as_ptr` translate through the heap window, and `alloc_large` addresses its segment there | one translation per slot operation | nothing |
 | `kspace::paddr_to_vaddr` | virtualized, no crossing | `KW_HEAP + slot(pa) × 2 MiB + offset` through the grant table, never the linear map | one lookup | nothing |
 | `kspace::{KVirtArea, kernel_loaded_offset, LINEAR_MAPPING_*, VMALLOC_*}` | absent | kernel-half virtual memory is the host's; no user in the kernel proper | | |
 | `VmSpace::new` | virtualized, no crossing | copies the kernel half from the kernelet's kernel page table (its 256 entries are in `BootArgs`) into a root frame from the grant | none beyond today's | nothing |
 | `VmSpace::activate` | virtualized | `pt_root_register` on first activation, `pt_activate` on each | one crossing per activation; the CR3 write | nothing |
 | `VmSpace::{cursor, cursor_mut, reader, writer}`, `Cursor`, `CursorMut::{query, find_next, jump, map, unmap, protect_next}`, `VmQueriedItem`, `PageProperty`, `PageFlags`, `CachePolicy` | virtualized, no crossing | the page-table walk is identical; leaf and table frames come from the grant; a node frame's metadata is the kernelet's | none beyond today's | nothing |
-| `CursorMut::flusher`, `tlb::{TlbFlusher, TlbFlushOp}` | virtualized | remote invalidation through `tlb_shootdown`, since a kernelet cannot send interrupts | one crossing and one IPI per target CPU per flush batch | nothing |
-| `CursorMut::map_iomem`, `find_iomem_by_paddr` | virtualized | fails with `Error::AccessDenied`; a virtual device's registers are not memory | none | `mmap` of device memory fails with `EACCES` |
+| `CursorMut::flusher`, `tlb::{TlbFlusher, TlbFlushOp}` | virtualized | remote invalidation through `tlb_shootdown`, one call per operation in the flusher's batch, with `len == u64::MAX` for a flush of everything non-Global, since a kernelet cannot send interrupts ([Memory](memory.md)) | one crossing and one IPI per target CPU per operation | nothing |
+| `CursorMut::map_iomem`, `find_iomem_by_paddr` | virtualized, no crossing | unreachable in a kernelet: their only producer is the framebuffer device, a host-only component (checked on the tree: `device/fb.rs`); the kernelet build makes `map_iomem` a no-op and `find_iomem_by_paddr` return `None` | none | nothing |
 | `dma::{DmaStream, DmaCoherent, DmaDirection, ToDevice, FromDevice, FromAndToDevice}` | virtualized, no crossing | frames from the grant; `daddr` is `paddr`; `sync_*` are no-ops; ownership of a descriptor's frames is checked by the device model, not here ([Devices](devices.md)) | none | nothing |
 | `fault::inject_user_page_fault_handler` | identical | the hook is stored and called kernelet-side by the retry loop above | none | nothing |
 | `page_table::*` | internal | not public to the kernel proper | | |
@@ -51,17 +51,17 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `LocalIrqDisabled`, `WriteIrqDisabled`, `SpinLock::disable_irq` | virtualized, no crossing | the guardian disables preemption instead of interrupts; sound because no kernelet code runs in interrupt context ([Interrupts and time](interrupts-and-time.md)) | none | nothing |
 | `Mutex`, `MutexGuard`, `RwMutex` and its guards, `WaitQueue`, `Waiter`, `Waker` | virtualized | identical logic over `task_park` and `task_unpark` by name; a waker holds a task name, not an `Arc<Task>` ([Tasks](tasks.md)) | one crossing per park and per wake | nothing |
 | `Rcu`, `RcuOption`, their read guards, `non_null::*` | identical | the read side is preemption-disabled reads | none | nothing |
-| `RcuDrop`, the write side | virtualized, no crossing | grace periods tracked per virtual CPU in the kernelet build; callbacks run on the worker at ticks ([Tasks](tasks.md)) | callbacks are deferred to the next tick rather than the next switch | nothing |
+| `RcuDrop`, the write side | virtualized, no crossing | grace periods tracked per virtual CPU, advanced at the kernelet's own switch points (park, yield, return from `user_run`, the worker's loop top), with an extended quiescent state for a virtual CPU whose worker and idle task are parked; callbacks run on the worker at the tick that completes the period ([Tasks](tasks.md)) | callbacks are deferred to the next tick rather than the next switch | nothing |
 | `RwArc`, `RoArc` | identical | | none | nothing |
 
 ## `task`: tasks and scheduling
 
 | item | kind | how, and what it relies on | cost | what a tenant sees |
 |---|---|---|---|---|
-| `Task`, `TaskOptions`, `CurrentTask` | virtualized | a kernelet-side `Task` is a name plus the kernel's `data` and `local_data`; `spawn` stores the closure in the kernelet's heap under an entry index and calls `task_spawn`; `current` reads the CPU slot; `yield_now` is `task_yield`; `run` is `task_unpark` ([Tasks](tasks.md)) | one crossing per spawn, yield and run | nothing |
-| `disable_preempt`, `DisabledPreemptGuard` | virtualized, no crossing | increments the task record's `preempt_count`, which the host tick honors | one store | nothing |
-| `halt_cpu` | virtualized | parks the idle task until the host reports the virtual CPU idle again ([Tasks](tasks.md)) | one crossing | nothing |
-| `scheduler::inject_scheduler`, `Scheduler`, `LocalRunQueue`, `EnqueueFlags`, `UpdateFlags`, `info::*`, `AtomicCpuId`, `enable_preemption_on_cpu` | virtualized, no crossing | accepted and not consulted: the host's scheduler runs the kernelet's tasks within its group; the kernel proper's scheduler classes are inert inside a kernelet | none | `nice`, `sched_setscheduler` and real-time policies have no effect inside a kernelet; every thread of a kernelet is scheduled alike by the host |
+| `Task`, `TaskOptions`, `CurrentTask` | virtualized | a kernelet-side `Task` is a name plus the kernel's `data` and `local_data`; `run` stores the body under an entry index, calls `task_spawn` suspended, registers the task and unparks it; `current` reads the CPU slot; `yield_now` is `task_yield`; `TaskOptions` gains `cpu_affinity` and `priority` builders in both builds ([Tasks](tasks.md)) | two crossings per spawn, one per yield | load figures and scheduler policy queries report the inert class scheduler's values |
+| `disable_preempt`, `DisabledPreemptGuard` | virtualized, no crossing | increments the task record's `preempt_count`, which the host's kernel-mode preemption honors; the guard's drop reads `NEED_RESCHED` from the mirror and yields if asked | one store and one load; a `task_yield` crossing when the host has asked | nothing |
+| `halt_cpu` | virtualized | `task_park`; the host unparks an idle task (spawned `SPAWN_IDLE`) once each time its virtual CPU's last other runnable task parks or exits ([Tasks](tasks.md)) | one crossing | nothing |
+| `scheduler::inject_scheduler`, `Scheduler`, `LocalRunQueue`, `EnqueueFlags`, `UpdateFlags`, `info::*`, `AtomicCpuId`, `enable_preemption_on_cpu` | virtualized, no crossing | accepted and not consulted: the host's scheduler runs the kernelet's tasks within its group; the kernel proper's scheduler classes are inert inside a kernelet | none | `nice`, `sched_setscheduler` and real-time policies reach the host only as the priority hint the `cfg` line forwards through `task_set_prio`; `sched_setaffinity` within the virtual-CPU set works through `task_set_vcpus`; load averages and run-queue statistics report the inert scheduler's zeros ([Tasks](tasks.md)) |
 | `atomic_mode::{InAtomicMode, AsAtomicModeGuard, might_sleep}` | identical | | none | nothing |
 | `inject_pre_schedule_handler`, `inject_post_schedule_handler` | virtualized, no crossing | called by the kernelet build around its own voluntary switch points; involuntary switches are the host's, which saves and restores the user FS and GS bases and the FPU state itself ([Tasks](tasks.md)) | XSAVE and XRSTOR per involuntary switch | nothing |
 
@@ -72,10 +72,10 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `IrqLine::{alloc, alloc_specific, num, on_active, is_empty}`, `IrqCallbackFunction` | virtualized | virtual lines; a callback runs on the worker of the virtual CPU the line is bound to, in task context, when the host posts `JOB_VIRQ` ([Interrupts and time](interrupts-and-time.md)) | a wakeup per interrupt | nothing |
 | `IrqLine::remapping_index` | absent | interrupt remapping is the host's | | |
 | `disable_local`, `DisabledLocalIrqGuard` | virtualized, no crossing | disables preemption | one store | nothing |
-| `InterruptLevel` | identical | always reports task context in a kernelet | none | nothing |
-| `register_bottom_half_handler_l1`, `_l2` | virtualized, no crossing | run on the worker after each virtual interrupt's top half | none | nothing |
-| `Jiffies`, `TIMER_FREQ` | virtualized, no crossing | `elapsed` reads the info page's `jiffies` | one load | time is the host's |
-| `register_callback_on_cpu` | virtualized | per-virtual-CPU callbacks run on that CPU's worker on `JOB_TICK`; ticks are posted only while the virtual CPU has run since the last tick | a wakeup per tick per busy virtual CPU | nothing |
+| `InterruptLevel` | virtualized, no crossing | reports the level of the job a worker is delivering, recorded in the replica, so interrupt-context checks in the kernel proper choose their non-sleeping paths inside a delivered handler ([Interrupts and time](interrupts-and-time.md)) | none | nothing |
+| `register_bottom_half_handler_l1`, `_l2` | virtualized, no crossing | run on the worker after each virtual interrupt's top half and after each tick's callbacks, as `bottom_half::process` runs after every interrupt on the tree, the timer's included | none | nothing |
+| `Jiffies`, `TIMER_FREQ` | virtualized, no crossing | `elapsed` reads the host-wide clock page's `jiffies` | one load | time is the host's |
+| `register_callback_on_cpu` | virtualized | per-virtual-CPU callbacks run on that CPU's worker on `JOB_TICK`; a busy virtual CPU is ticked at `TIMER_FREQ`, an idle kernelet at `idle_tick_hz` on virtual CPU 0 | a wakeup per tick per busy virtual CPU | timer latency up to `1 / idle_tick_hz` while the kernelet is idle |
 
 ## `cpu`, `user`: CPUs and user mode
 
@@ -84,17 +84,18 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `CpuId`, `CpuSet`, `AtomicCpuSet`, `num_cpus`, `all_cpus`, `CpuId::current_racy` | virtualized, no crossing | the virtual CPU namespace from `BootArgs`; `current` reads the CPU slot's `vcpu` | one load | `nproc` is the kernelet's CPU count |
 | `PinCurrentCpu`, `PrivilegeLevel` | identical | | none | nothing |
 | `cpu_local!`, `cpu_local_cell!`, `StaticCpuLocal`, `CpuLocalCell` | virtualized, no crossing | the replica for the current virtual CPU, addressed as `replica_base + vcpu × replica_bytes + offset`; single-instruction operations become load-and-store under a preemption guard | two loads per access instead of a GS-relative one | nothing |
-| `DynamicCpuLocal`, `DynCpuLocalChunk` | absent | no user in the kernel proper | | |
+| `DynamicCpuLocal`, `DynCpuLocalChunk` | virtualized, no crossing | used by the heap allocator's per-CPU allocator (checked on the tree); a chunk is a grant `Segment` addressed through the window and `get_on_cpu` indexes by virtual CPU ([Memory](memory.md)) | one translation per access | nothing |
 | `UserMode::{new, context, context_mut}`, `UserContextApi`, `UserModeHooks`, `ReturnReason`, `UserContext`, `GeneralRegs`, `CpuException`, `CpuExceptionInfo`, `RawPageFaultInfo`, `PageFaultErrorCode`, `FpuContext` | identical | value types and the loop's hooks | none | nothing |
 | `UserMode::execute` | virtualized | the loop is identical; the ring transition is `user_run` ([User mode](user-mode.md)) | one crossing per round trip, on top of the transition | nothing |
-| `FsBase`, `GsBase` | identical | MSR writes under a preemption guard, which the host honors as it honors interrupt disabling today | none | nothing |
+| `FsBase` | identical | a base-register write under a preemption guard, which the host honors as it honors interrupt disabling today | none | nothing |
+| `GsBase` | virtualized, no crossing | on the tree `load` and `save` bracket a base-register access with two `swapgs` (checked: `ostd/src/arch/x86/cpu/context/mod.rs`), which is safe only with interrupts really disabled; a host interrupt between the two would run on the tenant's GS base. The kernelet build reads and writes the `IA32_KERNEL_GS_BASE` MSR directly, which needs no `swapgs` | an MSR access instead of a base-register instruction, *estimated* at a hundred cycles | nothing |
 
 ## `io`, `bus`: devices
 
 | item | kind | how, and what it relies on | cost | what a tenant sees |
 |---|---|---|---|---|
-| `IoMem::{acquire, acquire_with_cache_policy, slice, cache_policy}` | virtualized, no crossing | an `IoMem` is a `(device, offset, len)` triple over a virtual device from `BootArgs`, not a mapping | none | nothing |
-| `IoMem::{read_fallible, write_fallible}` and its `VmIoOnce` | virtualized | every access is `mmio_read` or `mmio_write` to the endovisor's device model ([Devices](devices.md)) | one crossing and one hook call per register access | nothing |
+| `IoMem::{acquire, acquire_with_cache_policy, slice, cache_policy}`, its `HasPaddr`, `HasSize` and `Drop` | virtualized, no crossing | an `IoMem` is a `(device, offset, len)` triple over a virtual device whose `mmio_base` in `BootArgs` covers the range, not a mapping; `paddr()` is the pseudo-physical address; `Drop` unmaps nothing | none | nothing |
+| `IoMem::{read_fallible, write_fallible}`, its `VmIoOnce`, `VmIo` and `VmIoFill` | virtualized | every access is `mmio_read` or `mmio_write` to the endovisor's device model; a bulk access is a loop of the widest aligned words ([Devices](devices.md)) | one crossing and one hook call per register access, per word for bulk access | nothing |
 | `IoPort` and `arch::device::io_port::*` | absent | port I/O is the host's; used only by host-only components | | |
 | `bus::BusProbeError` | identical | | none | nothing |
 
@@ -105,15 +106,15 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `boot::boot_info`, `BootInfo`, `EarlyCmdline`, `MemoryRegion`, `MemoryRegionType` | virtualized, no crossing | synthesized from `BootArgs`: the command line from the configuration, one `Usable` region per initial grain, no ACPI, no framebuffer, no initramfs unless the endovisor attaches one as a device ([The rest](the-rest.md)) | none | `/proc/cmdline`, `/proc/meminfo` reflect the configuration |
 | `boot::smp::register_ap_entry` | virtualized | the entry runs once on each virtual CPU above 0, on a task the kernelet build spawns pinned there during its init | one spawn per virtual CPU | nothing |
 | `smp::{inter_processor_call, PendingIpis}` | absent | a kernelet cannot interrupt a CPU; no user in the kernel proper | | |
-| `power::{poweroff, restart}`, `ExitCode` | virtualized | `exit(code)`; the injected handlers are accepted and not called | one crossing, final | `reboot(2)` ends the kernelet with the code |
+| `power::{poweroff, restart}`, `ExitCode`, and `power::exit_with_code` (new in both builds) | virtualized | `exit(0)` for `Success` and `exit(1)` for `Failure`; `exit_with_code(u32)` carries an arbitrary code, and the host build's body is `poweroff`; the injected handlers are accepted and not called | one crossing, final | `reboot(2)` ends the kernelet with code 0 (the syscall passes `Success`; checked on the tree); init exiting ends it with init's status through `exit_with_code` ([The rest](the-rest.md)) |
 | `power::inject_restart_handler`, `inject_poweroff_handler` | virtualized, no crossing | stored, unused | none | nothing |
 | `console::{early_print, early_println}` | virtualized | `console_write` | one crossing per call | output goes to the endovisor's console hook |
 | `console::uart_ns16650a::*` | absent | used only by the host-only `uart` component | | |
-| `log` macros, `Log`, `Record`, `Level`, `LevelFilter`, `inject_logger`, `set_max_level`, `max_level` | virtualized | formatting and filtering are identical; the default sink, when no logger is injected, is `log_write`; the kernelet's `logger` component is host-only, so none is | one crossing per record under the rate limit | records reach the endovisor's log hook |
+| `log` macros, `Log`, `Record`, `Level`, `LevelFilter`, `inject_logger`, `set_max_level`, `max_level` | virtualized | formatting and filtering are identical; the default sink, when no logger is injected, is `log_write`; the `logger` component's serial sink is host-only and injects nothing in a kernelet, while its `print` and `println`, which the kernel proper's prelude imports, stay over `early_print` | one crossing per record under the rate limit | records reach the endovisor's log hook |
 | `panic::{catch_unwind, begin_panic, print_stack_trace}` | identical | the unwinder and its tables are in the image | none | nothing |
-| `panic::abort` | virtualized | `panic(msg)`: ends the kernelet, never the machine | one crossing, final | a kernel panic ends the sandbox |
-| `#[ostd::panic_handler]` | identical | the kernel's oops handling runs in the kernelet; its final `abort` is the virtualized one | none | nothing |
-| `#[ostd::main]` | virtualized, no crossing | the expansion under the feature parks the boot task after `main` returns instead of asserting there is no current task and powering off | none | nothing |
+| `panic::abort` | virtualized | `panic("abort")`, since `abort` carries no message: ends the kernelet, never the machine | one crossing, final | a kernel panic ends the sandbox |
+| `#[ostd::panic_handler]` and `__ostd_panic_handler` | virtualized, no crossing of its own | the kernel's oops handling runs in the kernelet unchanged; the expansion under the feature wraps it so that the panic message is captured, a caught panic is reported with `oops(msg)`, and an uncaught one ends with `panic(msg)` ([The rest](the-rest.md)) | one crossing per oops | a kernel oops kills the thread, up to a budget the runtime sets |
+| `#[ostd::main]` | virtualized, no crossing | the expansion under the feature parks the boot task after `main` returns instead of asserting there is no current task and powering off; the boot task is pinned to virtual CPU 0, since `main` initializes the boot CPU's per-CPU state and pins its idle loop there (checked on the tree: `init.rs`) | the parked boot task's 512 KiB stack for the kernelet's life | nothing |
 | `#[ostd::global_frame_allocator]`, `#[ostd::global_heap_allocator]`, `#[ostd::global_heap_allocator_slot_map]`, `#[ostd::early_cmdline_parser]` | identical | the hooks are bound inside the kernelet image | none | nothing |
 | `util::*`, `prelude::*`, `Error`, `Result` | identical | | none | nothing |
 
@@ -121,7 +122,7 @@ Over the inventory's items, grouped as the tables below group them and counted p
 
 | item | kind | how, and what it relies on | cost | what a tenant sees |
 |---|---|---|---|---|
-| `cpu::context::*` (listed under `user` above) | identical | | | |
+| `cpu::context::*` | identical, listed under `user` above | | | |
 | `trap::{TrapFrame, USER_CS_VALUE, USER_SS_VALUE}` | identical | value type and constants | none | nothing |
 | `read_tsc`, `read_random`, `cpu::cpuid::cpuid` | identical | unprivileged or ring-0 instructions with local effect | none | nothing |
 | `tsc_freq` | virtualized, no crossing | `BootArgs::tsc_freq_hz` | none | nothing |
@@ -130,11 +131,14 @@ Over the inventory's items, grouped as the tables below group them and counted p
 
 ## The kernel proper's own `cfg` lines
 
-Four absent items have users in `kernel/core/src` rather than in host-only components, and each gets a `cfg` on the offending lines; the list is exhaustive by the inventory's file scan:
+The kernel proper's own code needs `cfg` lines in the following places. The first six were found by the inventory's scan of `use ostd::` imports; the seventh by a scan for the names of host-only component crates (16 files in `kernel/core/src`, counted on the tree):
 
 1. `init.rs`: `register_ap_entry` stays (virtualized); the idle loops' `halt_cpu` stays (virtualized); the `panic!` that ends the host when init exits becomes `power::poweroff(code)` under the feature, so that a kernelet whose init exits ends with `Exited(code)` rather than `Panicked`.
 2. `arch/x86/power.rs`: the ACPI power-off and reset paths are `cfg(not(feature = "kernelet"))`; the injected handlers become no-ops.
-3. `time/softirq.rs`, `time/cpu_time_stats.rs`, `sched/stats/scheduler_stats.rs`, `process/process/timer_manager.rs`: these use `cpu_local!` and the tick, both virtualized; no line changes, listed because the inventory's scan flagged them as machine-touching through `CpuId::current_racy`, which is virtualized.
+3. `time/softirq.rs`, `time/cpu_time_stats.rs`, `sched/stats/scheduler_stats.rs`, `process/process/timer_manager.rs`: these use `cpu_local!` and the tick, both virtualized. The tick callbacks charge time to the *interrupted* thread through `Thread::current()` and decide user against system time through `InterruptLevel::current()` (checked on the tree); on the worker both would name the worker. No line changes: the worker delivers a tick with `Task::current()` and `InterruptLevel::current()` reporting the interrupted task and privilege the host recorded in the job ([Interrupts and time](interrupts-and-time.md)), under assumption A10.
 4. `thread/mod.rs`: the schedule handlers stay (virtualized); the context-switch counter's `add_on_cpu` stays over the virtualized `cpu_local!`.
+5. `thread/kernel_thread.rs` (`ThreadOptions::build`), `syscall/sched_affinity.rs` and the scheduler classes: one line each forwards a thread's CPU affinity, its idle policy and its priority to the `TaskOptions` builders and setters added for this purpose, so that per-CPU daemons pin correctly and idle threads park ([Tasks](tasks.md)).
+6. `comps/virtio/src/transport/mmio/bus/arch/x86.rs`: the interrupt step of the MMIO bus probe calls `IrqLine::alloc_specific` instead of the absent `IRQ_CHIP` ([Devices](devices.md)).
+7. The files that name host-only components (`aster_framebuffer` in `device/fb.rs` and the virtual terminal, `aster_nvme` in the block registry, `aster_uart` in `tty/serial.rs`, `aster_i8042` in `driver/mod.rs`, `aster_time` in the vDSO, `system_time`, `sysinfo` and `uptime`, `aster_logger` in `prelude.rs`): each reference is behind `cfg(feature = "host")`, and where the kernel proper needs a value the component supplied, the TSC frequency for the vDSO and the uptime, the kernelet build reads it from `BootArgs` through `tsc_freq` and the clock page. The `logger`'s `print` and `println` stay, over `early_print`.
 
-Every other difference between the kernel proper as host and as kernelet is a component present in one build and not the other ([Builds and images](../builds-and-images.md#two-builds)), and the virtio MMIO transport's bus enumeration, which reads `BootArgs` instead of a device tree or ACPI.
+Every other difference between the kernel proper as host and as kernelet is a component present in one build and not the other ([Builds and images](../builds-and-images.md#two-builds)).

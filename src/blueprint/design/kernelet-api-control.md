@@ -14,9 +14,11 @@ The control half and the service half share the [window](builds-and-images.md#wi
 | `KW_TEXT` | control half | the kind's shared frames, 2 MiB-aligned so that they map as 2 MiB pages | `create` |
 | `KW_DATA` (template and replicas) | control half | host memory, charged to the kernelet | `create` |
 | `KW_SHARED` | control half | host memory, charged to the kernelet | `create` |
-| `KW_META` and `KW_HEAP` | OSTD (kernelet build), with level-2 and level-1 tables from its own grant | the grant | as grains arrive |
+| `KW_HEAP`, level-3 entries and the level-2 tables | control half; the tables are reserved frames at the head of the kernelet's runs, written through the linear map | the grant | `create`, and `grant` when it raises the coverage |
+| `KW_HEAP`, the initial runs' level-2 entries | control half | the grant | `create` |
+| `KW_HEAP`, later runs' level-2 entries | OSTD (kernelet build), into the same reserved frames | the grant | as runs arrive |
 
-So `create` and `grant` never touch `KW_HEAP`: they record a grain in the grant table and the owner array and publish it, and the kernelet maps it. The host's page-table cost per kernelet is fixed at creation; the per-grain cost is the kernelet's own.
+So the host bootstraps the window's heap mappings at creation and installs level-2 tables ahead of need, and the kernelet writes only entries in frames of its own grant; the grant table and the physical-address radix the kernelet reads are host-written pages in `KW_SHARED` ([Memory](virtualizing-ostd/memory.md)). The kernelet never writes a page-table entry that lives in host memory.
 
 ## Images
 
@@ -103,6 +105,7 @@ pub struct DeviceDesc {
     pub kind: DeviceKind,      // `VirtioMmio { device_type: u32 }` for now
     pub reg_bytes: u32,        // size of the register window, a multiple of 4 KiB
     pub irq: Virq,             // the virtual interrupt line the device raises
+    pub mmio_base: u64,        // the pseudo-physical address the kernelet's bus probe finds it at
 }
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct DeviceId(pub u16);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)] pub struct Virq(pub u8);   // 32..=255
@@ -117,6 +120,9 @@ pub struct KerneletPolicy {
     /// When the kernelet has taken `max_grains` and asks for more: consult
     /// `on_grant_exhausted` (true) or refuse at once (false).
     pub ask_before_oom: bool,
+    /// Ticks per second posted to an idle kernelet's virtual CPU 0, so that its kernel's
+    /// timers still fire; 0 means none ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)).
+    pub idle_tick_hz: u32,
 }
 ```
 
@@ -232,9 +238,10 @@ impl Kernelet {
     /// task enters `_kernelet_entry` on the kernelet's kernel page table.
     pub fn start(&self) -> Result<(), StateError>;
 
-    /// Adds `grains` to the grant and to `max_grains`, records them, and posts
-    /// `JOB_GRANT` so that the kernelet's allocator takes them. Legal in `Created`
-    /// and `Running`. Memory only grows; a kernelet returns memory by exiting.
+    /// Adds `grains` to the grant and to `max_grains` as one run if it can and as several
+    /// otherwise, appends them to the grant table, installs level-2 tables if needed, and
+    /// posts `JOB_GRANT` so that the kernelet maps them. Legal in `Created` and `Running`.
+    /// Memory only grows; a kernelet returns memory by exiting.
     pub fn grant(&self, grains: u32) -> Result<u32 /* granted */, GrantError>;
 
     pub fn set_budget(&self, budget: CpuBudget) -> Result<(), StateError>;
@@ -256,8 +263,8 @@ impl Kernelet {
 
     /// Reclaims everything. `Exited → Destroying` by compare-and-swap, then waits for
     /// in-progress control operations to drain (they are short), then drains every host
-    /// table that names this kernelet, unmaps the window, releases the grant with each
-    /// frame's host metadata reset, frees the host objects, and retires the slot
+    /// table that names this kernelet, unmaps the window, drops the host `Segment` that
+    /// holds each run, frees the host objects, and retires the slot
     /// (`Destroyed`). If any grain is pinned by a `guest_memory` in progress, returns
     /// `Zombie` without releasing anything; the kernelet stays charged and `destroy`
     /// is retried once the pin is gone.
@@ -269,7 +276,12 @@ impl Kernelet {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KerneletState { Created, Running, Dying, Exited, Destroying, Destroyed }
 
-pub enum KillReason { Requested, OopsBudget, PreemptOffTooLong, StackReserve, StackOverflow, HostPolicy(u32) }
+pub enum KillReason {
+    Requested, OopsBudget, PreemptOffTooLong, StackReserve, StackOverflow,
+    /// A page fault in kernelet code with no exception-table entry ([User mode](virtualizing-ostd/user-mode.md)).
+    KernelFault { addr: u64, ip: u64 },
+    HostPolicy(u32),
+}
 
 pub enum ExitReason {
     /// The kernelet's kernel called `power::poweroff` or `restart`; the code it passed.
@@ -325,7 +337,7 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 | `id`, `state`, `ops_in_progress` | identity; the state word; the operation count | control half |
 | `image`, `config`, `hooks` | the kind, the configuration, the endovisor's hooks | creation |
 | `kernel_pt`, `window_l3` | the kernelet's kernel page table root and its private level-3 table for entry 500; the host's mappings under it (`KW_TEXT`, `KW_DATA`, `KW_SHARED`) | creation |
-| `grant` | the grant table: each grain's physical base, its slot (which fixes its `KW_HEAP` address), its pin count; append-only, chunked | `create`, `grant`, `grains_request`; pins by `guest_memory` |
+| `grant` | the grant table: each run's physical base, first slot, length and reserved level-2 frames, mirrored read-only into `KW_SHARED`, plus each run's pin count and its host `Segment`; append-only, chunked | `create`, `grant`, `grains_request`; pins by `guest_memory` |
 | `roots` | the user page-table roots the kernelet has registered | the service half |
 | `tasks` | the host tasks that are this kernelet's, by name; the boot task and the workers among them, with each worker's virtual CPU | the service half's spawn and exit |
 | `devices`, `virq_pending: [AtomicU64; 4]` | the device table and the pending-interrupt bitmap | creation; `raise_irq`; the workers clear bits through `irq_ack` |
@@ -339,7 +351,7 @@ Two host-wide tables complete the picture. The **slot table** maps `KerneletId::
 
 ## Costs
 
-Per kernelet, `create` costs, in host memory charged to the kernelet: one level-3 table; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); one level-2 and one or two level-1 tables for `KW_DATA` and `KW_SHARED`; the data template copy, under 128 KiB *estimated* ([Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; three or more shared pages; and one task per virtual CPU plus the boot task, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per grain: one `alloc_segment_aligned`, one grant-table append, one owner-array write, and, after boot, one `JOB_GRANT` wakeup; the page tables that map it are the kernelet's. `raise_irq` is one atomic or and one wakeup. `kill` is one store to the info page plus one store and one wakeup per task. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
+Per kernelet, `create` costs, in host memory charged to the kernelet: one level-3 table; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); one level-2 and one or two level-1 tables for `KW_DATA` and `KW_SHARED`; the data template copy, under 128 KiB *estimated* ([Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; the shared pages, including the grant table and the radix leaves; and one task per virtual CPU plus the boot task, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per run: one `alloc_segment_aligned`, one grant-table append, the owner-array and radix writes, and, after boot, one `JOB_GRANT` wakeup; at creation, and whenever the coverage grows, one level-3 entry and one reserved level-2 frame per 512 slots. `raise_irq` is one atomic or and one wakeup. `kill` is one store to the info page plus one store and one wakeup per task. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
 
 Per hook call, the endovisor pays whatever its device model does; the control half adds, in `guest_memory`, one owner-array read and one pin increment and decrement per grain touched.
 

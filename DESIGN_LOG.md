@@ -57,3 +57,13 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Open.** Whether device threads can drive host file and socket objects without a process (A5).
 
 **Next.** Iteration 4: review the taxonomy index; write Memory and Tasks.
+
+## Iteration 4: the taxonomy and the first resource pages
+
+**Written.** `virtualizing-ostd/index.md` (72 rows), `memory.md`, `tasks.md`, `interrupts-and-time.md`, `user-mode.md`, `devices.md`, `the-rest.md`. Memory and Tasks reviewed and rewritten; the other four await review.
+
+**Reviewed.** Memory: 23 findings, all applied; the decisive ones were that the kernelet would have had to write the host's level-3 table to hook its own level-2 tables, and that the bootstrap of the first grain was circular. Both are gone: the host bootstraps the heap window at creation and pre-installs level-2 tables in reserved frames of the kernelet's own runs (D10 revised), and the grant table and radix are host-written shared pages the kernelet reads (D29), which also removed `grains_take` and the linear-map exception (D14 withdrawn). Memory is granted in contiguous runs with metadata at the head (D13 revised, D30), which lifts the 1 MiB contiguity ceiling the reviewer found and names the remaining one. Also: activation cache per task, page-table drop at task exit, per-op shootdown with flush-all, DMA paths, `DynCpuLocalChunk` virtualized, the precedence bug in `KW_HEAP`. Tasks: 18 findings, all applied; the decisive one was that RCU grace periods would never complete while a virtual CPU is idle (now an extended quiescent state, D32, A9); also a strong `Arc` held per running task, registration in `run` before unpark, `task_destroy` for never-run tasks, entry indices from 2, the `Waker` keeping its `Arc`, a separate `preempt_switch` entry since `switch_to_task` asserts it may sleep (A8), `CpuLocalCell` ops under the preemption count, `user_run` never switching, affinity and priority builders on `TaskOptions` with three `cfg` lines (D31), edge-triggered idle wake, load-average effects listed.
+
+**Decided.** D10, D13 revised; D14 withdrawn; D23–D32. A7–A9.
+
+**Next.** Iteration 5: reviews of the taxonomy, interrupts and time, user mode, devices and the rest; then faults and reclamation, channels, the endovisor, the runtime.
