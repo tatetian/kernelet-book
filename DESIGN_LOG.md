@@ -19,3 +19,13 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Open.** All mechanism decisions listed in the prompt. To be taken on the builds-and-images page first, since every later page depends on them.
 
 **Next.** Iteration 1: the OSTD API inventory from the tree into The Notes.
+
+## Iteration 1: the OSTD API inventory
+
+**Written.** `src/notes/ostd-api-inventory.md`: sizes measured on the tree (`ostd/src` 40,945 lines, `ostd/libs` 4,653, `kernel/core/src` 126,228, `kernel/core/comps` 39,341, `kernel/libs` 17,279); the entry, hook and macro surface (fourteen hooks, each with where the kernel binds it); every public item by module with its import count from the expanded `use ostd::…` leaves (173 distinct items, 1,182 imports, 424 files); which 21 files touch machine-level items; the sixteen components with sizes and whether they face the machine.
+
+**Verified against the tree.** `ReturnReason` has three variants; `Error` has exactly seven; `UserContextApi` exposes only the instruction and stack pointers. Two entries were corrected accordingly.
+
+**Process note.** One command changed directory into the Asterinas tree and ran `make check` there by mistake; it failed at once on a missing Python module and `git status` shows the tree unchanged. Every later command is run from the book's directory with absolute paths.
+
+**Next.** Iteration 2: Boundaries and trust, then Builds and images, which takes the three open mechanism decisions.
