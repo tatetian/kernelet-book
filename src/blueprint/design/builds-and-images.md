@@ -64,8 +64,8 @@ The kernel proper and OSTD (kernelet build) link into one ELF, the **kernelet im
 | region | offset in the window | size | contents | mapping |
 |---|---|---|---|---|
 | `KW_TEXT` | 0 | 1 GiB | `.kernelet_entry_table` at offset 4 KiB, then `.text`, `.ex_table`, `.rodata`, `.eh_frame_hdr`, `.eh_frame`, `.gcc_except_table`, `.init_array`, `.ktest_array`; the kernelet image's read-only segments | the kind's shared frames, mapped read-only, executable where the segment is; identical in every kernelet of the kind |
-| `KW_DATA` | 1 GiB | 1 GiB | the writable segment in the tree's order, `.data`, `.cpu_local`, `.bss`; then, from the next page boundary, `.cpu_local` replicated once per virtual CPU; then OSTD (kernelet build)'s own tables (the grant table with its physical-address radix, the task and body tables, the service table pointer) | private frames per kernelet, copied from the image's data template at creation, read-write, non-executable |
-| `KW_SHARED` | 2 GiB | 1 GiB | the shared pages: the boot arguments and the info page, which the host writes and the kernelet reads, and the task records, which both write | host frames, mapped read-only or read-write as the page requires; the host writes them through its linear map |
+| `KW_DATA` | 1 GiB | 1 GiB | the writable segment in the tree's order, `.data`, `.cpu_local`, `.bss`; then, from the next page boundary, `.cpu_local` replicated once per virtual CPU; then OSTD (kernelet build)'s own tables (the running-task and body tables, the service table pointer) | private frames per kernelet, copied from the image's data template at creation, read-write, non-executable |
+| `KW_SHARED` | 2 GiB | 1 GiB | the shared pages: the boot arguments, the info page, the grant table with its physical-address radix, and the host-wide clock page, which the host writes and the kernelet reads, and the task records, which both write | host frames, mapped read-only or read-write as the page requires; the host writes them through its linear map |
 | `KW_HEAP` | 4 GiB | 508 GiB | the heap window: every grain the kernelet is granted is mapped here at `KW_HEAP + slot × 2 MiB`, where `slot` is the grain's index in the kernelet's grant table; each grain's first eight frames hold that grain's frame metadata ([Memory](virtualizing-ostd/memory.md)) | the granted frames themselves, read-write, non-executable |
 
 The writable segment keeps the order OSTD's own linker script uses, `.data`, `.cpu_local`, `.bss` (the `.cpu_local_tss` section between the first two on the tree is absent in the kernelet build, since the TSS is the host's), so that no `NOBITS` section precedes a `PROGBITS` one and `.bss` stays zero-fill rather than file-backed zeros. The per-virtual-CPU replicas follow the segment's end rounded up to a page; OSTD (kernelet build) finds `.cpu_local`'s bounds through the entry table, not through the GS base, which is the host's ([Tasks](virtualizing-ostd/tasks.md)).
@@ -88,10 +88,10 @@ The measured sizes on the tree's own debug image (`target/x86_64-unknown-none/de
 
 ## Embedding and registration
 
-The kernelet image is embedded into the host image by the endovisor crate:
+The kernelet image is embedded into the host image by the endovisor module of the kernel crate:
 
 ```rust
-// endovisor/src/images.rs
+// kernel/core/src/endovisor/images.rs
 static LINUX_KERNELET: &[u8] = include_bytes!(env!("KERNELET_IMAGE_LINUX"));
 ```
 

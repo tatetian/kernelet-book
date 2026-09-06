@@ -24,7 +24,7 @@ extern "C" fn worker_main(vcpu: u64) -> ! {
         rcu::run_callbacks_if_period_complete(vcpu);                 // pending `RcuDrop`s of a completed period
         match job.kind {
             JOB_VIRQ  => deliver_virq(job.arg as u8),
-            JOB_TICK  => deliver_tick(job.arg, job.arg2 as u32),
+            JOB_TICK  => deliver_tick(job.arg, job.arg2 as u32, job.arg2 >> 32 != 0),
             JOB_GRANT => grant::map_new_runs(),
             _ => {}
         }
@@ -32,10 +32,11 @@ extern "C" fn worker_main(vcpu: u64) -> ! {
     services().task_exit()
 }
 
-fn deliver_tick(interrupted: u32, ticks: u32) {
+fn deliver_tick(interrupted: u32, ticks: u32, user: bool) {
     let _guard = disable_preempt();
     let thread = resolve_live(interrupted);                    // `index:generation` against `RUNNING`; `None` if exited or reused
-    level::enter_virtual(InterruptLevel::L1(PrivilegeLevel::Kernel), || {
+    let level = if user { PrivilegeLevel::User } else { PrivilegeLevel::Kernel };   // the privilege the host sampled
+    level::enter_virtual(InterruptLevel::L1(level), || {
         for _ in 0..ticks {
             timer::call_timer_callback_functions(thread.as_ref()); // identical callbacks, given the interrupted thread
         }

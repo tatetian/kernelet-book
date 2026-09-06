@@ -14,7 +14,7 @@ This chapter is the design of Asterinas Kernelets, built from the figure above. 
 | 3. What API does OSTD (host build) expose to OSTD (kernelet build), and how does a call cross? | [The kernelet API: service half](kernelet-api-service.md) |
 | 4. How is an OCI-compatible kernelet runtime built on the endovisor's user-space ABI, and how is the endovisor built on OSTD? | [The endovisor](endovisor.md) and [The kernelet runtime](kernelet-runtime.md) |
 
-Two pages come before the questions, because every answer depends on them: [Boundaries and trust](principles.md) names the interfaces and states the invariants, and [Builds and images](builds-and-images.md) fixes how the two builds are produced and how the kernelet image is laid out and entered. Two pages come after: [Faults, termination, and reclamation](faults-and-reclamation.md) and [Channels](channels.md) cut across the resources.
+Two pages come before the questions, because every answer depends on them: [Boundaries and trust](principles.md) names the interfaces and states the invariants, and [Builds and images](builds-and-images.md) fixes how the two builds are produced and how the kernelet image is laid out and entered. Four pages come after: [Faults, termination, and reclamation](faults-and-reclamation.md) and [Channels](channels.md) cut across the resources, and [The endovisor](endovisor.md) and [The kernelet runtime](kernelet-runtime.md) answer the fourth question.
 
 In this chapter:
 
