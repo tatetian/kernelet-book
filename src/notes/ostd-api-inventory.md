@@ -189,5 +189,5 @@ The kernel imports that touch the machine directly (`IoPort`, `IRQ_CHIP`, `Mappe
 | `network` | 829 | no |
 | `softirq` | 820 | uses `cpu_local!` and the bottom-half hooks |
 | `uart` | 342 | yes |
-| `logger` | 162 | uses the serial port |
+| `logger` | 162 | *not host-only*: writes to the console devices and falls back to `early_print`; stays in the kernelet ([The rest](../blueprint/design/virtualizing-ostd/the-rest.md)) |
 | `console` | 74 | no |

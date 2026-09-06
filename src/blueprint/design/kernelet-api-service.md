@@ -287,7 +287,7 @@ The window's own level-2 tables under `KW_HEAP` are written by OSTD (kernelet bu
 - `log_write(level, module, text)`: copies the text into the host's rate limiter and, if under the kernelet's limit, delivers it to `KerneletHooks::log`; otherwise drops it and counts. Formatting happened in the kernelet. *Checks:* both buffers readable; `text_len ≤ 1024`. *Cost:* the copy and the hook.
 - `console_write(bytes, len)`: the early console, same rules.
 - `oops(msg, len) -> 0 | -DYING`: a task of the kernelet caught a panic and continues. The host charges the oops budget, calls `KerneletHooks::on_oops`, and, at the budget, kills the kernelet with `KillReason::OopsBudget`, which the epilogue then enforces.
-- `exit(code) -> !`: the kernelet has finished (`power::poweroff` or `restart` in the kernel proper). Sets `dying`, records `Exited(code)`, calls `on_dying`, then terminates the calling task; the other tasks are cancelled and terminated at their next quiescent point.
+- `exit(code) -> !`: the kernelet has finished (`power::poweroff`, `restart` or `exit_with_code` in the kernel proper; `restart` sets `EXIT_RESTART`, bit 31). Sets `dying`, records `Exited(code)`, calls `on_dying`, then terminates the calling task; the other tasks are cancelled and terminated at their next quiescent point.
 - `panic(msg) -> !`: a panic in the kernelet that its own handler could not turn into an oops, or an allocation failure the kernel could not absorb. Sets `dying`, records `Panicked(msg)`, calls `on_dying`, and terminates the calling task. Nothing unwinds across the boundary.
 
 ## What the service half does not offer

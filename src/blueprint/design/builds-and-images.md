@@ -34,7 +34,7 @@ kernelet = ["aster-core/kernelet", "ostd/kernelet"]
 # kernel/core/Cargo.toml (excerpt): components present only in the host kernel
 [dependencies]
 aster-pci = { path = "comps/pci", optional = true }
-# ... nvme, uart, i8042, framebuffer, and the machine-facing halves of time and logger
+# ... nvme, uart, i8042, framebuffer, and the machine-facing half of time
 
 [features]
 kernelet = ["ostd/kernelet"]

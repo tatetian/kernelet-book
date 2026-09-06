@@ -227,16 +227,17 @@ impl Kernelet {
     /// the per-virtual-CPU replicas, `KW_SHARED` with `BootArgs`, the info page and the
     /// task records); the initial grant of `initial_grains` grains, recorded in the grant
     /// table and the owner array and listed in `BootArgs`; the device table; one worker
-    /// task per virtual CPU (`run_task(1, vcpu)`) and the boot task (`_kernelet_entry`),
-    /// all created but not runnable. Fails, with everything undone, on any error.
+    /// task per virtual CPU (`run_task(1, vcpu)`, spawned suspended) and the boot task
+    /// (`_kernelet_entry`), all created but not runnable. Fails, with everything undone, on any error.
     pub fn create(config: KerneletConfig, hooks: Arc<dyn KerneletHooks>) -> Result<Arc<Kernelet>, CreateError>;
 
     pub fn id(&self) -> KerneletId;
     pub fn state(&self) -> KerneletState;
     pub fn config(&self) -> &KerneletConfig;
 
-    /// `Created → Running`: the boot task and the workers become runnable. The boot
-    /// task enters `_kernelet_entry` on the kernelet's kernel page table.
+    /// `Created → Running`: the boot task becomes runnable and enters `_kernelet_entry`
+    /// on the kernelet's kernel page table; it unparks the workers once its tables exist,
+    /// so a `raise_irq` before then waits as a pending bit ([The rest](virtualizing-ostd/the-rest.md)).
     pub fn start(&self) -> Result<(), StateError>;
 
     /// Adds `grains` to the grant and to `max_grains` as one run if it can and as several
@@ -285,8 +286,9 @@ pub enum KillReason {
 }
 
 pub enum ExitReason {
-    /// The kernelet's kernel called `power::poweroff` or `restart`; the code it passed.
-    /// `0` maps to OSTD's `ExitCode::Success`, anything else to `Failure`.
+    /// The kernelet's kernel called `power::poweroff`, `restart` or `exit_with_code`; the
+    /// code it passed, with `EXIT_RESTART` (bit 31) set by `restart`. `0` maps to OSTD's
+    /// `ExitCode::Success`, anything else to `Failure`.
     Exited(u32),
     /// A panic that could not be caught inside the kernelet, with its message. An
     /// allocation failure the kernelet's kernel could not absorb ends here too.
