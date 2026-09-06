@@ -132,7 +132,7 @@ pub struct KerneletPolicy {
 ```rust
 pub enum CreateError {
     UnknownImage, NoCpus, TooManyCpus, CpuNotOnline(CpuId),
-    InitialExceedsMax, ZeroMaxGrains, DuplicateDevice(DeviceId), ReservedVirq(Virq), BadVcpu(DeviceId),
+    InitialExceedsMax, ZeroMaxGrains, DuplicateDevice(DeviceId), ReservedVirq(Virq), BadVcpu(DeviceId), MmioBaseInvalid(DeviceId),
     RegBytesNotPageMultiple(DeviceId), TooManyDevices, CmdlineTooLong,
     SlotsExhausted, NoMemory,
 }
@@ -174,7 +174,7 @@ pub trait KerneletHooks: Send + Sync + 'static {
 pub enum LogLevel { Emerg, Alert, Crit, Error, Warn, Notice, Info, Debug }
 ```
 
-**What a hook may call.** Inside a hook, these methods of `Kernelet` are safe: `id`, `state`, `config`, `stats`, `guest_memory`, `raise_irq`, `charge_host_bytes`, `uncharge_host_bytes`, `adopt_current_task` and `disown_current_task`. A device that completes at once, a console or an entropy source, raises its interrupt from inside `mmio_write`. These are not: `grant`, `kill`, `wait_exited` and `destroy`, which either take the state word the hook's caller holds or block on the task the hook is running on.
+**What a hook may call.** Inside a hook, these methods of `Kernelet` are safe: `id`, `state`, `config`, `stats`, `guest_memory`, `raise_irq`, `charge_host_bytes`, `uncharge_host_bytes`, `adopt_current_task` and `disown_current_task`. A device that completes at once, an entropy source, may raise its interrupt from inside `mmio_write`; every other completion is the device thread's ([Devices](virtualizing-ostd/devices.md)). These are not: `grant`, `kill`, `wait_exited` and `destroy`, which either take the state word the hook's caller holds or block on the task the hook is running on.
 
 **A hook must return in bounded time, and may not sleep.** Neither is enforced. A task inside a hook is at service-call depth one, so `kill` cannot terminate it, `wait_exited` times out, and `destroy` is never legal; a kernelet with a task stuck in a hook holds its grant until the hook returns, as a process stuck in uninterruptible sleep holds its memory. Because hooks cannot sleep, the host I/O behind a device is done by a **device thread** the endovisor runs per device, woken by the notify hook and handing completions back with `raise_irq`. `on_dying` is where the endovisor cancels those threads' outstanding I/O so that pins drain.
 
@@ -348,7 +348,7 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 | `accounts` | the counters behind `stats()`, the host-bytes charge, and the CPU quota's period accounting | the service half, the scheduler, the hooks |
 | `exit: Once<ExitStatus>`, `exit_waiters: WaitQueue` | the outcome, and who is waiting for it | the reaper; `wait_exited` |
 
-Two host-wide tables complete the picture. The **slot table** maps `KerneletId::slot` to the `Arc<Kernelet>` and the current generation, and is how the service half finds the caller's kernelet from the CPU slot in constant time; it drops its `Arc` at `Destroyed`. The **owner array** has one `Option<KerneletId>`, 8 bytes, per 2 MiB grain of physical memory, written when a grain is granted and cleared when it is released; it is what `guest_memory` and the service half's ownership checks read, and its size is physical memory divided by 2 MiB times 8 bytes: 4 MiB for a 1 TiB machine.
+Two host-wide tables complete the picture. The **slot table** maps `KerneletId::slot` to the `Arc<Kernelet>` and the current generation, and is how the service half finds the caller's kernelet from the CPU slot in constant time; it drops its `Arc` at `Destroyed`. The **owner array** has one `Option<KerneletId>`, 8 bytes, per 2 MiB grain of physical memory, written when a grain is granted, before the run that holds it is published in the grant table, and cleared when it is released, after the run is retired; it is what `guest_memory` and the service half's ownership checks read, and its size is physical memory divided by 2 MiB times 8 bytes: 4 MiB for a 1 TiB machine.
 
 **Grains are 2 MiB-aligned.** The host allocates a grain with a new host-build entry point, `alloc_segment_aligned`, since `FrameAllocOptions::alloc_segment_with` asks its allocator for page alignment only (measured on the tree, `ostd/src/mm/frame/allocator.rs`). Alignment lets the kernelet map a grain as one 2 MiB page and lets the owner array be indexed by `paddr >> 21`. Its cost is fragmentation in the host's frame allocator, which the Evaluation chapter will measure; where an aligned grain cannot be had, `grant` fails with `NoMemory` rather than falling back to unaligned grains.
 
