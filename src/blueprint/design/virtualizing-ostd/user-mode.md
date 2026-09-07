@@ -9,7 +9,7 @@ The tenant's processes run in ring 3 under the kernelet's own page tables. The i
 `UserMode::execute` keeps the shape of OSTD's loop (checked on the tree: `ostd/src/arch/x86/cpu/context/mod.rs`); what moves into the host, behind `user_run`, is the ring transition, the interrupt dispatch, and the classification of what came back:
 
 ```rust
-// OSTD (kernelet build), the virtualized `UserContextApiInternal::execute`
+// vOSTD, the virtualized `UserContextApiInternal::execute`
 fn execute<T: UserModeHooks>(&mut self, hooks: &T) -> ReturnReason {
     self.user_context.general.rflags |= (RFlags::INTERRUPT_FLAG | RFlags::ID).bits() as usize;
     loop {
@@ -61,7 +61,7 @@ The handler itself runs at depth zero in host text on the first path, and the tr
 The kernelet's side of the first case is a retry loop in each of the virtualized fallible routines. The tree has four, each with its own exception-table entry and recovery label (checked: `__memcpy_fallible` and `__memset_fallible`, which return the count of bytes *not* done, and `__atomic_load_fallible` and `__atomic_cmpxchg_fallible`, which return `!0` on a fault; `ostd/src/arch/x86/mm/`, `ostd/src/mm/io/mod.rs`). The copy:
 
 ```rust
-// OSTD (kernelet build), ostd/src/mm/io/copy.rs under the feature
+// vOSTD, ostd/src/mm/io/copy.rs under the feature
 fn copy_from_user_fallible(dst: *mut u8, src: *const u8, len: usize) -> usize {
     let mut done = 0;
     loop {
@@ -106,5 +106,5 @@ fn copy_from_user_fallible(dst: *mut u8, src: *const u8, len: usize) -> usize {
 
 - **The ring transition is a service call and the loop stays in the kernelet** (register D20). The alternative, moving the whole `execute` loop into the host, would make the kernel's `UserModeHooks` closures cross the boundary, against invariant I5, and would put the syscall dispatch path's first instructions on the wrong side of the crossing. What does move into `user_run` is the classification and the interrupt arm, since only host code can dispatch a physical interrupt or read CR2 safely.
 - **Kernel-mode faults in user copies are resolved by fixup and retry, never by calling into the kernelet from the fault path** (register D21). The alternative, the host calling the kernelet's injected handler as it calls its own, breaks the entry rule and would run kernelet code on the host's fault path with the host's state.
-- **A kernelet's own kernel-mode fault kills the kernelet** (register D22), not the machine, which is invariant I3's backstop made concrete: a stray pointer in the kernelet build's own code, or in kernelet code at a window address it unmapped, ends one sandbox.
+- **A kernelet's own kernel-mode fault kills the kernelet** (register D22), not the machine, which is invariant I3's backstop made concrete: a stray pointer in vOSTD's own code, or in kernelet code at a window address it unmapped, ends one sandbox.
 - **The user context lives on the task's kernel stack, and `user_run` checks that** (register D47). The alternative, a host-private copy of the context per task copied in and out, costs two copies of about 160 bytes (the size of the tree's `RawUserContext`) per round trip on the hottest path in the system; the stack is already host memory, and the check is one comparison.

@@ -1,12 +1,12 @@
 # The kernelet API: control half
 
-*Answers question 1: what API does OSTD (host build) provide so that the endovisor can manage the lifecycle of kernelets and customize their behavior?*
+*Answers question 1: what API does OSTD provide so that the endovisor can manage the lifecycle of kernelets and customize their behavior?*
 
 The control half is the module `ostd::kernelet::control`, present only in the host build. It is the whole of what the endovisor sees of a kernelet: it registers images, creates kernelets, gives them memory, CPUs and devices, starts, observes, kills and destroys them, and it supplies the hooks OSTD calls back when a kernelet's request needs the host kernel's Linux functionality. Everything on this page is host-side Rust; no kernelet ever holds a reference to any of it. Invariants enforced here: I3 (privacy), I4 (no retained reference), I6 (charged work), and the host side of I7 (termination).
 
 ## Division of labor over the window
 
-The control half and the service half share the [window](builds-and-images.md#window) with OSTD (kernelet build), and each region has exactly one mapper:
+The control half and the service half share the [window](builds-and-images.md#window) with vOSTD, and each region has exactly one mapper:
 
 | region | mapped by | frames from | when |
 |---|---|---|---|

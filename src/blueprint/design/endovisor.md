@@ -152,7 +152,7 @@ The endovisor is where the host's policy lives, and the control half has none. I
 
 ## What the endovisor is trusted for
 
-Everything. It runs in ring 0 in the host kernel and holds every kernelet's hooks; a bug in it is a host bug. What limits the damage a *tenant* can do through it is that every tenant input reaches it through a checked path: register accesses through the service half's bounds, descriptors through `guest_memory`'s owner checks, packets through the switch's credit. Its own code carries `forbid(unsafe_code)`, stricter than the host kernel proper's `deny` (checked on the tree: `kernel/core/src/lib.rs`), and it is the second-largest piece of new code in the design after the kernelet build of OSTD, *estimated* at 8,000 to 12,000 lines with the five device models.
+Everything. It runs in ring 0 in the host kernel and holds every kernelet's hooks; a bug in it is a host bug. What limits the damage a *tenant* can do through it is that every tenant input reaches it through a checked path: register accesses through the service half's bounds, descriptors through `guest_memory`'s owner checks, packets through the switch's credit. Its own code carries `forbid(unsafe_code)`, stricter than the host kernel proper's `deny` (checked on the tree: `kernel/core/src/lib.rs`), and it is the second-largest piece of new code in the design after vOSTD, *estimated* at 8,000 to 12,000 lines with the five device models.
 
 ## Costs
 

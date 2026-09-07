@@ -9,7 +9,7 @@ A kernelet sees devices the way a guest of a microVM does: virtio devices on an 
 The virtio MMIO bus on x86-64 already probes devices from the kernel command line in Linux's `virtio_mmio.device=<size>@<base>:<irq>` form (checked on the tree: `transport/mmio/bus/arch/x86.rs`, `probe_from_kernel_cmdline`). The endovisor composes that line from the kernelet's device descriptors, and the kernelet's bus probe runs the same code with these `cfg` lines, which the [taxonomy](index.md) lists (checked on the tree, each):
 
 - `bus/arch/x86.rs`: `probe_from_microvm_constants`, which counts I/O APICs and scans QEMU's fixed MMIO window, is compiled out; the command-line probe's lookup of `IRQ_CHIP` is compiled out.
-- `bus/mod.rs`: `try_register_mmio_device`, which on the host allocates a free line with `IrqLine::alloc` and maps it through the caller's `IRQ_CHIP` closure into a `MappedIrqLine`, takes the line number from the command line and calls `IrqLine::alloc_specific(irq)` in the kernelet build; `bus/common_device.rs` stores the result in its `irq` field, whose type `MappedIrqLine` the kernelet build aliases to `IrqLine`, as the LoongArch arch file already does.
+- `bus/mod.rs`: `try_register_mmio_device`, which on the host allocates a free line with `IrqLine::alloc` and maps it through the caller's `IRQ_CHIP` closure into a `MappedIrqLine`, takes the line number from the command line and calls `IrqLine::alloc_specific(irq)` under the feature; `bus/common_device.rs` stores the result in its `irq` field, whose type `MappedIrqLine` the kernelet configuration aliases to `IrqLine`, as the LoongArch arch file already does.
 - `transport/mod.rs`: the PCI transport (`virtio_pci_init`, the `pci` module, the `BarAccess` field of `VirtioTransport` and the `PortRead`/`PortWrite` bounds on `ConfigManager`) is compiled out, and the `aster-pci` dependency with it, since port I/O and PCI configuration space are the host's.
 
 Each device has a **pseudo-physical MMIO base**, chosen by the endovisor and listed in `BootArgs` beside its size, type and line:
@@ -30,7 +30,7 @@ The bases lie above the host's highest physical address, 4 KiB-aligned and pairw
 ## `IoMem` as a register file
 
 ```rust
-// OSTD (kernelet build), the virtualized `IoMem`. Same public API as the host build's.
+// vOSTD, the virtualized `IoMem`. Same public API as the host build's.
 pub struct IoMem<S = Insensitive> { dev: u16, offset: u32, len: u32, cache: CachePolicy, _s: PhantomData<S> }
 
 impl IoMem {
