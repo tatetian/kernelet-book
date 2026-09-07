@@ -113,7 +113,7 @@ Re-exports `Result<T, E = Error>`, `ktest`, the log macros, `early_print as prin
 |---|---|---|
 | `CpuId`, `CpuSet`, `AtomicCpuSet`, `num_cpus`, `all_cpus`, `PinCurrentCpu` | 18, 10, 1, 5, 3, 8 | the CPU namespace; `PinCurrentCpu` is an `unsafe` trait implemented by the preemption and interrupt guards |
 | `cpu_local!`, `cpu_local_cell!`, `local::{StaticCpuLocal, CpuLocalCell, DynamicCpuLocal, DynCpuLocalChunk}` | 4, 2, 1, 0, 0, 0 | per-CPU statics in a replicated `.cpu_local` section, addressed through the GS segment base |
-| `PrivilegeLevel` | 2 | ring 0 or 3 |
+| `PrivilegeLevel` | 2 | kernel mode or 3 |
 | `UserContext` (re-exported from `arch`) | see `arch` | |
 
 ## `user`

@@ -5,7 +5,7 @@
 <div class="tag">The kernelet architecture</div>
 <div class="title">One kernel source, two builds, one boundary at OSTD's API</div>
 </div>
-<svg viewBox="0 0 900 400" role="img" aria-label="The kernelet architecture. Left, the host: Linux apps and the kernelet runtime in user space; the host kernel with its Linux functionality and the endovisor; OSTD exposing the vanilla OSTD API and the kernelet API, whose control half the endovisor uses and whose service half vOSTD calls through the service table. Right, a kernelet: Linux apps in ring 3 over the kernel proper over vOSTD, the virtualized OSTD API, over the kernelet window. The host enters the kernelet only through the entry table to start a thread; devices are virtio over function calls between the endovisor and the kernelet.">
+<svg viewBox="0 0 900 400" role="img" aria-label="The kernelet architecture. Left, the host: Linux apps and the kernelet runtime in user space; the host kernel with its Linux functionality and the endovisor; OSTD exposing the vanilla OSTD API and the kernelet API, whose control half the endovisor uses and whose service half vOSTD calls through the service table. Right, a kernelet: Linux apps in user mode over the kernel proper over vOSTD, the virtualized OSTD API, over the kernelet window. The host enters the kernelet only through the entry table to start a thread; devices are virtio over function calls between the endovisor and the kernelet.">
 <defs>
 <linearGradient id="kad-cg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -28,8 +28,8 @@
 <rect x="520" y="34" width="360" height="36" rx="5" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
 <text x="700" y="56" fill="#9AA0BE" text-anchor="middle">Linux apps</text>
 <path d="M20 90 H880" stroke="rgba(255,255,255,.28)" stroke-width="1" stroke-dasharray="5 4"/>
-<text x="22" y="86" fill="#6A6F8C" font-size="8">ring 3</text>
-<text x="22" y="101" fill="#6A6F8C" font-size="8">ring 0</text>
+<text x="22" y="86" fill="#6A6F8C" font-size="8">user mode</text>
+<text x="22" y="101" fill="#6A6F8C" font-size="8">kernel mode</text>
 <rect x="20" y="108" width="330" height="82" rx="10" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.12)"/>
 <text x="30" y="123" fill="#9A9DB0" font-size="9" letter-spacing="1.4">HOST KERNEL</text>
 <rect x="30" y="132" width="140" height="48" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
