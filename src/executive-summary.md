@@ -2,9 +2,9 @@
 
 This book is written for two kinds of reader, and it tries to serve both without shortchanging either.
 
-**Asterinas developers** will build this. For them the book is a specification: [The Blueprint](blueprint/index.md), whose chapters will say what runs where, fix every layer down to the types and the checks, and list the OSTD changes, the enforcement checks and the staged plan in the order they should be done. It is meant to be precise enough that a coding agent can work from it; its Overview and its Design chapter are written, and the implementation plan, the evaluation plan and the limitations are still to come.
+**Asterinas developers** will build this. For them the book is a specification, [The Blueprint](blueprint/index.md), written to be precise enough that a coding agent can work from it.
 
-**Academic readers** will judge it. For them the book is the long form of a paper: the motivation and the isolation trilemma below, the earlier prototype it grew out of, the mechanisms and their costs, an honest account of where the design loses and of what has not been verified, and the [prior art](paper/related-work.md) it is compared with.
+**Academic readers** will judge it. For them the book is the long form of a paper, [The Paper](paper/abstract.md), with the design's costs, its limits and what has not been verified stated as plainly as its claims.
 
 The two pitches below are the same idea told to each audience.
 
