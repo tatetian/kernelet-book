@@ -120,8 +120,8 @@ Asterinas Kernelets are a third point in that space, and this book calls the ide
 You need to know Rust and roughly how an operating-system kernel is put together. Nothing else is assumed. The book is three volumes, and they are meant to be read in the order that suits the reader rather than the order they were written in.
 
 - [**The Paper**](paper/abstract.md) is the idea in its most concise form, written as a research paper.
-- [**The Blueprint**](blueprint/index.md) is the design document: every mechanism down to the types and the checks, the OSTD changes, the staged plan, the numbers that exist, and what must be verified. It is written so that a coding agent can implement from it. Its Overview and its Design chapter are written; the implementation plan, the evaluation plan and the limitations are still to come.
-- [**The Notes**](notes/index.md) hold the working material behind the other two: today the inventory of the OSTD API the Design classifies and the register of every decision and assumption it makes; later the earlier design studies and the booted prototype, the cost accounting, and the survey of related technologies.
+- [**The Blueprint**](blueprint/index.md) is the design document, written so that a coding agent can implement from it.
+- [**The Notes**](notes/index.md) hold the working material behind the other two.
 
 Logically the Notes came first, the Blueprint was built from them, and the Paper was distilled from the Blueprint.
 
