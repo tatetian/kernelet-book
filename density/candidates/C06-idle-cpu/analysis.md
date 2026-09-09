@@ -1,32 +1,19 @@
-# C06: Idle and wake CPU cost
+# C06: Idle CPU cost
 
-**Status:** adopted, minor. **Depends on kernelets:** yes. **Acts on:** CPU, not memory: the cores that idle and waking sandboxes consume.
+**Status:** adopted as a Blueprint correction; density effect below the model's resolution, revised after review. **Depends on kernelets:** yes. **Acts on:** CPU.
 
-## The problem, measured
+## Measured
 
-An idle restored Firecracker VM (Linux 6.1 guest, tickless idle) consumed **2 ticks in 60 s**, 0.03 % of one core, from its vCPU thread's timer wakeups and the VMM's own polling (`../../benchmark/results/firecracker-raw.md`). Small per VM, but at 10,000 idle VMs it is **3 cores**, and it is the floor: a guest with a less careful kernel configuration, a `systemd` inside, or an agent that polls, costs more. A wake costs a VMM restore (18–36 ms of host CPU measured, mostly VMM and KVM state) when the VM was paused to disk, plus the page faults of the working set through the EPT.
+An idle restored Firecracker VM with `sleep` as init used 2 scheduler ticks in 60 s (≤ 0.03 % of a core, at the resolution of tick-sampled accounting). Measured more precisely with per-thread `schedstat` over 120 s, a resident Node.js 22 process with a live timer inside a 256 MiB guest cost **39 ms of CPU, 0.033 % of one core**, nearly all of it on the vCPU thread, on a host with KVM's default `halt_poll_ns` of 200 µs (`../../benchmark/results/firecracker-raw.md`, `node256b`). That is the VM's idle cost for a non-polling agent: about **3 cores per 10,000 idle sandboxes**. A polling agent, or a `systemd` guest, costs more, but the same polling costs a kernelet in proportion: per timer expiry the two paths (host timer, thread wake, guest or kernelet delivery, park) are the same class, a few microseconds each.
 
-## The mechanism
+## The kernelet side
 
-A kernelet has no vCPU thread and no timer of its own: its threads are host threads, parked when idle; its ticks are counted by the host tick into a shared record and consumed only when a task runs (Blueprint, Interrupts and time, register D66); an idle kernelet gets a `JOB_TICK` at `idle_tick_hz`, which the policy sets to **0** for agent sandboxes, with `timer_arm` for the kernel's real timers. An idle kernelet then costs exactly the host tick's charge check, one compare per tick on the CPU that happens to run it, which is zero while nothing runs. A wake is one `task_unpark`, no VMM, no vCPU creation, no EPT; the working set faults in through the host's own page fault path (C03) without a VM exit per page.
+An idle kernelet costs the host tick's per-CPU charge check, which is zero while nothing of the kernelet runs, *if* the Blueprint's default `idle_tick_hz = 100` is changed to 0 for agent sandboxes and the kernel's own timers go through `timer_arm`. Two things the Blueprint has not designed follow: the host needs a deadline-ordered structure (a per-CPU timer heap or wheel) rather than a scan of 10,000 kernelets' deadlines per tick, which would itself cost a core; and the kernel proper's `cfg` line must report the minimum deadline over all four of its jiffies-driven timer managers (the realtime, monotonic and boottime clocks and the jiffies manager, `kernel/core/src/time/clocks/system_wide.rs`), not the one manager the Interrupts page names. With the Blueprint's default 100 Hz idle tick, an idle kernelet's worker wakes 100 times a second, about 0.03 % of a core, the same as the VM.
 
 ## Gain
 
-Idle: from 0.03 % of a core per sandbox to ~0, **3 cores per 10,000** on the model server. Wake: from ~30 ms of host CPU per VM restore to microseconds, which at 17 wakes/s is half a core saved. Active work: the Paper's measurement of a page fault at 10,345 cycles in the prototype against 9,791 native says a kernelet's system calls and faults are within 6 % of native, where a VM pays an exit per I/O completion and per timer; that is a throughput gain for `c_active`, not a density gain, and it is not counted here.
-
-## Evidence
-
-- Measured: 0.03 % of a core per idle VM; 18–36 ms per restore.
-- Analytic: the kernelet's idle cost is zero by construction of D66 and `idle_tick_hz = 0`.
-
-## Isolation
-
-None.
-
-## Cost
-
-None beyond the Blueprint's design; `idle_tick_hz = 0` makes an idle sandbox's kernel timers depend on `timer_arm`, which the Blueprint lists as the tickless extension (Interrupts and time); without it an idle kernelet's sleeping processes wake only on external events, which for an agent that waits on messages is the intended behavior.
+At most 3 cores per 10,000 idle sandboxes, 2.7 % of the 128-core CPU bound, below the resolution of the model's parameters; the composition uses the same CPU bound for both systems. The first draft's "half a core saved on wakes" rested on Firecracker's 11–36 ms restore, which is wall time of unknown composition and applies only to hibernated VMs at the 5 s tier, where both systems are CPU-bound; it is withdrawn. The Paper's page-fault figure is not a system-call figure and is not cited here; per-operation CPU is C14's subject.
 
 ## Changes to the Blueprint
 
-Recorded here, not applied: `timer_arm` promoted from extension to required, with the `cfg` line in the kernel proper's real-time timer manager that reports its earliest deadline.
+Recorded here, not applied: `idle_tick_hz = 0` as the agent-sandbox default; `timer_arm` required, with a host-side deadline heap and the four-manager `cfg` line.

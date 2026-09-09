@@ -1,87 +1,88 @@
-# Sandbox density: the scheme
+# Sandbox density: the scheme and what the evidence supports
 
-*A study of how kernelets could hold 5–10× more agent sandboxes per server than microVM sandboxes do today, with the evidence that exists short of an implementation. The benchmark and baseline are in [`benchmark/`](benchmark/README.md); every candidate optimization ever considered is one line in [`candidates.md`](candidates.md), with its analysis under `candidates/<id>/`.*
+*A study of whether kernelets could hold 5–10× more agent sandboxes per server than microVM sandboxes, with the evidence that exists short of an implementation. The benchmark, the baseline measurements and the model are in [`benchmark/`](benchmark/README.md); every candidate optimization ever considered is one line in [`candidates.md`](candidates.md), with its analysis under `candidates/<id>/`. Every candidate and the composition were reviewed by skeptical reviewers, and this page states what survived.*
 
-## The claim in one paragraph
+## The answer in one paragraph
 
-A microVM sandbox that has done any work holds, privately, a copy of every file it read (150–300 MiB for an agent's toolchain), its guest kernel's boot residue and working state, and its runtime's heap, and it cannot give any of it back without the guest's cooperation; measured here, a Firecracker guest that read 205 MiB of files held **245 MiB** of host memory afterward and kept it while idle. That is why microVM platforms run one to two thousand warm sandboxes per server. A kernelet's memory is host-owned, mapped by the host, and indexed by physical address, which lets the host share the page cache into it instead of copying (C01), take frames back at grain granularity without a balloon (C02), page idle sandboxes out and in on ordinary host page faults (C03), clone a pre-booted template copy-on-write (C05), and leave an idle sandbox costing nothing in CPU (C06). With the Blueprint's own fixed cost brought down to a VM's (C04), the composed scheme brings a sandbox's memory after a work burst from **372 MiB to 87 MiB** and its idle memory at the 500 ms wake tier to **4.5 MiB**, which on a common 1 TiB server is a memory bound of **72,000 resident sandboxes** against the baseline's **2,500**. The binding constraint then moves from memory to CPU, at about 12,800 resident sandboxes for an agent that is active a tenth of the time at a tenth of a core; that is where the next-generation CPU count enters. Against microVMs as deployed the gain at the 50 ms and 500 ms tiers is **5.2× on today's cores and 10× on 256-core parts**; at the 5 s tier, where microVMs can hibernate too, both are CPU-bound and the kernelet's advantage is in wake cost and storage, not count.
+Against microVM sandboxes **as they are kept warm today**, the composed scheme reaches **5.2× on a 128-core server and 9.3× on a 256-core one at the 500 ms wake tier**, and 3.6× at the 50 ms tier: a warm Firecracker sandbox holds 376 MiB of host memory after one burst of work, most of it a private copy of image files the host already has, and a platform that must answer in under half a second without a snapshot restore keeps that resident for every idle sandbox, which bounds it at about 2,500 per server. The kernelet scheme brings the warm footprint to 171 MiB by sharing image pages instead of copying them (C01), pages idle sandboxes out cooperatively to about 26 MiB (C03 over C13 and C02), and leaves the host CPU, not DRAM, as the binding resource at about 12,800 sandboxes on 128 cores. Against a VM platform that **already pages out or suspends idle sandboxes** (Fly.io does, in a few hundred milliseconds), the gain at the 500 ms tier is **1.0–1.35×**, because both systems are then bound by the same CPU and the residual is the kernelet's lower CPU per operation (C14); against one that also has DAX, the warm-tier gain is about 1.1×. At the 5 s tier, where everything can hibernate, the ratio is 1.0× and the kernelet's advantage is wake cost and storage, not count. **The 5–10× target is met only against keep-warm practice; at technique parity the ceiling is about 1.4×, and the reason is that every large memory saving in the scheme is available to a VM stack too, at a mechanism cost the kernelet avoids but a density count does not see.**
 
 ## The model
 
-Per-sandbox DRAM is the sum of components (`benchmark/README.md`, §3), each with a baseline value measured on Firecracker and a value under the scheme:
+Per-sandbox DRAM components (`benchmark/README.md`, §3), default parameters: `F_public` 200 MiB, `F_written` 100, `P_proc` 60, active fraction `a` 0.1, `c_active` 0.1 core, 900 GiB usable, 128 cores.
 
-| component | baseline VM (as deployed) | kernelet with the scheme | candidate |
-|---|---|---|---|
-| `m_fixed`: VMM or kernelet object, host kernel structures, tables, stacks | 1.5 MiB (measured, restored VM) | 1.5 MiB (from the Blueprint's 34 MiB) | C04 |
-| `m_boot`: guest kernel boot residue | 0 after snapshot restore (33–45 MiB shared) | 0 (clone) | C05 |
-| `m_kproc`: kernel working state written after restore | ~10 MiB (part of the 192 MiB private after a burst) | ~5 MiB, returned as freed | C02, C04 |
-| `m_file`: file pages read, public part | 280 MiB (of `F` = 300; measured 168–205 MiB per read pass) | **0**, borrowed from the host page cache | C01 |
-| `m_file`: file pages written (tenant data) | 20 MiB | 20 MiB | |
-| `P_proc`: the runtime's private heap | 60 MiB (parameter; 12 MiB measured for minimal Python) | 60 MiB | |
-| **after a work burst, warm** | **372 MiB** | **87 MiB** | |
-| idle at the 50 ms tier | 372 MiB (no reclaim in practice) | 1.5 + (60 + 5) / 2.5 = **27.5 MiB** | C07 |
-| idle at the 500 ms tier | 372 MiB | 1.5 + 3 MiB kept hot = **4.5 MiB** | C03 |
-| idle at the 5 s tier | 0 (hibernated to disk, restore 35 ms + faults) | 0 | C03, C05 |
-
-Server: 900 GiB usable of 1 TiB; 128 cores; active fraction `a = 0.1`; `c_active = 0.1` core per active sandbox; wake rate 17/s.
+| component | VM, keep-warm | VM, DAX | kernelet, the scheme | candidate |
+|---|---|---|---|---|
+| `m_fixed` | 6 (measured Pss; Nanvix 9.8) | 6 | 2 (estimated) | C04 |
+| `m_kproc` | 10 [unverified] | 10 | 5 [unverified] | C02, C04 |
+| `F_public` private copy | 200 | 4 | 4 (2 % residue) | C01 |
+| `F_written` | 100 | 100 | 100 | |
+| `P_proc` | 60 | 60 | 60 | C05 shares the initial state on both sides |
+| **warm, after a burst** | **376** | **180** | **171** | |
+| idle, 500 ms tier | 376 (keep-warm) or 30 (swap-capable: fixed + 24 MiB hot) | 30 | **26** (2 + 24 hot) | C03, C13 |
+| idle, 50 ms tier | 376 or 203 (`zswap` at 2×) | 105 | **98.5** (2 + 24 hot + 145/2) | C07 |
+| idle, 5 s tier | 0 (suspended) | 0 | 2 | C03 |
 
 ## Density by tier
 
-`D_mem = 900 GiB / (a · m_active + (1 − a) · m_idle)`; `D_cpu = 128 / (a · c_active) = 12,800`; the density is the smaller.
+`D_mem = 921,600 MiB / (a · m_warm + (1 − a) · m_idle)`; `D_cpu = 128 / (a · c_active) = 12,800` (25,600 on 256 cores); the density is the smaller. C07's compression costs 2–6 cores at the 50 ms tier, taken as 4.
 
-| tier | baseline VM, as deployed | kernelet, the scheme | ratio | on a 256-core server |
-|---|---|---|---|---|
-| ≤ 50 ms | memory: 921,600 / 372 = **2,480** | memory: 921,600 / (8.7 + 24.8) = 27,500; CPU 12,800 → **12,800** | **5.2×** | 25,600 vs 2,480: **10.3×** |
-| ≤ 500 ms | **2,480** (idle VMs stay warm) | memory: 921,600 / (8.7 + 4.1) = 72,000; CPU → **12,800** | **5.2×** | **10.3×** |
-| ≤ 5 s | memory: 921,600 / 37.2 = 24,800; CPU → **12,800** | memory 106,000; CPU → **12,800** | 1.0× | 1.0× |
+| tier | VM keep-warm | VM swap-capable | VM DAX + swap | kernelet | ratio vs keep-warm (128 / 256 cores) | ratio vs swap-capable | vs DAX + swap |
+|---|---|---|---|---|---|---|---|
+| ≤ 50 ms | 2,451 | 4,183 | 8,192 | 8,711 (memory) → 8,711 | **3.6× / 3.6×** | 2.1× | 1.06× |
+| ≤ 500 ms | 2,451 | 14,266 → **12,800** (CPU) | 20,480 → 12,800 | 22,756 → **12,800** | **5.2× / 9.3×** (22,756 is the memory bound on 256 cores) | 1.0× (1.6× on 256 cores) | 1.0× (1.1×) |
+| ≤ 5 s | 24,511 → 12,800 | 12,800 | 12,800 | 48,762 → 12,800 | 1.0× | 1.0× | 1.0× |
 
-Two honest qualifications. First, the 500 ms row's baseline assumes what platforms do: keep warm VMs warm. A VM stack could inflate balloons on idle (idle VM 72 MiB, density 9,000) or host-swap idle guests (density up to the same CPU bound), at the cost of a guest-side pressure cycle per idle transition and a 150 ms toolchain re-read per wake; candidates C03 and C07 are marked generic for that reason. What no VM stack short of `virtiofs` DAX can do is C01, and C01 is the largest single term: without it an active sandbox costs 372 MiB and the memory bound at any tier with a tenth of the sandboxes active is 24,800, not 72,000. Second, the CPU bound is the same for both systems at the parameters chosen, so the ratio at the warm tiers is "memory-bound baseline against CPU-bound kernelets"; the phase diagram below says where that holds.
+The CPU-per-operation candidate (C14) shifts the CPU-bound rows: a VM pays 2.15× on first-touch page faults (measured) and an exit per I/O completion, so for an agent whose active CPU is 10–30 % such work the VM's bound is 9,500–11,600 against the kernelet's 12,800, a **1.1–1.35×** residual at technique parity (fraction unverified).
 
-## Where CPU binds
+## Where the ratio comes from, and where it goes
 
-`D_cpu = cores / (a · c_active)`. The memory bound of the scheme at the 500 ms tier is 72,000, so the kernelet side is CPU-bound whenever `a · c_active > 128 / 72,000 = 0.0018` on 128 cores, which is every realistic agent; the baseline is memory-bound whenever `a · c_active < 128 / 2,480 = 0.052`, which is every agent that spends less than half a core when active and is active less than a tenth of the time. Between those, the ratio is `min(D_cpu, 72,000) / 2,480`:
+`D_cpu = cores / (a · c_active)`; the memory bound of the scheme at 500 ms is 22,756, so kernelets are CPU-bound whenever `a · c_active > 0.0056` on 128 cores; the keep-warm VM is memory-bound whenever `a · c_active < 0.052`. The ratio against keep-warm is `min(D_cpu, 22,756) / 2,451`:
 
 | `a · c_active` | 0.005 | 0.01 | 0.02 | 0.05 | 0.1 |
 |---|---|---|---|---|---|
-| kernelet, 128 cores | 25,600 | 12,800 | 6,400 | 2,560 | 1,280 |
-| kernelet, 256 cores | 51,200 | 25,600 | 12,800 | 5,120 | 2,560 |
-| baseline (memory-bound at 2,480 until CPU binds) | 2,480 | 2,480 | 2,480 | 2,480 | 1,280 |
-| ratio, 128 / 256 cores | 10.3 / 20.6 | 5.2 / 10.3 | 2.6 / 5.2 | 1.0 / 2.1 | 1.0 / 1.0 |
+| kernelet, 128 cores | 22,756 | 12,800 | 6,400 | 2,560 | 1,280 |
+| kernelet, 256 cores | 22,756 | 22,756 | 12,800 | 5,120 | 2,560 |
+| VM keep-warm | 2,451 | 2,451 | 2,451 | 2,451 | 1,280 |
+| ratio, 128 / 256 | 9.3 / 9.3 | 5.2 / 9.3 | 2.6 / 5.2 | 1.0 / 2.1 | 1.0 / 1.0 |
 
-So the 5–10× holds for agents that average 1 % of a core or less over their life, which is an agent that waits on a model most of the time; for compute-heavy agents both systems are CPU-bound and the case for kernelets is per-operation cost, not density.
+So the 5–10× holds against keep-warm practice for agents that average 1 % of a core or less over their life, which is an agent that waits on a model most of the time; a `pytest` or `npm install` burst once per ten-minute cycle is already 2–5 %. Against a swap-capable VM platform the ratio is 1.0× at every cell of this table on 128 cores and up to 1.6× on 256 cores, plus C14's 1.1–1.35×.
 
-## What is kernelet-specific and what is not
+## What is kernelet-specific, honestly
 
-| candidate | kernelet-specific? | share of the warm-tier gain |
+| candidate | kernelet-specific? | what it changes |
 |---|---|---|
-| C01 shared file pages | yes (DAX-like sharing without an EPT; Firecracker has no `virtiofs`) | 280 of the 285 MiB removed from an active sandbox |
-| C02 cooperative return | yes (same allocator on both sides; no balloon) | keeps `m_kproc` a working set; removes 28 MiB of stranding per reclaim |
-| C04 lean fixed cost | yes (a correction to the Blueprint) | brings `m_fixed` to the VM's 1.5 MiB; without it the idle figure is 36 MiB and the scheme fails |
-| C06 idle CPU | yes | 3 cores per 10,000 idle |
-| C03 host paging | no (KVM guests are swappable) | idle 87 → 4.5 MiB; cheaper wake (no VMM, no EPT) |
-| C05 template clone | no (snapshot restore) | `m_boot` → 0; cheaper (no VMM restore) |
-| C07 compression | no (`zswap`) | idle 65 → 26 MiB at the 50 ms tier |
+| C01 shared image pages | the *mechanism* (no EPT, no DAX window); the *saving* is DAX's | 200 of the 205 MiB removed from a warm sandbox; the largest term, and available to DAX-capable VM stacks |
+| C13 relocatable memory | yes: a second naming of memory without a second-level walk | makes C03, C05 and hibernation sound; revises the Blueprint's D58 |
+| C02 cooperative return | the mechanism (same allocator both sides); the saving is free-page reporting's | 0–5 MiB; the prerequisite of C03 |
+| C04 lean fixed cost | yes, a correction to the Blueprint | 9–13 MiB → 2 MiB; parity with a restored VM's 6–10 |
+| C14 CPU per operation | yes | 1.1–1.35× on the CPU bound for fault-heavy agents |
+| C06 idle CPU | yes | ≤ 3 cores per 10,000; below the model's resolution |
+| C03 eviction, C05 templates, C07 compression | no | the idle-tier and creation-time savings, which VM platforms have |
+
+## What the scheme needs that does not exist
+
+In the kernel proper: a memory-reclaim subsystem (page-cache LRU, reverse mappings, a reclaim thread, anonymous-page swap-out), which the tree lacks entirely and which C02 and C03 depend on; a process checkpoint restorer for C05. In vOSTD: kernelet-physical addresses (C13), the borrowed-frame rules and constructor (C01), a per-spawn stack size (C04). In the endovisor: the image arena, the swap device and compressed pool, the eviction policy, deadline heaps for `timer_arm` (C06). Each is listed on its candidate page under "Changes to the Blueprint".
 
 ## Storage and wake budget
 
-Per idle sandbox on NVMe at the 500 ms and 5 s tiers: 65 MiB (kernelet) against 372 MiB (VM hibernated), 585 GB against 3.3 TB for 9,000 idle sandboxes, plus shared root images. Wake reads at 17/s × 60 MiB = 1 GB/s, a third of one NVMe device; the same for a VM stack that hibernates, plus its 35 ms restore.
+Per idle sandbox on NVMe at the 500 ms and 5 s tiers: 165 MiB (kernelet: `m_kproc + F_written + P_proc`) against 376 MiB (a VM's touched pages), 1.45 TiB against 3.3 TiB for 9,000 idle sandboxes. Wake reads at 17/s × 24 MiB (the recorded set) are 0.4 GB/s; eviction writes are about the same and need the compressed pool or a clean-page swap cache to stay within a drive's endurance.
 
 ## What is unverified
 
-- `P_proc` for a real agent runtime (Node-based agents in particular); `F` for a real agent's life; `a` and `c_active` from production traces. All three are parameters of the model; the tables above use 60 MiB, 300 MiB, 0.1 and 0.1.
-- The kernelet fixed cost of 1.5 MiB after C04 is analytic, from the Blueprint's inputs; nothing of the kernelet has run.
-- C01's borrowed-frame mechanism and C03's sleeping page-in on the kernelet's fault path are designs recorded here, not reviewed against the tree.
-- The compression ratio (2.6×) was measured on a snapshot that mixes kernel state, heap and cached file data; the heap-only ratio may differ.
-- The 5 s tier's equality assumes a VM platform actually hibernates idle VMs and re-reads their working sets; platforms that do (Fly.io, E2B) report second-scale wakes.
+- `F_written`, `a`, `c_active` and the fraction of active CPU in fault-heavy work: parameters, not measurements; they decide every ratio above.
+- `m_kproc` on both sides (10 and 5 MiB are modeling choices); the kernelet's `m_fixed` (2 MiB, analytic); the hot set of 24 MiB (REAP's average for functions, not agents).
+- The compression ratio of an agent's heap alone (2.0× is bounded from a mixed sample).
+- Every kernelet mechanism: nothing of the design has run.
+- Whether the kernel proper's system-call paths are restartable for a kernel-level clone (C05's deferred variant).
 
 ## Changes the scheme needs in the Blueprint
 
-Recorded, not applied, from the candidate pages: a borrowed read-only owner state and two service calls (C01); `grains_release`, `on_memory_pressure`, `JOB_SHRINK` and the withdrawal of assumption A1 (C02); a swap-entry case in the fault handler before the kill rule, an idle signal on the control half, wake records (C03); `KW_DATA` at 4 KiB copy-on-write pages, lazily backed 64 KiB kernel stacks, a one-grain refill and per-virtual-CPU pool sizing (C04); a template owner state with reference counts, `Kernelet::clone`, `KERNELET_CLONE` and the agent's uniqueness hook (C05); `timer_arm` required and `idle_tick_hz = 0` (C06); a compressed eviction target (C07).
+Recorded, not applied, from the candidate pages: register D58 revised to kernelet-physical addresses with a p2m and `page_table::*` virtualized at entry writes and queries (C13); an image arena, an `Image` owner state, a per-kernelet borrow table, `image_map`/`image_unmap`, the borrowed-frame rules and `Frame::from_borrowed` (C01); assumption A1 withdrawn, `grains_release`, `Kernelet::shrink`, `JOB_SHRINK`, the window unmap-and-flush path and metadata retention (C02); a swap device model, an idle signal, wake records (C03); 4 KiB `KW_DATA`, per-spawn 64–96 KiB stacks, the grant counted as tenant memory, the Tasks and Control pages' "512 KiB, measured on the tree" corrected to the tree's build settings (C04); the runtime's create flow restoring a process checkpoint (C05); `idle_tick_hz = 0` and a deadline heap for `timer_arm` (C06); a compressed pool (C07).
 
 ## Status
 
-Baseline measured; seven candidates analyzed, five adopted as kernelet-specific or as necessary companions; composition computed; reviews pending (see the log below).
+Baseline measured; nine candidates written and reviewed, seven adopted (three of them as prerequisites or corrections rather than gains), three rejected or deferred; composition computed against a ladder of three baselines. The exit criterion, 5–10× at the 500 ms and 5 s tiers with every counted gain evidenced, is **met at the 500 ms tier against keep-warm practice only** (5.2× on 128 cores, 9.3× on 256), **not at the 5 s tier**, and **not against a platform that already pages out or suspends idle sandboxes**, where the ceiling is about 1.4× from CPU per operation. The candidate space for memory has been exhausted by the reviews: once idle sandboxes leave DRAM on both sides, no memory technique changes the count, and the only remaining lever is CPU per unit of tenant work, which is C14's 1.1–1.35×.
 
 ## Log
 
-- 2026-09-09: benchmark defined; Firecracker baseline measured (cold boot, snapshot restore, Python resident, toolchain read, free-page reporting, work burst after restore); literature read (Firecracker, Nanvix, REAP, Squeezy, Memory Matters, virtiofs DAX, KSM side channels); candidates C01–C12 listed, C01–C07 written; composition computed.
+- 2026-09-09: benchmark defined; Firecracker baseline measured (cold boot, snapshot restore, Python and Node.js resident, toolchain read, free-page reporting at two orders, work burst after restore, idle CPU by `schedstat`, per-operation CPU microbenchmarks, compressibility); literature read (Firecracker, its pmem and balloon documentation, Nanvix, REAP, Squeezy, Memory Matters, virtiofs DAX, KSM side channels, Fly.io, E2B, Lambda); candidates C01–C14 listed, C01–C07, C13, C14 written; seven reviews applied: C03 and C05 found unsound under the Blueprint's physical naming and redesigned over C13; the baseline restated as a ladder; the headline restated against each rung.

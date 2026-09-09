@@ -1,0 +1,7 @@
+CPUBENCH_START
+arted cpu512 pid=3409789
+PF first-touch: 49152 pages in 218 ms = 4.43 us/page
+PF second pass (memory already touched once by the guest): 1.88 us/page
+fork+exec /bin/true: 0.44 ms each
+getpid: 627 ns each
+CPUBENCH_END

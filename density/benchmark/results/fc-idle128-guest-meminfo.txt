@@ -1,5 +1,4 @@
 MARK
-14 blocks
 MemTotal:         109464 kB
 MemFree:           90892 kB
 MemAvailable:      90372 kB

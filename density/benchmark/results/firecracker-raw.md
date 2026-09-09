@@ -30,3 +30,10 @@ after the burst: Rss 226376 kB, Pss 210092 kB, Shared_Clean 32556 kB, Private_Di
 guest: MemFree 161692 kB, Cached 52500 kB, AnonPages 8400 kB; host: Rss 101264 kB, Anonymous 98896 kB
 snapshot: create 890 ms; 22357 nonzero pages = 87.3 MiB; restore 11-32 ms; two restores idle: Pss 5828/5900 kB, Shared_Clean 8444 kB, Private_Dirty 884 kB
 note: the node binary is 118 MB and its mapped text is guest page cache (the 52.5 MiB Cached), public content; the idle heap is the 8.4 MiB anonymous
+
+## fpr4: as fpr but with page_reporting.page_reporting_order=4: after read Rss 249736 kB; 15 s after drop_caches+compact_memory Rss 78224 kB (order 9 gave 77620 kB): the residue does not depend on the reporting order
+## node256b idle CPU (schedstat, all threads, 120 s): 39.3 ms on-CPU = 0.033 % of one core (fc_vcpu 0 thread 191.5 ms total since boot, most of it the boot); host kvm halt_poll_ns = 200000
+## cpu512: microbenchmarks inside a 1 vCPU 512 MiB guest vs the same script on the host (Python 3.12 both):
+guest: first-touch page faults 4.43 us/page (49152 pages, 218 ms); second pass over guest-touched memory 1.88 us/page; fork+exec /bin/true 0.44 ms; getpid 627 ns
+host:  first-touch 2.06 us/page (101 ms); second pass 1.99 us/page; fork+exec 0.62 ms (host disk is overlayfs, not comparable); getpid 626 ns
+## virtio-pmem DAX: Firecracker 1.16 has the /pmem API (pmem.md reports a 128 MB VM at ~96 MB RSS with DAX against ~120 MB without), but the CI guest kernel vmlinux-6.1.128 has no CONFIG_VIRTIO_PMEM / FS_DAX, so the DAX variant of cache256 could not be run here
