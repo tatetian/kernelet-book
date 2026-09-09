@@ -1,0 +1,8 @@
+~ # cat /proc/meminfo
+MemTotal:	2045964 kB
+MemFree:	1917836 kB
+MemAvailable:	1917836 kB
+SwapTotal:	0 kB
+SwapFree:	0 kB
+Slab:	6080 kB
+~ # free -k

@@ -1,0 +1,25 @@
+MARK
+14 blocks
+MemTotal:         109464 kB
+MemFree:           90892 kB
+MemAvailable:      90372 kB
+Buffers:               0 kB
+Cached:             4776 kB
+SwapCached:            0 kB
+Active:              696 kB
+Inactive:           4320 kB
+Active(anon):        668 kB
+Inactive(anon):     1572 kB
+Active(file):         28 kB
+Inactive(file):     2748 kB
+Unevictable:           0 kB
+Mlocked:               0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+Zswap:                 0 kB
+Zswapped:              0 kB
+Dirty:                 0 kB
+Writeback:             0 kB
+AnonPages:           256 kB
+Mapped:             2504 kB
+ENDMARK
