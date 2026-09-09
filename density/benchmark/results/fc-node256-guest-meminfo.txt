@@ -1,0 +1,6 @@
+MARK
+MemTotal:         238296 kB
+MemFree:          161692 kB
+Cached:            52500 kB
+AnonPages:          8400 kB
+ENDMARK

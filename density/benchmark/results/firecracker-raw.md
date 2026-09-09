@@ -25,3 +25,8 @@ after the burst: Rss 226376 kB, Pss 210092 kB, Shared_Clean 32556 kB, Private_Di
 ## idle CPU: restored idle 128 MiB VM, 60 s: 2 ticks of utime+stime = 0.03 % of one core
 ## compressibility: nonzero pages of the py256 snapshot (kernel + resident Python, before any burst): 59.6 MiB raw -> 22.5 MiB with per-page zlib level 1, ratio 2.64x
 ## this host's cold read rate, 64 MiB O_DIRECT from the snapshot file: 185 MB/s (a slow disk; the model server assumes NVMe at 2-3 GB/s, per REAP's 850 MB/s on SATA with concurrent 16 KiB reads)
+
+## node256: 1 vCPU, 256 MiB, Node.js v22.12.0 (official linux-x64 binary on an attached read-only ext4 image, mounted at /root) resident with fs, path, http, https, crypto, child_process, os, url, zlib, stream, events required and a timer keeping it alive
+guest: MemFree 161692 kB, Cached 52500 kB, AnonPages 8400 kB; host: Rss 101264 kB, Anonymous 98896 kB
+snapshot: create 890 ms; 22357 nonzero pages = 87.3 MiB; restore 11-32 ms; two restores idle: Pss 5828/5900 kB, Shared_Clean 8444 kB, Private_Dirty 884 kB
+note: the node binary is 118 MB and its mapped text is guest page cache (the 52.5 MiB Cached), public content; the idle heap is the 8.4 MiB anonymous
