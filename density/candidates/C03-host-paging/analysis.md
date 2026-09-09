@@ -31,7 +31,7 @@ None, given C02's unmap-and-flush and the root-wide flush at release that C13 li
 
 ## Cost
 
-- Per evicted page: one write, and on wake one read; with 17 wakes/s and 24 MiB per wake, 0.4 GB/s of reads and, since the evicted set is rewritten at every idle period, about the same in writes: 35 TB/day, 4–5 drive writes per day on a 7.68 TB device, which needs the compressed pool (C07) as the first tier or a swap cache that writes only dirty pages, so that clean pages are simply dropped.
+- Per evicted page: one write, and on wake one read of whatever the hot set does not cover (with the hot set resident, the record's misses only). Writes are the dirty set per cycle, 24 MiB **[unverified]**: at 12,800 sandboxes (21 wakes/s) 512 MiB/s, 46 TB/day, 6 drive writes per day on one 7.68 TB device, so the scheme needs up to two 3 DWPD drives at that density (up to four at the 256-core density; the 24 MiB assumes every dirtied page is evicted and rewritten each cycle) or the compressed pool (C07) halving the bytes, and a swap cache that writes only dirty pages so that clean pages are simply dropped (`../../bounds.md` §2.4).
 - The reclaim subsystem and swap-out in the kernel proper (C02); the wake record kept by the kernelet.
 - Storage: `P_proc + F_written + m_kproc` per fully idle sandbox on NVMe, 165 MiB in the model, 1.5 TiB for 9,000 idle sandboxes, plus shared images.
 - CPU: the fault storm on wake, about 60 ms of minor faults per 60 MiB at the prototype's measured fault cost, 17 wakes/s is one core.
