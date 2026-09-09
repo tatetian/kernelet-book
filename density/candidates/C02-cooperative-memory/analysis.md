@@ -4,7 +4,7 @@
 
 ## The problem, measured
 
-A VM's memory only grows from the host's point of view: a guest page once touched stays host-resident until the guest reports it free and the host discards it. Firecracker's balloon with free-page reporting does that for free blocks of 2 MiB (Linux's `page_reporting_order` is the page-block order, 9), so after the guest freed 200 MiB of page cache the host got back most but not all of it: RSS fell to **75.8 MiB against 47.2 MiB at boot**, leaving 28 MiB stranded in blocks too fragmented to report even after `compact_memory` (`../../benchmark/results/firecracker-raw.md`, `fpr3`). Reclaiming memory the guest still considers *in use* (its page cache) needs balloon inflation, a guest-side pressure event that costs guest CPU and thrashes the guest's caches, which is why production platforms keep VMs at their high-water mark instead (Squeezy, EuroSys 2026, §1: virtio-mem and ballooning "rely on costly page migrations or VM exits" and take "multiple seconds to reclaim 2 GiB").
+A VM's memory only grows from the host's point of view: a guest page once touched stays host-resident until the guest reports it free and the host discards it. Firecracker's balloon with free-page reporting does that for free blocks of 2 MiB (Linux's `page_reporting_order` is the page-block order, 9), so after the guest freed 200 MiB of page cache the host got back most but not all of it: RSS fell to **75.8 MiB against 47.2 MiB at boot**, leaving 28 MiB stranded in blocks too fragmented to report even after `compact_memory` (`../../benchmark/results/firecracker-raw.md`, `fpr`). Reclaiming memory the guest still considers *in use* (its page cache) needs balloon inflation, a guest-side pressure event that costs guest CPU and thrashes the guest's caches, which is why production platforms keep VMs at their high-water mark instead (Squeezy, EuroSys 2026, §1: virtio-mem and ballooning "rely on costly page migrations or VM exits" and take "multiple seconds to reclaim 2 GiB").
 
 ## The mechanism
 
@@ -20,7 +20,7 @@ Two things, both measured on the baseline: the stranded 28 MiB per VM after a re
 
 ## Evidence
 
-- Measured: free-page reporting leaves 28 MiB of a 128 MiB guest's boot-and-free memory stranded after compaction (`fpr3`); balloon inflation is the only way to reclaim in-use guest memory and is documented as CPU-intensive.
+- Measured: free-page reporting leaves 28 MiB of a 128 MiB guest's boot-and-free memory stranded after compaction (`fpr`); balloon inflation is the only way to reclaim in-use guest memory and is documented as CPU-intensive.
 - Published: Squeezy's reclamation measurements (seconds per 2 GiB with virtio-mem; page migration dominates), and its argument that the guest OS memory manager's obliviousness to hotplugged memory is the root cause, which a kernelet does not have: its allocator and the host's are the same code over the same frames.
 - Analytic: a grain returned is 2 MiB of host memory reusable at once; the cost is one call and one 2 MiB zeroing.
 
