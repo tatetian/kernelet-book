@@ -64,7 +64,7 @@ Published figures, for cross-checking:
 - Nanvix (arXiv 2604.11669, Fig. 9b), instances per 1 GiB: Firecracker cold-booted **20**, gVisor 43, **Firecracker from snapshot 104** (≈ 9.8 MiB each), Hyperlight 552, a process 1,646.
 - REAP (ASPLOS 2021, Fig. 4): a booted function instance holds **100–200 MB**; after snapshot restore its working set is **8–99 MB, 24 MB on average**.
 - Squeezy (EuroSys 2026, §6.1.1): virtio-mem hot-unplug of 2 GiB takes 2.5 s, 61 % page migration and 24 % zeroing; with allocation segregation about 125 ms.
-- Platforms: Fly.io Machines autosuspend to a Firecracker snapshot and resume "in a few hundred milliseconds"; Fly.io Sprites inflate the balloon on idle; AWS Lambda freezes idle environments and restores SnapStart snapshots in tens of milliseconds; E2B keeps a sandbox warm until its timeout (5 minutes by default) and otherwise kills or, on request, pauses it (about 1 s to resume).
+- Platforms: Fly.io Machines suspend by writing the whole of a Machine's memory to disk (Machines up to 2 GiB) and resume in 100–250 ms by user reports, autosuspending after minutes of idleness; AWS Lambda freezes idle environments and SnapStart gives "as low as sub-second" startup from a snapshot (its double-digit-millisecond figure is provisioned concurrency, which is keep-warm); E2B keeps a sandbox warm until its timeout (5 minutes by default) and otherwise kills or, on request, pauses it ("approximately 1 second" to resume). The first draft's claims that Lambda restores in tens of milliseconds and that Fly.io Sprites inflate the balloon on idle were not supported by the cited pages and are withdrawn.
 
 ## 5. Where the baseline's density is bounded
 
@@ -72,7 +72,7 @@ The baseline is not one number but a **ladder** of what a VM platform does with 
 
 | rung | what it means | warm sandbox | idle sandbox at 500 ms | idle at 50 ms | idle at 5 s |
 |---|---|---|---|---|---|
-| **keep-warm** | idle VMs stay resident with their working set (E2B inside its timeout; any platform answering under 500 ms without a restore) | `6 + 10 + 200 + 100 + 60` = **376 MiB** | 376 | 376 | 0 (killed or paused, ~1 s resume) |
+| **keep-warm** | idle VMs stay resident with their working set: any platform answering under 500 ms without a restore. For long-lived agents this rung is a hypothetical, not a named platform's practice: E2B kills at its 5-minute timeout, Fly.io suspends after minutes, Lambda freezes and snapshots | `6 + 10 + 200 + 100 + 60` = **376 MiB** | 376 | 376 | 0 (killed or paused, ~1 s resume) |
 | **swap-capable** | the host pages idle guests out (`madvise`, or suspend with lazy restore and a prefetch record; Fly.io) | 376 | `6 + 24` hot = **30** | `6 + 24 + 346/2` (`zswap`) = **203** | 0 |
 | **DAX + swap** | as above with `virtio-pmem` or `virtiofs` DAX so that image pages are not copied (Cloud Hypervisor, Kata with DAX on, Firecracker ≥ 1.14 with a DAX-capable guest) | `6 + 10 + 4 + 100 + 60` = **180** | 30 | `6 + 24 + 150/2` = **105** | 0 |
 
