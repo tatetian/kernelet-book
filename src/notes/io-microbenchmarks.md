@@ -7,7 +7,7 @@
 | what | cost |
 |---|---|
 | `memcpy` 64 B, hot | 1.8 ns |
-| `memcpy` 1,500 B, hot | 13.6 ns (110 GB/s) |
+| `memcpy` 1,500 B, hot / cold | 13.6 ns (110 GB/s) / 231 ns |
 | `memcpy` 4 KiB, hot / cold | 33 ns (124 GB/s) / 457 ns (9.0 GB/s) |
 | `memcpy` 64 KiB, hot / cold | 1.16 µs (57 GB/s) / 6.4 µs (10.2 GB/s) |
 | `memcpy` 2 MiB, hot / cold | 61 µs (34.5 GB/s) / 156 µs (13.4 GB/s) |
@@ -138,6 +138,21 @@ int main(void){
     bench_futex(20000);
     return 0;
 }
+```
+
+The cold 1,500-byte copy was measured separately with the same 512 MiB working set:
+
+```c
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <sys/mman.h>
+static double now(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec*1e-9;}
+int main(void){ size_t sz=1500, total=(size_t)512<<20; char *pool=mmap(NULL,total,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_POPULATE,-1,0); memset(pool,1,total);
+ size_t stride=4096, n=total/stride/2; int iters=100000; double t0=now();
+ for(int i=0;i<iters;i++){ size_t k=i%n; memcpy(pool+(2*k+1)*stride, pool+(2*k)*stride, sz); }
+ double dt=now()-t0; printf("memcpy cold 1500 B: %.0f ns/copy\n", dt/iters*1e9); return 0; }
 ```
 
 ## Raw output
