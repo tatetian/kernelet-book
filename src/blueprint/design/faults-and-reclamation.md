@@ -74,6 +74,8 @@ A task is stopped by **terminating it at its next quiescent point**, which is an
 
 Steps 2 to 10 are the drain list, and the claim that it is complete is the one argued, not checked, claim of this page: it is complete if every field of `Kernelet` and every host-wide structure that can name a `KerneletId` appears in it. The fields are enumerated on the control half's page; the host-wide structures are the slot table, the owner array, the host tick's list and the vsock switch's table, and each has a step here or in the mark. A field added to `Kernelet`, or a host-wide table that learns to name a kernelet, without a step here is the bug class to review for.
 
+With the second version's lending devices ([Zero-copy I/O](zero-copy-io.md)), step 1 also returns `Zombie` while any grain's lend count is nonzero, and a host driver's in-flight request over lent frames is one more host-wide structure that can name a kernelet's memory: it is found empty through that count, which the completion path takes down even for a dying kernelet.
+
 **Why release is safe.** After the last task's switch-away no CPU holds the window's translations or a root of the kernelet in CR3, after step 2 no task can run kernelet code, and after step 1 no `guest_memory` is in progress and no adopted thread is acting for the kernelet; so when step 8 returns a frame to the host allocator, nothing in the machine can reference it through a window address or a page-table walk, and nothing in the host references it at all except through the host's own metadata, which is intact. This is invariant I4's destroy half, and it holds because the host never stored a window address anywhere but the mapping tables step 7 frees.
 
 ## What a kernelet's death does not do
@@ -94,6 +96,7 @@ An exit status the runtime reports: the code its kernel passed, the panic messag
 - Per grain granted: a 2 MiB zeroing, *estimated* at tens of microseconds, paid at grant rather than at destroy (register D55).
 - `destroy`: linear in tasks, runs, devices and the tables of step 7; per run, `Segment::drop` at one frame per page, which is OSTD's own cost for freeing a segment; no flush, since the switch-away rule paid it.
 - A `Zombie` costs its grant and host objects until the pin or the adopted thread goes away; it is a sandbox in the state a process in uninterruptible sleep is in, bounded by one host I/O's duration.
+- With lending devices a `Zombie` also lasts until the host driver completes or cancels the kernelet's requests, which is bounded only if the driver times requests out ([Zero-copy I/O](zero-copy-io.md), assumption A14).
 
 ## What this page decides
 
