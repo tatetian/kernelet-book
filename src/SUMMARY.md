@@ -36,6 +36,7 @@
     - [Boot, power, panic, and the rest](blueprint/design/virtualizing-ostd/the-rest.md)
   - [Faults, termination, and reclamation](blueprint/design/faults-and-reclamation.md)
   - [Channels](blueprint/design/channels.md)
+  - [Zero-copy I/O](blueprint/design/zero-copy-io.md)
   - [The endovisor](blueprint/design/endovisor.md)
   - [The kernelet runtime](blueprint/design/kernelet-runtime.md)
 
@@ -43,4 +44,5 @@
 
 - [The Notes](notes/index.md)
 - [OSTD API inventory](notes/ostd-api-inventory.md)
+- [I/O microbenchmarks](notes/io-microbenchmarks.md)
 - [Design register](notes/design-register.md)

@@ -15,6 +15,9 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 - **Overview › Terminology** and **Paper › API Virtualization**: the Design chapter now names the kernelet build of OSTD **vOSTD** (register D69) and says plain OSTD for the host build; the Terminology bullet "the kernelet build of OSTD" and the Paper's uses of "OSTD (kernelet build)" should adopt the name, and the architecture figure's box label "OSTD (kernelet build)" could read "vOSTD".
 - **`AGENTS.md` › Vocabulary**: the rows "the facade" (`kernelet-abi`) and the identifier list (`KerneletEntry`, `KerneletCtl`, `EndovisorServices`, `endovisor()`, `CURRENT_KERNELET`, `#[kernelet_drop]`, crates `aster-kernelet`, `kernelet-abi`, `endovisor`, the `14aster_kernelet` prefix) describe a design the Blueprint no longer has; the Design chapter's names are the kernelet API's control and service halves, the image ABI (`ServiceTable`, `EntryTable`, `BootArgs`), the `kernelet` feature build of `ostd`, and the endovisor as a module of the kernel crate. Not edited, since `AGENTS.md` is the owner's.
 
+- **Paper › Introduction and Evaluation, Overview › API virtualization**: the sentences that count "one copy per block request" and "two copies per packet" describe the first version; the second version (Design › Zero-copy I/O) has zero host copies for block and tier 2 network and one for inter-kernelet transfer, with the fixed-cost argument (no exits, one or no wakeup) that the Evaluation page could carry as an analytic result until a prototype measures it.
+- **Executive Summary**: may name I/O as the second edge beside density; not edited.
+
 ## Iteration 0: plan
 
 **Read.** The figure; the Overview; the Paper; `AGENTS.md`; the Asterinas tree at `ab9a4cfdc` (HEAD, 2026-08-31): `ostd/src` (222 files, 40,945 lines), every `pub` item by module, the kernel's `use ostd::…` imports expanded to leaves (173 distinct items, 1,182 imports across 424 files), the hook traits (`GlobalFrameAllocator`, `GlobalHeapAllocator`, `Scheduler`, `LocalRunQueue`, `UserModeHooks`), the `Task` struct, the module re-exports.
@@ -114,3 +117,15 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Reviewed.** One cross-chapter consistency review: 23 findings, all applied, none changing a decision. The four that mattered: the taxonomy still parked the boot task; the control and faults pages still let `on_dying` sleep; the control page's decision summary still had hooks on the kernelet task's stack; the faults page's exempt list still named `exit` and `panic`. The rest were stale names (`task_set_prio`, `HookPanicked`, `EntryTableVersion`, `cpu_weight`), stale attributions (`kill` doing the per-task work, metadata at the head of runs, scheduler groups) and register drift (D9, D10, D12, D15, D19, A10).
 
 **Verified.** `make check` → `check: OK`; `make build` exits 0.
+
+## Iteration 10: Zero-copy I/O, the lending device model
+
+**Written.** `src/blueprint/design/zero-copy-io.md`, the second version of devices: rings read through the checked accessor, entries that lend frames, submission in the notify hook straight into the host driver, headers in the entry, lending enforced by a vOSTD type and a host lend count, a polling bit, block at two tiers (extent-backed hardware DMA; file-backed one copy), network transmit with a host-owned header and receive at two tiers (steered queue zero-copy; shared queue one copy), inter-kernelet one copy frame to frame plus grain moves above 1 MiB. Four Mermaid figures. Register D70–D76, A14–A16. Pointers added to Devices, Channels and the taxonomy.
+
+**Measured here** (scratchpad `zc/bench.c`): memcpy 64 B–2 MiB hot and cold; map, touch, unmap and protect pairs with and without other running threads; a futex round trip. **Published**: Rizzo, Lettieri, Maffione (ANCS 2013) for exit and register-access costs and the 1 Mpps figure; Agache et al. (NSDI 2020) for Firecracker's block and network figures; de Bruijn and Dumazet (netdev 2017) for MSG_ZEROCOPY.
+
+**Decided.** The metric: host CPU per request as fixed plus per-byte terms, because the microbenchmarks show a small copy is 1–3 % of a request's fixed cost and the fixed cost is where exits and wakeups live. The design attacks both terms.
+
+**Open.** The hook's 0.2–0.5 µs is estimated; the host drivers' borrowed-frame constructors do not exist (A14); tier 2 receive needs steering (A16); nothing has run.
+
+**Next.** Review by a maintainer-and-performance-skeptic subagent; revise; up to five iterations.

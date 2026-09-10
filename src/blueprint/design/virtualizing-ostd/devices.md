@@ -110,6 +110,10 @@ The driver side of the DMA objects is on the [Memory](memory.md) page: frames fr
 - Per device: one host kernel thread with its 512 KiB stack, one model struct, the inbox of queue-size slots, and the host objects behind the backend, charged at attach.
 - Per request: bounded host memory, charged.
 
+## The second version
+
+The copies and the device-thread hops this page counts are what the second version removes: [Zero-copy I/O](../zero-copy-io.md) specifies a lending device model in which entries lend the kernelet's own frames and the host's drivers take them as DMA targets, with the first version's virtio models kept for images that still carry the virtio drivers.
+
 ## What this page decides
 
 - **Devices are enumerated from the kernel command line the endovisor composes** (register D23), so the kernel proper's MMIO bus probe is reused with `cfg` lines for the interrupt and PCI steps. The alternative, a kernelet-specific bus that reads `BootArgs` directly, is a second probe to maintain.

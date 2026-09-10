@@ -99,6 +99,8 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `IoPort` and `arch::device::io_port::*` | absent | port I/O is the host's; used by host-only components and by the virtio crate's PCI transport, which is compiled out ([Devices](devices.md)) | | |
 | `bus::BusProbeError` | identical | | none | nothing |
 
+The second version of devices adds one vOSTD item with no crossing of its own, `LentFrame`, a frame handle the lending drivers hold for a request in flight, and one service call, `dev_notify`; both are on [Zero-copy I/O](../zero-copy-io.md).
+
 ## `boot`, `smp`, `power`, `console`, `log`, `panic`, `util`, `prelude`
 
 | item | kind | how, and what it relies on | cost | what a tenant sees |

@@ -112,6 +112,7 @@ In this chapter:
   - [Boot, power, panic, and the rest](virtualizing-ostd/the-rest.md)
 - [Faults, termination, and reclamation](faults-and-reclamation.md)
 - [Channels](channels.md)
+- [Zero-copy I/O](zero-copy-io.md)
 - [The endovisor](endovisor.md)
 - [The kernelet runtime](kernelet-runtime.md)
 
