@@ -33,21 +33,22 @@
 <text x="108" y="183" font-size="14" fill="#00F7FF" letter-spacing="3">业界趋势</text>
 <text x="84" y="224" font-size="25" font-weight="700" fill="#FFFFFF">沙箱已是智能体的基础设施</text>
 
-<circle cx="90" cy="268" r="3.5" fill="#00F7FF"/>
-<text x="106" y="274" font-size="17" font-weight="700" fill="#DCE0F0">沙箱成了框架的原生组件</text>
-<text x="106" y="300" font-size="15" fill="#9AA0BE">2026 年 4 月起，OpenAI 智能体开发框架内置</text>
-<text x="106" y="322" font-size="15" fill="#9AA0BE">7 家沙箱服务商，沙箱成为标准配置</text>
+<circle cx="90" cy="262" r="3.5" fill="#00F7FF"/>
+<text x="106" y="268" font-size="17" font-weight="700" fill="#DCE0F0">沙箱成了框架的原生组件</text>
+<text x="106" y="292" font-size="15" fill="#9AA0BE">2026 年 4 月起，OpenAI 智能体开发框架内置 7 家</text>
+<text x="106" y="312" font-size="15" fill="#9AA0BE">沙箱服务商，沙箱成为标准配置</text>
 
-<circle cx="90" cy="360" r="3.5" fill="#00F7FF"/>
-<text x="106" y="366" font-size="17" font-weight="700" fill="#DCE0F0">资本高度集中</text>
-<text x="106" y="392" font-size="15" fill="#9AA0BE">Modal 单轮融资 3.55 亿美元；E2B 累计创建沙</text>
-<text x="106" y="414" font-size="15" fill="#9AA0BE">箱超 10 亿次，调用规模已经成型</text>
+<circle cx="90" cy="344" r="3.5" fill="#00F7FF"/>
+<text x="106" y="350" font-size="17" font-weight="700" fill="#DCE0F0">资本高度集中</text>
+<text x="106" y="374" font-size="15" fill="#9AA0BE">Modal 单轮融资 3.55 亿美元；E2B 累计创建沙箱超</text>
+<text x="106" y="394" font-size="15" fill="#9AA0BE">10 亿次，调用规模已经成型</text>
 
-<circle cx="90" cy="452" r="3.5" fill="#FF5C7A"/>
-<text x="106" y="458" font-size="17" font-weight="700" fill="#FF8FA3">而逃逸已真实发生 <tspan font-size="13" fill="#9AA0BE">※</tspan></text>
-<text x="106" y="484" font-size="15" fill="#9AA0BE">2026 年 7 月，OpenAI 评测环境中的智能体经容</text>
-<text x="106" y="506" font-size="15" fill="#9AA0BE">器与编排层配置逃逸，13 小时内取得外部公司</text>
-<text x="106" y="528" font-size="15" fill="#9AA0BE">多个集群的管理员权限</text>
+<circle cx="90" cy="426" r="3.5" fill="#FF5C7A"/>
+<text x="106" y="432" font-size="17" font-weight="700" fill="#FF8FA3">而逃逸已真实发生 <tspan font-size="13" fill="#9AA0BE">※※</tspan></text>
+<text x="106" y="456" font-size="15" fill="#9AA0BE">2026 年 7 月，OpenAI 评测环境中的智能体经容器与</text>
+<text x="106" y="476" font-size="15" fill="#9AA0BE">编排层配置逃逸，13 小时内取得外部公司多个集群</text>
+<text x="106" y="496" font-size="15" fill="#9AA0BE">的管理员权限</text>
+<text x="106" y="524" font-size="15" fill="#FF8FA3">共享一个内核的沙箱，一处疏漏即可越界。</text>
 
 <!-- ===== (2) LEFT BOTTOM : 现有方案的局限 ===== -->
 <rect x="56" y="576" width="470" height="400" rx="14" fill="#0B1030" stroke="#1A1C30"/>
@@ -55,22 +56,22 @@
 <text x="84" y="612" font-size="17" font-weight="700" fill="#FF8FA3">②</text>
 <text x="108" y="611" font-size="14" fill="#FF8FA3" letter-spacing="3">现有方案的局限</text>
 <text x="84" y="652" font-size="25" font-weight="700" fill="#FFFFFF">容器与微虚拟机，三道坎</text>
-<text x="84" y="682" font-size="15" fill="#BEE9F0">容器不够隔离；微虚拟机隔离够了，但代价太高。</text>
+<text x="84" y="680" font-size="15" fill="#BEE9F0">容器与 gVisor 类方案隔离不足；微虚拟机够，但代价高。</text>
 
-<text x="84" y="726" font-size="17" font-weight="700" fill="#FF8FA3">1</text>
-<text x="106" y="726" font-size="17" font-weight="700" fill="#DCE0F0">资源弹性不足</text>
-<text x="106" y="752" font-size="15" fill="#9AA0BE">沙箱内存峰值与均值相差数倍，缺少快速动态调</text>
-<text x="106" y="774" font-size="15" fill="#9AA0BE">整的能力，超卖受限，单机装不下更多沙箱</text>
+<text x="84" y="722" font-size="17" font-weight="700" fill="#FF8FA3">1</text>
+<text x="106" y="722" font-size="17" font-weight="700" fill="#DCE0F0">资源弹性不足</text>
+<text x="106" y="746" font-size="15" fill="#9AA0BE">沙箱内存峰值与均值相差数倍，缺少快速动态调整</text>
+<text x="106" y="766" font-size="15" fill="#9AA0BE">的能力，超卖受限，单机装不下更多沙箱</text>
 
-<text x="84" y="820" font-size="17" font-weight="700" fill="#FF8FA3">2</text>
-<text x="106" y="820" font-size="17" font-weight="700" fill="#DCE0F0">I/O 性能差</text>
-<text x="106" y="846" font-size="15" fill="#9AA0BE">数据在主机与沙箱之间反复拷贝，每次读写都要</text>
-<text x="106" y="868" font-size="15" fill="#9AA0BE">陷入虚拟化层，白白付掉一次硬件开销</text>
+<text x="84" y="810" font-size="17" font-weight="700" fill="#FF8FA3">2</text>
+<text x="106" y="810" font-size="17" font-weight="700" fill="#DCE0F0">I/O 性能差</text>
+<text x="106" y="834" font-size="15" fill="#9AA0BE">数据在主机与沙箱之间反复拷贝，每次读写都要陷</text>
+<text x="106" y="854" font-size="15" fill="#9AA0BE">入虚拟化层，白白付掉一次硬件开销</text>
 
-<text x="84" y="914" font-size="17" font-weight="700" fill="#FF8FA3">3</text>
-<text x="106" y="914" font-size="17" font-weight="700" fill="#DCE0F0">不能嵌套</text>
-<text x="106" y="940" font-size="15" fill="#9AA0BE">裸金属实例昂贵，租户更愿意租虚拟机；但虚拟</text>
-<text x="106" y="962" font-size="15" fill="#9AA0BE">化层已被占用，沙箱无处安放</text>
+<text x="84" y="898" font-size="17" font-weight="700" fill="#FF8FA3">3</text>
+<text x="106" y="898" font-size="17" font-weight="700" fill="#DCE0F0">嵌套代价大</text>
+<text x="106" y="922" font-size="15" fill="#9AA0BE">裸金属实例昂贵，租户更愿意租虚拟机；而嵌套虚</text>
+<text x="106" y="942" font-size="15" fill="#9AA0BE">拟化少有云开放，开放了性能代价也大</text>
 
 <!-- ===== (3) CENTER : 技术路线 ===== -->
 <text x="960" y="184" font-size="17" font-weight="700" fill="#00F7FF" text-anchor="middle">③</text>
@@ -80,16 +81,19 @@
 <rect x="554" y="272" width="812" height="392" rx="14" fill="#060A24" stroke="#14172B"/>
 
 <text x="578" y="302" font-size="13" fill="#8A90AE" letter-spacing="1.5">用户态 —— 智能体与工具，不可信代码，可能已被攻陷</text>
-<rect x="578" y="312" width="244" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
-<rect x="838" y="312" width="244" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
-<rect x="1098" y="312" width="244" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
-<text x="700" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 A</text>
-<text x="960" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 B</text>
-<text x="1220" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 C</text>
+<rect x="578" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
+<rect x="766" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
+<rect x="954" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
+<rect x="1142" y="312" width="200" height="42" rx="8" fill="#0D1638" stroke="#2C3A72"/>
+<text x="666" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 A</text>
+<text x="854" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 B</text>
+<text x="1042" y="339" font-size="15.5" fill="#C9CCE0" text-anchor="middle">智能体 C</text>
+<text x="1242" y="339" font-size="15.5" fill="#BFC8F5" text-anchor="middle">沙箱运行时</text>
 
-<line x1="700" y1="354" x2="700" y2="374" stroke="#007186"/>
-<line x1="960" y1="354" x2="960" y2="374" stroke="#007186"/>
-<line x1="1220" y1="354" x2="1220" y2="374" stroke="#007186"/>
+<line x1="666" y1="354" x2="666" y2="374" stroke="#007186"/>
+<line x1="854" y1="354" x2="854" y2="374" stroke="#007186"/>
+<line x1="1042" y1="354" x2="1042" y2="374" stroke="#007186"/>
+<line x1="1242" y1="354" x2="1242" y2="374" stroke="#2C3A72"/>
 
 <rect x="578" y="374" width="764" height="28" rx="5" fill="#061831" stroke="#044C61" stroke-dasharray="6 5"/>
 <text x="960" y="393" font-size="13.5" fill="#7FD8E0" text-anchor="middle" letter-spacing="1">硬件边界 —— 页表与用户态／内核态切换，与任何操作系统一样</text>
@@ -107,12 +111,12 @@
 
 <rect x="1142" y="444" width="200" height="86" rx="10" fill="#0D1638" stroke="#2C3A72"/>
 <text x="1242" y="474" font-size="16" font-weight="700" fill="#BFC8F5" text-anchor="middle">宿主内核（星绽）</text>
-<text x="1242" y="496" font-size="13" fill="#9AA0BE" text-anchor="middle">内含 endovisor</text>
+<text x="1242" y="496" font-size="13" fill="#9AA0BE" text-anchor="middle">内含 endovisor 沙箱管理器</text>
 <text x="1242" y="516" font-size="12.5" fill="#8A90AE" text-anchor="middle">创建 · 调度 · 设备后端</text>
 
 <rect x="578" y="552" width="764" height="58" rx="9" fill="url(#gOstd)" stroke="#0095A3"/>
 <text x="960" y="576" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">OSTD —— 唯一的共享底座</text>
-<text x="960" y="598" font-size="13" fill="#BEE9F0" text-anchor="middle">全系统的 unsafe 代码集中于此；其内存管理核心模块已完成机器证明</text>
+<text x="960" y="598" font-size="13" fill="#BEE9F0" text-anchor="middle">全系统的 unsafe 代码都收在这一层（约 4 万行）；其内存管理核心模块已完成机器证明</text>
 
 <rect x="578" y="622" width="764" height="34" rx="7" fill="#0D112B" stroke="#24273E"/>
 <text x="960" y="644" font-size="13.5" fill="#9AA0BE" text-anchor="middle">物理硬件或云上虚拟机 —— 不需要虚拟机监控器，不占用虚拟化层</text>
@@ -141,15 +145,16 @@
 
 <text x="960" y="882" font-size="14.5" fill="#9AA0BE" text-anchor="middle">单次 I/O 的固定开销，</text>
 <text x="960" y="904" font-size="14.5" fill="#9AA0BE" text-anchor="middle">且主机侧数据零拷贝</text>
-<text x="960" y="932" font-size="13.5" fill="#7FD8E0" text-anchor="middle">对比用户态 VMM 后端</text>
+<text x="960" y="926" font-size="13.5" fill="#7FD8E0" text-anchor="middle">轮询模式下，对比</text>
+<text x="960" y="944" font-size="13.5" fill="#7FD8E0" text-anchor="middle">用户态虚拟机监控器后端</text>
 
-<text x="1240" y="882" font-size="14.5" fill="#9AA0BE" text-anchor="middle">不依赖硬件虚拟化，沙箱</text>
-<text x="1240" y="904" font-size="14.5" fill="#9AA0BE" text-anchor="middle">可直接跑在租用的云主机</text>
-<text x="1240" y="926" font-size="14.5" fill="#9AA0BE" text-anchor="middle">里，无需裸金属</text>
+<text x="1240" y="882" font-size="14.5" fill="#9AA0BE" text-anchor="middle">不依赖硬件虚拟化，沙箱可</text>
+<text x="1240" y="904" font-size="14.5" fill="#9AA0BE" text-anchor="middle">直接跑在租用的云主机里</text>
+<text x="1240" y="932" font-size="13.5" fill="#7FD8E0" text-anchor="middle">对比微虚拟机（需硬件虚拟化）</text>
 
 <!-- ===== (4) RIGHT TOP : 技术先进性与自主可控 ===== -->
-<rect x="1394" y="148" width="470" height="400" rx="14" fill="#0B1030" stroke="#1A1C30"/>
-<rect x="1860" y="148" width="4" height="400" rx="2" fill="#132AC6"/>
+<rect x="1394" y="148" width="470" height="424" rx="14" fill="#0B1030" stroke="#1A1C30"/>
+<rect x="1860" y="148" width="4" height="424" rx="2" fill="#132AC6"/>
 <text x="1422" y="184" font-size="17" font-weight="700" fill="#7F9CFF">④</text>
 <text x="1446" y="183" font-size="14" fill="#7F9CFF" letter-spacing="3">技术先进性与自主可控</text>
 <text x="1422" y="224" font-size="25" font-weight="700" fill="#FFFFFF">凭什么是我们</text>
@@ -167,34 +172,36 @@
 
 <circle cx="1428" cy="478" r="3.5" fill="#00F7FF"/>
 <text x="1444" y="484" font-size="17" font-weight="700" fill="#8FF6FC">自主可控与制高点</text>
-<text x="1444" y="510" font-size="15" fill="#9AA0BE">社区在国内发起，已支持 RISC-V 等指令集；</text>
-<text x="1444" y="532" font-size="15" fill="#9AA0BE">隔离性由机器证明兜底，不依赖境外编译器</text>
+<text x="1444" y="510" font-size="15" fill="#9AA0BE">社区在国内发起并主导演进，已支持 RISC-V 等指</text>
+<text x="1444" y="532" font-size="15" fill="#9AA0BE">令集；隔离边界写在语言与已证明的底座里，不</text>
+<text x="1444" y="554" font-size="15" fill="#9AA0BE">靠人工审计</text>
 
 <!-- ===== (5) RIGHT BOTTOM : 产业落地 ===== -->
-<rect x="1394" y="576" width="470" height="400" rx="14" fill="#0B1030" stroke="#1A1C30"/>
-<rect x="1860" y="576" width="4" height="400" rx="2" fill="#00BAC6"/>
-<text x="1422" y="612" font-size="17" font-weight="700" fill="#00F7FF">⑤</text>
-<text x="1446" y="611" font-size="14" fill="#00F7FF" letter-spacing="3">产业落地</text>
-<text x="1422" y="652" font-size="25" font-weight="700" fill="#FFFFFF">两个已确定意向的场景</text>
+<rect x="1394" y="596" width="470" height="380" rx="14" fill="#0B1030" stroke="#1A1C30"/>
+<rect x="1860" y="596" width="4" height="380" rx="2" fill="#00BAC6"/>
+<text x="1422" y="632" font-size="17" font-weight="700" fill="#00F7FF">⑤</text>
+<text x="1446" y="631" font-size="14" fill="#00F7FF" letter-spacing="3">产业落地</text>
+<text x="1422" y="670" font-size="25" font-weight="700" fill="#FFFFFF">两个已确定意向的场景</text>
 
-<rect x="1422" y="670" width="414" height="96" rx="10" fill="#0A1C3A" stroke="#09435E"/>
-<text x="1442" y="696" font-size="13" fill="#00F7FF" letter-spacing="2">云侧</text>
-<text x="1442" y="722" font-size="18" font-weight="700" fill="#FFFFFF">蚂蚁集团 · Agent 原生数据中心</text>
-<text x="1442" y="748" font-size="14.5" fill="#9AA0BE">单机沙箱密度与 I/O 效率，直接决定单位算力成本</text>
+<rect x="1422" y="686" width="414" height="92" rx="10" fill="#0A1C3A" stroke="#09435E"/>
+<text x="1442" y="710" font-size="13" fill="#00F7FF" letter-spacing="2">云侧</text>
+<text x="1442" y="736" font-size="18" font-weight="700" fill="#FFFFFF">蚂蚁集团 · Agent 原生数据中心</text>
+<text x="1442" y="762" font-size="14.5" fill="#9AA0BE">单机沙箱密度与 I/O 效率，直接决定单位算力成本</text>
 
-<rect x="1422" y="780" width="414" height="96" rx="10" fill="#0A1C3A" stroke="#09435E"/>
-<text x="1442" y="806" font-size="13" fill="#00F7FF" letter-spacing="2">端侧</text>
-<text x="1442" y="832" font-size="18" font-weight="700" fill="#FFFFFF">统信软件 · Agent 原生桌面 OS</text>
-<text x="1442" y="858" font-size="14.5" fill="#9AA0BE">桌面资源受限，承担不起「一个智能体一台虚拟机」</text>
+<rect x="1422" y="790" width="414" height="92" rx="10" fill="#0A1C3A" stroke="#09435E"/>
+<text x="1442" y="814" font-size="13" fill="#00F7FF" letter-spacing="2">端侧</text>
+<text x="1442" y="840" font-size="18" font-weight="700" fill="#FFFFFF">统信软件 · Agent 原生桌面 OS</text>
+<text x="1442" y="866" font-size="14.5" fill="#9AA0BE">桌面资源受限，承担不起「一个智能体一台虚拟机」</text>
 
-<text x="1422" y="906" font-size="14.5" fill="#BEE9F0">部署前提：以星绽作为宿主内核。</text>
-<text x="1422" y="932" font-size="14.5" fill="#9AA0BE">路线：架构论文已发表 → 原型与实测（进行中）</text>
-<text x="1422" y="952" font-size="14.5" fill="#9AA0BE">→ 场景试点（2027）</text>
+<text x="1422" y="912" font-size="14.5" fill="#BEE9F0">部署前提：以星绽作为宿主内核。</text>
+<text x="1422" y="936" font-size="14.5" fill="#9AA0BE">路线：论文已发表 → 原型与实测（进行中）→ 2027 试点</text>
+<text x="1422" y="960" font-size="14.5" fill="#9AA0BE">所需支持：原型工程投入与首批试点场景对接</text>
 
 <!-- ===== footnote ===== -->
-<line x1="56" y1="998" x2="1864" y2="998" stroke="#1A1C30"/>
-<text x="56" y="1020" font-size="14.5" fill="#9AA0BE">※ 模型估算，原型尚未实测。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
-<text x="56" y="1042" font-size="14.5" fill="#9AA0BE">I/O 为轮询模式下与用户态 VMM 设备后端相比（原始区间 3–50×，此处取保守值）；与内核态 vhost 后端相比约 2–30×，中断模式下与 vhost 大致相当。零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提。</text>
-<text x="56" y="1064" font-size="14.5" fill="#9AA0BE">逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。主机侧支撑代码尚在开发中。</text>
+<line x1="56" y1="990" x2="1864" y2="990" stroke="#1A1C30"/>
+<text x="56" y="1010" font-size="14" fill="#9AA0BE">※ 模型估算，原型尚未实测。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
+<text x="56" y="1029" font-size="14" fill="#9AA0BE">I/O 为轮询模式下与用户态虚拟机监控器设备后端相比（原始区间 3–50×，此处取保守值）；对内核态 vhost 后端约 2–30×，中断模式下与 vhost 相当。</text>
+<text x="56" y="1048" font-size="14" fill="#9AA0BE">独占一个 CPU 核的轮询后端（SPDK／DPDK 类）可达同一量级，但要长期占掉那个核。零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提；相关主机侧支撑代码尚在开发中。</text>
+<text x="56" y="1067" font-size="14" fill="#9AA0BE">※※ 逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。</text>
 
 </svg>
