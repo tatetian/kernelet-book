@@ -1,0 +1,199 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+
+<defs>
+  <linearGradient id="gTitle" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#FFFFFF"/>
+    <stop offset="55%" stop-color="#00F7FF"/>
+    <stop offset="100%" stop-color="#1937FF"/>
+  </linearGradient>
+  <linearGradient id="gKern" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#00F7FF" stop-opacity="0.20"/>
+    <stop offset="100%" stop-color="#1937FF" stop-opacity="0.10"/>
+  </linearGradient>
+  <linearGradient id="gOstd" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#1937FF" stop-opacity="0.50"/>
+    <stop offset="100%" stop-color="#00F7FF" stop-opacity="0.30"/>
+  </linearGradient>
+  <linearGradient id="gMetric" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#1937FF" stop-opacity="0.18"/>
+    <stop offset="100%" stop-color="#1937FF" stop-opacity="0.04"/>
+  </linearGradient>
+</defs>
+
+<!-- ===== background ===== -->
+<rect x="0" y="0" width="1920" height="1080" fill="#000319"/>
+<rect x="0" y="0" width="1920" height="1080" fill="#1937FF" fill-opacity="0.05"/>
+
+<!-- ===== header ===== -->
+<text x="56" y="70" font-size="42" font-weight="700" fill="#FFFFFF">星绽 <tspan fill="url(#gTitle)">Kernelets</tspan></text>
+<text x="56" y="106" font-size="19" fill="#9AA0BE">让每一个智能体拥有自己的内核 —— 用语言实现隔离，而非硬件</text>
+<rect x="1676" y="44" width="188" height="34" rx="17" fill="#00F7FF" fill-opacity="0.06" stroke="#00F7FF" stroke-opacity="0.30"/>
+<text x="1770" y="66" font-size="14" fill="#00F7FF" text-anchor="middle" letter-spacing="2">技术预览 · 2026</text>
+<text x="1864" y="106" font-size="14" fill="#5C6180" text-anchor="end">星绽开源社区 · Rust 操作系统</text>
+<line x1="56" y1="126" x2="1864" y2="126" stroke="#FFFFFF" stroke-opacity="0.12"/>
+
+<!-- ===== LEFT TOP : 业界趋势 ===== -->
+<rect x="56" y="148" width="470" height="400" rx="14" fill="#0B1030" stroke="#FFFFFF" stroke-opacity="0.10"/>
+<rect x="56" y="148" width="4" height="400" rx="2" fill="#00F7FF" fill-opacity="0.55"/>
+<text x="84" y="182" font-size="14" fill="#00F7FF" letter-spacing="3">业界趋势</text>
+<text x="84" y="222" font-size="25" font-weight="700" fill="#FFFFFF">沙箱已是智能体的基础设施</text>
+
+<circle cx="90" cy="266" r="3.5" fill="#00F7FF"/>
+<text x="106" y="272" font-size="17" font-weight="700" fill="#DCE0F0">沙箱成了框架的原生组件</text>
+<text x="106" y="298" font-size="15" fill="#9AA0BE">2026 年 4 月，OpenAI 智能体开发框架</text>
+<text x="106" y="320" font-size="15" fill="#9AA0BE">内置 7 家沙箱服务商</text>
+
+<circle cx="90" cy="360" r="3.5" fill="#00F7FF"/>
+<text x="106" y="366" font-size="17" font-weight="700" fill="#DCE0F0">资本高度集中</text>
+<text x="106" y="392" font-size="15" fill="#9AA0BE">Modal 单轮融资 3.55 亿美元；E2B 累计</text>
+<text x="106" y="414" font-size="15" fill="#9AA0BE">创建沙箱超 10 亿次</text>
+
+<circle cx="90" cy="454" r="3.5" fill="#FF5C7A"/>
+<text x="106" y="460" font-size="17" font-weight="700" fill="#FF8FA3">而隔离已被真实击穿</text>
+<text x="106" y="486" font-size="15" fill="#9AA0BE">2026 年 7 月，OpenAI 评测环境中的智能体</text>
+<text x="106" y="508" font-size="15" fill="#9AA0BE">逃逸，13 小时内取得外部公司多个集群</text>
+<text x="106" y="530" font-size="15" fill="#9AA0BE">的管理员权限</text>
+
+<!-- ===== LEFT BOTTOM : 现有方案的局限 ===== -->
+<rect x="56" y="572" width="470" height="400" rx="14" fill="#0B1030" stroke="#FFFFFF" stroke-opacity="0.10"/>
+<rect x="56" y="572" width="4" height="400" rx="2" fill="#FF5C7A" fill-opacity="0.55"/>
+<text x="84" y="606" font-size="14" fill="#FF8FA3" letter-spacing="3">现有方案的局限</text>
+<text x="84" y="646" font-size="25" font-weight="700" fill="#FFFFFF">容器与微虚拟机，三道坎</text>
+
+<text x="84" y="694" font-size="17" font-weight="700" fill="#DCE0F0"><tspan fill="#FF8FA3">1 </tspan>资源弹性不足</text>
+<text x="106" y="720" font-size="15" fill="#9AA0BE">沙箱内存峰值与均值相差数倍，缺少快速</text>
+<text x="106" y="742" font-size="15" fill="#9AA0BE">动态调整能力，超卖受限、密度上不去</text>
+
+<text x="84" y="790" font-size="17" font-weight="700" fill="#DCE0F0"><tspan fill="#FF8FA3">2 </tspan>I/O 性能差</text>
+<text x="106" y="816" font-size="15" fill="#9AA0BE">数据在主机与沙箱之间反复拷贝，每次</text>
+<text x="106" y="838" font-size="15" fill="#9AA0BE">读写都要陷入虚拟化层</text>
+
+<text x="84" y="886" font-size="17" font-weight="700" fill="#DCE0F0"><tspan fill="#FF8FA3">3 </tspan>不能嵌套</text>
+<text x="106" y="912" font-size="15" fill="#9AA0BE">裸金属实例昂贵，租户更愿用虚拟机；但</text>
+<text x="106" y="934" font-size="15" fill="#9AA0BE">虚拟化层已被占用，沙箱无处安放</text>
+
+<!-- ===== CENTER : 技术架构 ===== -->
+<text x="960" y="170" font-size="14" fill="#00F7FF" text-anchor="middle" letter-spacing="3">技术路线</text>
+<text x="960" y="210" font-size="27" font-weight="700" fill="#FFFFFF" text-anchor="middle">把隔离边界从硬件搬到语言</text>
+
+<rect x="554" y="236" width="812" height="436" rx="14" fill="#060A24" stroke="#FFFFFF" stroke-opacity="0.08"/>
+
+<text x="578" y="268" font-size="12.5" fill="#5C6180" letter-spacing="2.5">用户态</text>
+<rect x="578" y="278" width="244" height="52" rx="8" fill="#FFFFFF" fill-opacity="0.05" stroke="#FFFFFF" stroke-opacity="0.14"/>
+<rect x="838" y="278" width="244" height="52" rx="8" fill="#FFFFFF" fill-opacity="0.05" stroke="#FFFFFF" stroke-opacity="0.14"/>
+<rect x="1098" y="278" width="244" height="52" rx="8" fill="#FFFFFF" fill-opacity="0.05" stroke="#FFFFFF" stroke-opacity="0.14"/>
+<text x="700" y="300" font-size="15" fill="#C9CCE0" text-anchor="middle">智能体 A</text>
+<text x="960" y="300" font-size="15" fill="#C9CCE0" text-anchor="middle">智能体 B</text>
+<text x="1220" y="300" font-size="15" fill="#C9CCE0" text-anchor="middle">智能体 C</text>
+<text x="700" y="320" font-size="12.5" fill="#5C6180" text-anchor="middle">不可信代码 · 可能已被攻陷</text>
+<text x="960" y="320" font-size="12.5" fill="#5C6180" text-anchor="middle">不可信代码 · 可能已被攻陷</text>
+<text x="1220" y="320" font-size="12.5" fill="#5C6180" text-anchor="middle">不可信代码 · 可能已被攻陷</text>
+
+<line x1="700" y1="330" x2="700" y2="352" stroke="#00F7FF" stroke-opacity="0.45"/>
+<line x1="960" y1="330" x2="960" y2="352" stroke="#00F7FF" stroke-opacity="0.45"/>
+<line x1="1220" y1="330" x2="1220" y2="352" stroke="#00F7FF" stroke-opacity="0.45"/>
+
+<rect x="578" y="352" width="764" height="28" rx="5" fill="#00F7FF" fill-opacity="0.06" stroke="#00F7FF" stroke-opacity="0.28" stroke-dasharray="6 5"/>
+<text x="960" y="371" font-size="13.5" fill="#7FD8E0" text-anchor="middle" letter-spacing="1">硬件边界 —— 页表、用户态／内核态切换，与任何内核一样</text>
+
+<text x="578" y="416" font-size="12.5" fill="#5C6180" letter-spacing="2.5">内核态 —— 同一地址空间，多个内核</text>
+<rect x="578" y="426" width="244" height="96" rx="10" fill="url(#gKern)" stroke="#00F7FF" stroke-opacity="0.55"/>
+<rect x="838" y="426" width="244" height="96" rx="10" fill="url(#gKern)" stroke="#00F7FF" stroke-opacity="0.55"/>
+<rect x="1098" y="426" width="244" height="96" rx="10" fill="url(#gKern)" stroke="#00F7FF" stroke-opacity="0.55"/>
+<text x="700" y="458" font-size="19" font-weight="700" fill="#00F7FF" text-anchor="middle">Kernelet A</text>
+<text x="960" y="458" font-size="19" font-weight="700" fill="#00F7FF" text-anchor="middle">Kernelet B</text>
+<text x="1220" y="458" font-size="19" font-weight="700" fill="#00F7FF" text-anchor="middle">Kernelet C</text>
+<text x="700" y="482" font-size="13.5" fill="#9FD9E4" text-anchor="middle">safe Rust 内核实例</text>
+<text x="960" y="482" font-size="13.5" fill="#9FD9E4" text-anchor="middle">safe Rust 内核实例</text>
+<text x="1220" y="482" font-size="13.5" fill="#9FD9E4" text-anchor="middle">safe Rust 内核实例</text>
+<text x="700" y="505" font-size="12.5" fill="#5C93A8" text-anchor="middle">独立代码 · 独立堆 · 独立状态</text>
+<text x="960" y="505" font-size="12.5" fill="#5C93A8" text-anchor="middle">独立代码 · 独立堆 · 独立状态</text>
+<text x="1220" y="505" font-size="12.5" fill="#5C93A8" text-anchor="middle">独立代码 · 独立堆 · 独立状态</text>
+
+<line x1="830" y1="440" x2="830" y2="508" stroke="#00F7FF" stroke-opacity="0.5" stroke-dasharray="4 4"/>
+<line x1="1090" y1="440" x2="1090" y2="508" stroke="#00F7FF" stroke-opacity="0.5" stroke-dasharray="4 4"/>
+
+<rect x="578" y="544" width="764" height="58" rx="9" fill="url(#gOstd)" stroke="#00F7FF" stroke-opacity="0.6"/>
+<text x="960" y="568" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">OSTD —— 唯一的共享层</text>
+<text x="960" y="590" font-size="12.5" fill="#BEE9F0" text-anchor="middle">全系统的 unsafe 代码集中于此，内存管理接口已完成机器证明</text>
+
+<rect x="578" y="616" width="764" height="38" rx="7" fill="#FFFFFF" fill-opacity="0.03" stroke="#FFFFFF" stroke-opacity="0.12"/>
+<text x="960" y="640" font-size="13.5" fill="#6A6F8C" text-anchor="middle">物理硬件 —— 没有虚拟机监控器、没有二级地址翻译、没有 VM exit</text>
+
+<!-- ===== CENTER BOTTOM : 预期成效 ===== -->
+<rect x="554" y="700" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#00F7FF" stroke-opacity="0.35"/>
+<rect x="834" y="700" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#00F7FF" stroke-opacity="0.35"/>
+<rect x="1114" y="700" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#00F7FF" stroke-opacity="0.35"/>
+
+<text x="680" y="742" font-size="13" fill="#7FD8E0" text-anchor="middle" letter-spacing="2">预期成效</text>
+<text x="960" y="742" font-size="13" fill="#7FD8E0" text-anchor="middle" letter-spacing="2">预期成效</text>
+<text x="1240" y="742" font-size="13" fill="#7FD8E0" text-anchor="middle" letter-spacing="2">预期成效</text>
+
+<text x="680" y="812" font-size="58" font-weight="700" fill="#00F7FF" text-anchor="middle">≈2<tspan font-size="34">×</tspan><tspan font-size="20" fill="#7FD8E0" dy="-24">※</tspan></text>
+<text x="960" y="812" font-size="52" font-weight="700" fill="#00F7FF" text-anchor="middle">3–10<tspan font-size="32">×</tspan><tspan font-size="20" fill="#7FD8E0" dy="-22">※</tspan></text>
+<text x="1240" y="812" font-size="58" font-weight="700" fill="#00F7FF" text-anchor="middle">一层</text>
+
+<text x="680" y="852" font-size="19" font-weight="700" fill="#FFFFFF" text-anchor="middle">内存密度提升</text>
+<text x="960" y="852" font-size="19" font-weight="700" fill="#FFFFFF" text-anchor="middle">I/O 固定开销下降</text>
+<text x="1240" y="852" font-size="19" font-weight="700" fill="#FFFFFF" text-anchor="middle">内核态可信基</text>
+
+<line x1="610" y1="872" x2="750" y2="872" stroke="#00F7FF" stroke-opacity="0.25"/>
+<line x1="890" y1="872" x2="1030" y2="872" stroke="#00F7FF" stroke-opacity="0.25"/>
+<line x1="1170" y1="872" x2="1310" y2="872" stroke="#00F7FF" stroke-opacity="0.25"/>
+
+<text x="680" y="900" font-size="14" fill="#9AA0BE" text-anchor="middle">同等技术条件下，单机可</text>
+<text x="680" y="922" font-size="14" fill="#9AA0BE" text-anchor="middle">承载的沙箱数量</text>
+<text x="960" y="900" font-size="14" fill="#9AA0BE" text-anchor="middle">单次 I/O 的固定开销，</text>
+<text x="960" y="922" font-size="14" fill="#9AA0BE" text-anchor="middle">且主机侧数据零拷贝</text>
+<text x="1240" y="900" font-size="14" fill="#9AA0BE" text-anchor="middle">unsafe 代码收敛到一层，</text>
+<text x="1240" y="922" font-size="14" fill="#9AA0BE" text-anchor="middle">内存管理接口已机器证明</text>
+
+<!-- ===== RIGHT TOP : 技术先进性与自主可控 ===== -->
+<rect x="1394" y="148" width="470" height="400" rx="14" fill="#0B1030" stroke="#FFFFFF" stroke-opacity="0.10"/>
+<rect x="1860" y="148" width="4" height="400" rx="2" fill="#1937FF" fill-opacity="0.75"/>
+<text x="1422" y="182" font-size="14" fill="#7F9CFF" letter-spacing="3">技术先进性与自主可控</text>
+<text x="1422" y="222" font-size="25" font-weight="700" fill="#FFFFFF">凭什么是我们</text>
+
+<circle cx="1428" cy="266" r="3.5" fill="#7F9CFF"/>
+<text x="1444" y="272" font-size="17" font-weight="700" fill="#DCE0F0">三年积累的底座</text>
+<text x="1444" y="298" font-size="15" fill="#9AA0BE">framekernel 架构（USENIX ATC 2025）把全部</text>
+<text x="1444" y="320" font-size="15" fill="#9AA0BE">unsafe 代码收进最小核心，十万行以上内</text>
+<text x="1444" y="342" font-size="15" fill="#9AA0BE">核代码全部是 safe Rust</text>
+
+<circle cx="1428" cy="382" r="3.5" fill="#7F9CFF"/>
+<text x="1444" y="388" font-size="17" font-weight="700" fill="#DCE0F0">可被证明的可信基</text>
+<text x="1444" y="414" font-size="15" fill="#9AA0BE">与 CertiK 合作完成 OSTD 内存管理接口的</text>
+<text x="1444" y="436" font-size="15" fill="#9AA0BE">机器证明：不是“审计过”，是“被证明”</text>
+
+<circle cx="1428" cy="476" r="3.5" fill="#00F7FF"/>
+<text x="1444" y="482" font-size="17" font-weight="700" fill="#8FF6FC">抢占技术制高点</text>
+<text x="1444" y="508" font-size="15" fill="#9AA0BE">以 API 虚拟化为核心创新投稿系统顶会，</text>
+<text x="1444" y="530" font-size="15" fill="#9AA0BE">定义“语言级隔离”这条技术路线</text>
+
+<!-- ===== RIGHT BOTTOM : 产业落地 ===== -->
+<rect x="1394" y="572" width="470" height="400" rx="14" fill="#0B1030" stroke="#FFFFFF" stroke-opacity="0.10"/>
+<rect x="1860" y="572" width="4" height="400" rx="2" fill="#00F7FF" fill-opacity="0.75"/>
+<text x="1422" y="606" font-size="14" fill="#00F7FF" letter-spacing="3">产业落地</text>
+<text x="1422" y="646" font-size="25" font-weight="700" fill="#FFFFFF">两个已确定意向的场景</text>
+
+<rect x="1422" y="670" width="414" height="112" rx="10" fill="#00F7FF" fill-opacity="0.05" stroke="#00F7FF" stroke-opacity="0.22"/>
+<text x="1442" y="700" font-size="13" fill="#00F7FF" letter-spacing="2">云侧</text>
+<text x="1442" y="726" font-size="18" font-weight="700" fill="#FFFFFF">蚂蚁集团 · Agent 原生数据中心</text>
+<text x="1442" y="752" font-size="14.5" fill="#9AA0BE">单机沙箱密度与 I/O 效率，直接决定</text>
+<text x="1442" y="772" font-size="14.5" fill="#9AA0BE">单位算力成本</text>
+
+<rect x="1422" y="796" width="414" height="112" rx="10" fill="#00F7FF" fill-opacity="0.05" stroke="#00F7FF" stroke-opacity="0.22"/>
+<text x="1442" y="826" font-size="13" fill="#00F7FF" letter-spacing="2">端侧</text>
+<text x="1442" y="852" font-size="18" font-weight="700" fill="#FFFFFF">统信软件 · Agent 原生桌面 OS</text>
+<text x="1442" y="878" font-size="14.5" fill="#9AA0BE">桌面资源受限，承担不起“一个智能体</text>
+<text x="1442" y="898" font-size="14.5" fill="#9AA0BE">一台虚拟机”的开销</text>
+
+<text x="1422" y="944" font-size="15" fill="#BEE9F0">形成云端一体的智能体安全执行底座，</text>
+<text x="1422" y="964" font-size="15" fill="#BEE9F0">把技术标准与生态留在国内</text>
+
+<!-- ===== footnote ===== -->
+<line x1="56" y1="996" x2="1864" y2="996" stroke="#FFFFFF" stroke-opacity="0.10"/>
+<text x="56" y="1022" font-size="13" fill="#5C6180">※ 模型估算，原型尚未实测。密度为技术对等条件下（双方均支持把空闲沙箱换出内存）的上界，256 核服务器；当前设计方案达 1.4–1.6×。</text>
+<text x="56" y="1044" font-size="13" fill="#5C6180">I/O 为轮询模式下与用户态 VMM 设备后端相比；独占 CPU 核的轮询后端可达同一量级，但需长期占用一个核。业界数据引自 2026 年公开报道。</text>
+
+</svg>
