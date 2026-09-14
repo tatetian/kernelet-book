@@ -80,7 +80,7 @@
 
 <rect x="554" y="272" width="812" height="392" rx="14" fill="#060A24" stroke="#14172B"/>
 
-<text x="578" y="302" font-size="13" fill="#8A90AE" letter-spacing="1.5">用户态 —— 智能体与工具，不可信代码，可能已被攻陷</text>
+<text x="578" y="302" font-size="13" fill="#8A90AE" letter-spacing="1.5">用户态 —— 租户的智能体与工具，不可信代码，可能已被攻陷</text>
 <rect x="578" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
 <rect x="766" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
 <rect x="954" y="312" width="176" height="42" rx="8" fill="#12162F" stroke="#292C43"/>
@@ -116,7 +116,7 @@
 
 <rect x="578" y="552" width="764" height="58" rx="9" fill="url(#gOstd)" stroke="#0095A3"/>
 <text x="960" y="576" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">OSTD —— 唯一的共享底座</text>
-<text x="960" y="598" font-size="13" fill="#BEE9F0" text-anchor="middle">全系统的 unsafe 代码都收在这一层（约 4 万行）；其内存管理核心模块已完成机器证明</text>
+<text x="960" y="598" font-size="13" fill="#BEE9F0" text-anchor="middle">全系统的 unsafe 代码都收在这一层，这一层约 4 万行；其内存管理核心模块已完成机器证明</text>
 
 <rect x="578" y="622" width="764" height="34" rx="7" fill="#0D112B" stroke="#24273E"/>
 <text x="960" y="644" font-size="13.5" fill="#9AA0BE" text-anchor="middle">物理硬件或云上虚拟机 —— 不需要虚拟机监控器，不占用虚拟化层</text>
@@ -145,8 +145,7 @@
 
 <text x="960" y="882" font-size="14.5" fill="#9AA0BE" text-anchor="middle">单次 I/O 的固定开销，</text>
 <text x="960" y="904" font-size="14.5" fill="#9AA0BE" text-anchor="middle">且主机侧数据零拷贝</text>
-<text x="960" y="926" font-size="13.5" fill="#7FD8E0" text-anchor="middle">轮询模式下，对比</text>
-<text x="960" y="944" font-size="13.5" fill="#7FD8E0" text-anchor="middle">用户态虚拟机监控器后端</text>
+<text x="960" y="932" font-size="13.5" fill="#7FD8E0" text-anchor="middle">轮询模式，对比用户态监控器</text>
 
 <text x="1240" y="882" font-size="14.5" fill="#9AA0BE" text-anchor="middle">不依赖硬件虚拟化，沙箱可</text>
 <text x="1240" y="904" font-size="14.5" fill="#9AA0BE" text-anchor="middle">直接跑在租用的云主机里</text>
