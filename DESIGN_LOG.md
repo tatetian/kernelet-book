@@ -356,3 +356,51 @@ second process rather than its first.
 
 The chapter's conclusion is now: nothing found rules out a patched Linux built
 without type-checked indirect branches. An unmodified Linux is ruled out.
+
+## Linux mode: round five, and the experiment that settled it
+
+Two reviewers disagreed about the same claim, so I tested it instead of choosing.
+
+The Linux developer said kernelet code cannot touch tenant memory at all, and that
+every access must be performed by host code. The writer objected that the argument
+as written would rule the copy out on *Asterinas* too, since it is the same source.
+Both were partly right, and the missing step was a fact about our own kernel:
+**Asterinas does not enable the processor's supervisor-access check.** Its
+control-register setup names five features and not that one, and nothing in the tree
+emits the bracketing instructions. Linux enables it wherever the hardware has it.
+
+Experiment 6, four cases in the guest:
+
+| case | result |
+|---|---|
+| bare kernel-mode read of a tenant address | oops, on a present and writable page |
+| the module brackets it itself | works |
+| Linux's own copy routine | works |
+| the supplier's own kernel alias of the frame | works, with no bracket |
+| bracketed read of a *bad* address | oops |
+
+The third and fifth rows decide it. A kernelet supplied every frame in its tenant's
+address space out of its own grant, so it already holds an alias of each one that is
+not marked as user memory; reading through it needs nothing. And bracketing, which a
+kernelet may do since it runs in kernel mode, still cannot deliver the *fallible*
+contract, because a bad address finds no fixup.
+
+So D82 is an **addressing rule**, not a crossing: the kernel proper reaches its
+tenant's memory through its own alias of the frames it granted, never through the
+tenant's virtual address, with a crossing only on a miss. That costs a lookup in an
+index A21 already requires, it is what the zero-copy design already does, and it
+disposes of futexes, which a copy routine cannot express and an atomic on a kernel
+address can.
+
+The result worth keeping is not about Linux. The framework's contract for reading user
+memory silently encodes the host's policy on a hardware feature, and neither the API
+nor its taxonomy mentions it. Porting is what found it, which is the methodological
+argument for this chapter existing. `virtualizing-ostd/user-mode.md` now states the
+precondition.
+
+Also this round: the unpatched tier is withdrawn everywhere, not just in the
+conclusion — Linux clears dispatch at every fork and exec, so it cannot run a process
+tree; the fault-containment item explains why no patch is proposed for it, rather than
+adding a second ask the chapter could not defend; the stack switch became a decision
+with an assumption about it; and the build order's first stage now aims at the
+configuration that ships rather than at one no distribution builds.
