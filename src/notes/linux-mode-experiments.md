@@ -259,7 +259,8 @@ What each case settles:
 3. Linux's own copy routine works, as expected.
 4. The same value read through the supplier's own kernel alias works with **no
    bracket**, because that alias is not marked as user memory. `get_user_pages_fast`
-   stands in here for the frame index a kernelet already keeps.
+   stands in here for the address-to-frame map vOSTD would build as its own fault
+   handler supplies each frame; the experiment does not build that map.
 5. A bracketed read of a *bad* address oopses, and **the same read recovers when the
    faulting instruction carries an `_ASM_EXTABLE_TYPE_REG` entry** — it returns
    -EFAULT instead of faulting. The pair is the proof: the fixup mechanism works, and
@@ -475,3 +476,32 @@ The program runs each case in a forked child and reports whether the child retur
 was killed, so that the two cases which oops do not end the run. The guest was booted
 with `-cpu host` on a Kaby Lake, so the hardware check is present and the module prints
 that it is enabled in CR4.
+
+## Symbols checked in the v6.12 tree, for the record
+
+Read, not assumed. Each was checked in the tree this chapter builds and boots.
+
+| symbol or fact | where | state |
+|---|---|---|
+| `set_memory_rox`, `set_memory_ro`, `set_memory_rw` | `arch/x86/mm/pat/set_memory.c` | **not exported**; only the caching setters, `set_memory_encrypted`/`decrypted`, `lookup_address`, `slow_virt_to_phys` and `clflush_cache_range` are |
+| `get_vm_area` | `mm/vmalloc.c` | **not exported** |
+| `apply_to_page_range` | `mm/memory.c:2988` | `EXPORT_SYMBOL_GPL` |
+| `vmap` | `mm/vmalloc.c:3453` | `EXPORT_SYMBOL`, and it wraps the caller's flags in `pgprot_nx` |
+| `alloc_contig_range` (as `_noprof`) | `mm/page_alloc.c:6645` | `EXPORT_SYMBOL`, under `CONFIG_CONTIG_ALLOC`; `free_contig_range` too |
+| `alloc_contig_pages` | `mm/page_alloc.c` | **not exported** |
+| `vm_mmap` | `mm/util.c:609` | `EXPORT_SYMBOL`, acts on `current->mm` |
+| `zap_vma_ptes` | `mm/memory.c:1961` | `EXPORT_SYMBOL_GPL` |
+| `mmu_notifier_register` | `mm/mmu_notifier.c:709` | `EXPORT_SYMBOL_GPL` |
+| `mmu_interval_notifier_insert`, `mmu_interval_read_begin` | `mm/mmu_notifier.c:992, :261` | `EXPORT_SYMBOL_GPL`; `mmu_interval_read_retry` is inline |
+| `CONFIG_MMU_NOTIFIER` | `mm/Kconfig:724` | a bare `bool` nothing selects on its own; KVM and the shared-address-space work select it |
+| `x86_fsbase_write_task` | `arch/x86/kernel/process_64.c:515` | **not exported**, and not needed |
+| `page_offset_base` | `arch/x86/kernel/head64.c:65` | `EXPORT_SYMBOL`, inside `#ifdef CONFIG_DYNAMIC_MEMORY_LAYOUT` |
+| `kthread_use_mm`, `kthread_unuse_mm` | `kernel/kthread.c:1479, :1512` | `EXPORT_SYMBOL_GPL` |
+| the SMAP check before the area lookup | `arch/x86/mm/fault.c:1257` | `page_fault_oops()` with the comment "No extable entry here" |
+| the three fixup registrants | `kernel/extable.c:54` | kernel, modules, BPF — there is no fourth |
+| `MAX_PAGE_ORDER` 10, `PAGE_ALLOC_COSTLY_ORDER` 3 | `include/linux/mmzone.h:30, :46` | so 4 MiB, and costly above 32 KiB |
+| `tlb_single_page_flush_ceiling` 33 | `arch/x86/mm/tlb.c:951` | but `cpa_process_alias` sets `force_flush_all` anyway |
+| dispatch cleared on fork and exec | `kernel/fork.c:1143`, `fs/exec.c:1310` | `clear_syscall_work_syscall_user_dispatch` |
+| interception order | `kernel/entry/common.c:39, :45, :52` | dispatch, ptrace, seccomp |
+| the vsyscall emulation path | `arch/x86/entry/vsyscall/vsyscall_64.c:234-247` | calls three system calls directly from the fault handler |
+| supervisor protection keys | `arch/x86/include/asm/cpufeatures.h` | absent: `X86_FEATURE_PKU` only |
