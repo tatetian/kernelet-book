@@ -310,3 +310,49 @@ sharply: on a host whose own build enforces type-checked indirect branches, the
 first call into a kernelet traps, and sharing the text is not why.
 
 Next: whatever survives the third pass of the same three reviewers.
+
+## Linux mode: round four, and the finding that changes the design
+
+The Linux kernel developer found something that no amount of reading Linux's
+interfaces would have produced, and it is the strongest result the chapter has.
+
+**Kernelet code cannot touch tenant memory at all.** Since Broadwell and Zen, a
+kernel-mode access to a user address faults unless the accessing code sets one
+flag in the processor's status register around it. Linux's own copy routines are
+the code that does so; that is why they are the only code allowed to touch user
+memory. And `do_user_addr_fault()` checks this *first*, before it looks the
+address up in the process's areas and before any fixup search, reporting a bad
+kernel pointer. A kernelet's code, compiled by the ordinary Rust toolchain,
+emits a bare copy. So the first byte the kernel proper reads from its tenant
+ends the task, present page or not.
+
+The flag cannot be held open across a kernelet's work: it is not preserved
+across a context switch, and a kernelet sleeps and takes locks, so it would leak
+the permission into unrelated tasks. Linux confines its own such regions to
+straight-line code for exactly that reason.
+
+So D82 is not "a fallible copy becomes a service call so that faults are
+recoverable". It is "every access to tenant memory is performed by host code",
+it is forced by the hardware rather than chosen, and its cost lands on the path
+every system call that passes a buffer takes. Unmeasured, and now the chapter's
+largest performance question.
+
+Three of my own errors went with it. Restoring the text's permissions belongs to
+retiring a *kind*, not destroying an instance — doing it per instance would
+un-protect the shared text for every surviving sibling through the alias they
+share. "The no-patch path cannot give a tenant memory at all" was one step too
+far: what is ruled out is the parked-servicing-thread shape, because
+address-space work must run on the task whose address space it is. And the
+machine-wide flush is forced by the direct-map alias, not by the image exceeding
+a page threshold.
+
+Two structural changes, both asked for independently. The five assumption breaks
+became their own page, because they apply to a kernelet's own kernel threads as
+much as to a tenant's task and had grown to outweigh the page they sat on. And
+the evidence page gained "What to build first": five gated stages, with the
+indirect-branch question first because it decides whether a whole class of host
+is eligible at all, and process lifecycle last because it blocks a tenant's
+second process rather than its first.
+
+The chapter's conclusion is now: nothing found rules out a patched Linux built
+without type-checked indirect branches. An unmodified Linux is ruled out.
