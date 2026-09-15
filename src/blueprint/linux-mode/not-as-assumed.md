@@ -1,6 +1,6 @@
 # Five places where the host does not behave as the design assumed
 
-*Five things the Design chapter takes for granted do not hold when the host is Linux: an invariant, an assumption, a property the boundary owes, a mechanism, and one constraint that comes from the hardware rather than from Linux at all. They are collected here rather than scattered, because together they are the honest measure of what Linux mode costs. Four have an answer sketched below and not built; one has none. Each applies to a kernelet's own kernel threads as much as to a tenant's task, which is why they are not on the [previous page](tenant.md).*
+*Five things the Design chapter takes for granted do not hold when the host is Linux: an invariant, an assumption, a property the boundary owes, a mechanism, and one constraint that comes from the hardware rather than from Linux at all. They are collected here rather than scattered, because together they are the honest measure of what Linux mode costs. Four have an answer — three sketched and not built, one measured; one has none. Each applies to a kernelet's own kernel threads as much as to a tenant's task, which is why they are not on the [previous page](tenant.md).*
 
 ## A runaway kernelet cannot be stopped
 
@@ -20,30 +20,37 @@ Linux's fault handler is Linux's. A kernel-mode fault in kernelet code is an **o
 
 This is the one item on this page with no answer, and the chapter does not propose a patch for it. It could: Linux already consults three registrants for a fixup and a fourth would be a small change. But a fixup for a bug buys nothing, because there is nothing to resume to, and the containment the design wants — end this kernelet, reclaim its memory, let the machine continue — would mean unwinding whatever the faulting task held: locks, read-copy-update sections, the address-space lock it took on the way in. Linux has no primitive for that and the absence is not an oversight. Asking for one would be asking a monolithic kernel for a hypervisor's recovery semantics. So this is recorded as a property Linux mode does not have.
 
-That is what happens when a kernelet has a bug. The next section is about a fault the design expects on every system call that carries a buffer, and it has a different answer.
+That is what happens when a kernelet has a bug. The next section is about an access the design expects on every system call that carries a buffer, and it has a different answer.
 
 ## Kernelet code cannot touch tenant memory directly
 
 This is the constraint that changes the design, it comes from the hardware rather than from Linux's interfaces, and it was [measured](evidence.md) rather than argued.
 
-Since Broadwell and Zen, x86-64 processors refuse a kernel-mode access to a page marked as user memory unless one flag in the processor's status register is set. Linux's copy routines set it for the length of the copy with the [`stac` and `clac`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/smap.h) instructions and clear it again; that pairing is why they are the only code Linux allows to touch user memory. And [`do_user_addr_fault()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/fault.c#L1257) checks this **first**, before it looks the address up in the process's areas and before it searches for a fixup, reporting the access as a bad kernel pointer.
+Since Broadwell and Zen, x86-64 processors refuse a kernel-mode access to a page marked as user memory unless one flag in the processor's status register is set. Linux's copy routines set it for the length of the copy with the [`stac` and `clac`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/smap.h) instructions and clear it again; that pairing is why they are the only code in Linux that touches user memory. And [`do_user_addr_fault()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/fault.c#L1257) checks this **first**, before it looks the address up in the process's areas and before it searches for a fixup, reporting the access as a bad kernel pointer.
 
 **Asterinas does not enable the check and Linux does.** The framework sets five bits in the control register and not that one, and nothing in its tree emits the bracketing instructions. So the kernel proper's copy routines work on one host and fault on the other, and neither the API nor its [taxonomy](../design/virtualizing-ostd/index.md) says a word about it. That is a host property leaking through an interface that claims to be host-independent, and it is the clearest thing porting found.
 
-The experiment ran four cases in the guest, and the result is narrower than "host code must do it":
+The experiment ran six cases ([evidence](evidence.md)), and two of them decide the rule.
 
-- A bare read of a tenant address **oopsed**, on a page that was present, mapped and writable. The constraint is not about faulting pages in.
-- The same read **succeeded** when the module bracketed it itself. Those are kernel-mode instructions and a kernelet runs in kernel mode, so nothing stops it from doing what Linux does.
-- Reading the same value through **the supplier's own kernel alias succeeded with no bracket at all**. The frame is the kernelet's, it reaches it through the linear map as it reaches every other frame it owns, and the alias is not marked as user memory, so there is nothing to refuse.
-- A bracketed read of a **bad** address oopsed anyway. The bracket gets past the hardware check, the fault reaches the fixup search, and a fixup in the kernelet image is never found, because Linux searches its own table and the loaded modules' and a kernelet is not a module.
+Reading the same value through **the supplier's own kernel alias needed no bracket at all**. The frame is the kernelet's, it reaches it through the linear map as it reaches every other frame it owns, and that alias is not marked as user memory, so there is nothing to refuse. And a **bracketed** read of a **bad** address ended the task anyway, while the same read with a fixup entry recovered — which works there only because the code is in a module and Linux searches the loaded modules' tables. A kernelet is not a module and cannot become one without giving up the shared text.
 
-The last case is the one that decides it. The kernel proper's copies are *fallible*: their contract is to return an error for a bad address, and bracketing cannot deliver that contract on Linux.
+The first says there is a way. The second says bracketing is not it: the kernel proper's copies are *fallible* by contract, their job is to return an error for a bad address, and bracketing cannot deliver that contract on Linux.
 
-**So the rule is an addressing rule, not a crossing.** The kernel proper reaches its tenant's memory through its own alias of the frames it supplied, never through the tenant's virtual address. It supplied every one of them out of its own grant, and it already keeps the frame-to-mapping index that assumption A21 requires for revocation, so the translation is a lookup it can afford. That is decision D82, and it is the same technique the [zero-copy design](../design/zero-copy-io.md) already uses for device buffers.
+**So the rule is an addressing rule, not a crossing.** The kernel proper reaches its tenant's memory through its own alias of the frames it supplied, never through the tenant's virtual address. That is decision D82, and it is the same technique the [zero-copy design](../design/zero-copy-io.md) already uses for device buffers.
 
-A crossing is needed only on a **miss** — an address the kernelet has no alias for, because it never supplied one or because Linux took the mapping away. That is a fault, which costs a crossing anyway, rather than a cost on every copy. How often a miss happens is the open question, and it is a much smaller one than the chapter carried before the experiment. **[unverified]**
+It costs the kernel proper nothing in source. The copy routines belong to the framework, not to the kernel above it, so the rule is implemented inside vOSTD: the kernel proper still calls `VmReader` and `VmWriter` and does not know which host it is on. This is the taxonomy working as designed — a virtualized item with a second body — rather than a breach of it.
 
-One consequence for the interface. A Linux-compatible kernel must perform an *atomic* compare-and-exchange on tenant memory, because that is what a futex is; a copy routine cannot express it, and Linux keeps separate internal primitives for it. Through the alias the atomic is an ordinary atomic on a kernel address, so the problem does not arise — which is a second reason to prefer the alias rule over a service call.
+The rule needs a translation, and its direction matters. A system call arrives with a tenant **virtual address**, so what is wanted is address to frame. vOSTD does not have to derive that from Linux: its own fault handler is what supplied each frame, so it can record the pair as it hands the frame over. The map is built by construction rather than shadowed.
+
+Two things about that map are open, and the second is the more serious.
+
+**A miss is structural, not exotic.** vOSTD holds an alias for every frame *it* supplied and for nothing else. A tenant's address space also holds the stub the runtime maps, Linux's own virtual system-call pages, and whatever Linux populated itself, since Linux keeps the address-space structure. Each of those is a miss, and a miss costs a crossing. How often that happens under a real workload is unmeasured. **[unverified]**
+
+**A stale entry is worse than a miss.** Linux tears a mapping down without consulting the handler that supplied it, which [the previous page](tenant.md) records and calls a design this chapter does not have. Under the alias rule that gap stops being untidy and becomes unsound: an entry that outlives its mapping does not miss, it **resolves**. A miss is safe — it faults, it costs a crossing, the design notices. A stale hit is silent: the kernel proper writes data the tenant will never see, or reads a frame that has gone back to the host and on to another kernelet. The alias rule is what makes that reachable, because before it the hardware would have refused the access outright.
+
+Linux's answer to exactly this problem is exported, and it is what its own virtual-machine monitor uses to keep shadow page tables coherent with a host address space: register for the callback that announces a range is being invalidated, and drop the entries it names. Whether that callback's context rules fit what vOSTD must do inside them is not worked out here. **Closing this is a precondition of the rule, not a detail of it.** **[unverified]**
+
+One consequence for the interface, in the rule's favor. A Linux-compatible kernel must perform an *atomic* compare-and-exchange on tenant memory, because that is what a futex is; a copy routine cannot express it, and Linux keeps separate internal primitives for it. Through the alias it is an ordinary atomic on a kernel address, so the problem does not arise.
 
 ## The per-CPU model has no Linux counterpart
 
@@ -59,6 +66,6 @@ The repair has three parts and none is designed here. `disable_preempt` must bec
 
 - **Invariant I7, termination, does not hold** (register D81). The substitute is a cooperative check at every service-call boundary, with a deadline and a watchdog, and it needs the kernelet to be working well enough to notice.
 - **Fault containment does not hold either**, for a reason independent of termination: a fault in kernelet code is a Linux oops on whichever task was running.
-- **Every access to tenant memory is a service call the host performs** (register D82). Forced by the hardware, unmeasured, and the chapter's largest performance question.
+- **The kernel proper reaches its tenant's memory through vOSTD's own alias of the frames it granted, never through the tenant's virtual address** (register D82). Forced by the hardware, measured, and cheaper than a crossing per copy. What is open is the address-to-frame map: how often it misses, and what keeps it true when Linux takes a mapping away.
 - **A kernelet task runs on a stack the hook switches to on entry** (register D84), because Linux's own is a thirty-second of what the design gives a kernelet task. What remains unverified about it is assumption A20.
 - **The per-CPU replica selector needs a real host preemption disable, a migration hold, and an injective virtual-CPU assignment.** Not designed here.

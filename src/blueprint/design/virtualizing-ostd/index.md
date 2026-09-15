@@ -22,7 +22,7 @@ Over the inventory's items, grouped as the tables below group them and counted p
 |---|---|---|---|---|
 | `VmIo`, `VmIoOnce`, `VmIoFill`, `HasVmReaderWriter`, `VmReaderWriterResult` | identical | traits over readers and writers | none | nothing |
 | `VmReader`, `VmWriter` (`Infallible`) | identical | kernel-space cursors; the pointers they hold are window or stack addresses | none | nothing |
-| `VmReader`, `VmWriter` (`Fallible`) | virtualized | the copy routines are identical, with their exception-table entries; the *fault* is handled by the host and completed by a retry loop in vOSTD that calls the kernel's injected page-fault handler ([User mode](user-mode.md)) | one extra round trip per first-touch fault | nothing |
+| `VmReader`, `VmWriter` (`Fallible`) | virtualized | on a host that leaves the processor's supervisor-access check disabled, as Asterinas does, the copy routines are identical, with their exception-table entries, and the *fault* is handled by the host and completed by a retry loop in vOSTD that calls the kernel's injected page-fault handler ([User mode](user-mode.md)). On a host that enables the check, as Linux does, the tenant's own address may not be dereferenced at all and vOSTD copies through its alias of the frame instead (register D82) | one extra round trip per first-touch fault; on such a host, an address-to-frame lookup per copy | nothing |
 | `Fallible`, `Infallible`, `FallibleVmRead`, `FallibleVmWrite`, `PodOnce`, `PodAtomic` | identical | markers and traits | none | nothing |
 | `PAGE_SIZE`, `Vaddr`, `Paddr`, `Daddr`, `PagingLevel`, `MAX_USERSPACE_VADDR`, `KERNEL_VADDR_RANGE` | identical | constants | none | nothing |
 | `HasPaddr`, `HasSize`, `HasDaddr`, `HasPaddrRange`, `Split` | identical | traits | none | nothing |

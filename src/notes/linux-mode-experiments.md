@@ -216,7 +216,7 @@ without.
 ## Experiment 6: can kernel-mode code touch a tenant address?
 
 `mod/smapdemo.c` plus `smap_test.c`. A user program holds a value in an ordinary
-variable and asks a module to read it four ways, each in a forked child so that a case
+variable and asks a module to read it six ways, each in a forked child so that a case
 which kills its task does not end the run. The module's ioctl runs on the caller's own
 task, so `current->mm` is the tenant's.
 
@@ -232,6 +232,7 @@ smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
   copy_from_user   -> OK
   direct-map alias -> OK
   bracketed, bad   -> child KILLED by signal 9
+  bad, with fixup  -> OK          (smapdemo: recovered from the fault, fail=-14)
 ```
 
 ```
@@ -259,9 +260,14 @@ What each case settles:
 4. The same value read through the supplier's own kernel alias works with **no
    bracket**, because that alias is not marked as user memory. `get_user_pages_fast`
    stands in here for the frame index a kernelet already keeps.
-5. A bracketed read of a *bad* address still oopses: the bracket gets past the SMAP
-   check, the fault reaches the fixup search, and a module's fixup would be found but
-   a kernelet is not a module. So bracketing does not deliver the *fallible* contract.
+5. A bracketed read of a *bad* address oopses, and **the same read recovers when the
+   faulting instruction carries an `_ASM_EXTABLE_TYPE_REG` entry** — it returns
+   -EFAULT instead of faulting. The pair is the proof: the fixup mechanism works, and
+   it works here only because the code is in a module, whose `__ex_table` Linux
+   searches (`search_module_extables`, one of the three registrants in
+   `kernel/extable.c`). A kernelet is not a module and cannot become one without
+   giving up the shared text, so its table is never searched, and bracketing cannot
+   deliver the *fallible* contract.
 
 Hence D82's shape: an addressing rule, not a crossing. The kernel proper reaches
 tenant memory through its own alias of the frames it granted; a crossing is needed
@@ -442,7 +448,7 @@ the endovisor loaded itself is untested.
 ## The module and the program of Experiment 6
 
 ```c
-/* mod/smapdemo.c — four ways to read a tenant's memory, on the caller's task */
+/* mod/smapdemo.c — six ways to read a tenant's memory, on the caller's task */
 	case SMAP_BARE:
 		v = *(volatile const unsigned long *)p;        /* no bracket  */
 	case SMAP_STAC:
@@ -457,6 +463,12 @@ the endovisor loaded itself is untested.
 	}
 	case SMAP_BAD:                                     /* unmapped user address */
 		stac(); v = *(volatile const unsigned long *)0x3fffffff000UL; clac();
+	case SMAP_FIXUP:                                   /* the same, with a fixup */
+		stac();
+		asm volatile("1: movq (%[addr]), %[val]\n2:\n"
+			     _ASM_EXTABLE_TYPE_REG(1b, 2b, EX_TYPE_EFAULT_REG, %[fail])
+			     : [val] "=r" (v), [fail] "+r" (failed) : [addr] "r" (bad));
+		clac();
 ```
 
 The program runs each case in a forked child and reports whether the child returned or

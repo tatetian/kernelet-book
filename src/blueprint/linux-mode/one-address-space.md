@@ -109,7 +109,7 @@ Sparseness is what makes this affordable, because the region's address span is f
 | physical span a kernelet's grains may touch | metadata address space per kernelet | kernelets in 32 TB (4-level vmalloc) | in 12.5 PB (5-level) |
 |---|---|---|---|
 | a bounded 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
-| a whole 1 TiB machine | 16 GiB | about 2,000 | about 700,000 |
+| a whole 1 TiB machine | 16 GiB | about 2,000 | about 800,000 |
 
 Read the second row for Linux, since Linux mode cannot bound the slice: **on a 1 TiB machine with four-level paging, the metadata regions alone cap a host at a few thousand kernelets.** Five-level paging removes the cap. This is the sharpest number in the chapter and it is arithmetic over the region sizes in Linux's documentation, not a measurement. **[unverified]**
 

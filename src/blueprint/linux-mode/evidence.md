@@ -130,7 +130,7 @@ Neither build declares the property that a *user-space* loader reads before enab
 
 ## Experiment 6: can kernel-mode code touch a tenant address?
 
-Four cases, on the caller's own task, in the guest, with the hardware's user-access check enabled in the control register. A user-space program holds a value in an ordinary variable and asks a module to read it four ways; each case runs in a forked child, so that a case which kills its task does not end the run.
+Six cases, on the caller's own task, in the guest, with the hardware's user-access check enabled in the control register. A user-space program holds a value in an ordinary variable and asks a module to read it six ways; each case runs in a forked child, so that a case which kills its task does not end the run.
 
 ```
 smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
@@ -139,6 +139,7 @@ smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
   copy_from_user   -> OK
   direct-map alias -> OK
   bracketed, bad   -> child KILLED by signal 9
+  bad, with fixup  -> OK          (recovered, fail=-14)
 ```
 
 and, in the kernel's log:
@@ -162,13 +163,13 @@ Oops: Oops: 0000 [#2] SMP
 1. **A bare kernel-mode read of a tenant address ends the task**, on a page that is present, mapped and writable. The constraint has nothing to do with faulting pages in.
 2. **Code that is not Linux's own may bracket the access itself.** Those are kernel-mode instructions and a kernelet runs in kernel mode. So "only host code may touch user memory" is too strong.
 3. **The same value read through the supplier's own kernel alias needs no bracket at all**, because that alias is not marked as user memory.
-4. **A bracketed read of a bad address ends the task anyway**, because the fixup that would turn it into an error return is in the kernelet image and Linux searches its own table and the loaded modules'. So bracketing does not deliver the *fallible* contract the kernel proper needs.
+4. **A bracketed read of a bad address ends the task**, and **the same read recovers when the faulting instruction has a fixup entry** — it returned the error code for a bad address instead of faulting. The pair is the point: recovery works here only because the code is in a *module*, and Linux searches the loaded modules' tables. A kernelet is not a module and cannot become one without giving up the shared text, so its own table is never searched. That is why bracketing cannot deliver the *fallible* contract the kernel proper needs.
 
 Together those say the rule is an addressing rule and not a crossing, which is [decision D82](not-as-assumed.md). One more fact makes it a finding about the API rather than about Linux: **Asterinas does not enable the check.** Its control-register setup names five bits and not that one, and nothing in its tree emits the bracketing instructions. The same source therefore works on one host and faults on the other, and nothing in the API or its taxonomy mentions the requirement. The [Design chapter now states it](../design/virtualizing-ostd/user-mode.md).
 
 ## The patch, in full
 
-About twenty-five lines across four files, applied to v6.12 and booted for the measurement above:
+About twenty-five lines across four files, applied to v6.12 and booted for Experiment 3:
 
 ```c
 /* include/linux/sched.h — in struct task_struct */
@@ -230,6 +231,6 @@ The chapter names more open items than a reader can hold in order, and they are 
 
 **4. Tasks, interrupts, time, devices.** Kernel threads, wait queues, workqueues and high-resolution timers cover almost all of it, and the [what differs](what-differs.md) tables say so: this is the twelve-row half of the design that Linux answers without argument. The exception is the per-CPU selector, which needs the framework's preemption count to become a real host preemption disable before any of this is safe, since a kernelet's own threads use it too. Gated on step 3.
 
-**5. The tenant.** The system-call hook, the stack switch, the migration hold on the tenant's task, and the service-call form of every access to tenant memory. This stage is where the first system call that passes a buffer works, and where the chapter's largest performance question gets its number. Gated on everything above.
+**5. The tenant.** The system-call hook, the stack switch, the migration hold on the tenant's task, and the alias rule for tenant memory with the invalidation callback that keeps its map true. This stage is where the first system call that passes a buffer works, and where the miss rate Experiment 6 left open gets its number. Gated on everything above.
 
 Process lifecycle, which the chapter calls its largest open item, is deliberately last: it blocks a tenant's *second* process, not its first, and a single-process tenant is enough to measure everything in stage 5.
