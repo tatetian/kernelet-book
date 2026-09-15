@@ -167,3 +167,54 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Revised.** A host-owned descriptor for in-band receive headers (D71, A14); the monitor row's notify exit as kernel-handled, marked unverified against Firecracker's source, and the ratios 1.1–4.5× and 3–50×; a reserved control-pool slot per live connection and direction with a per-sender quota on connection requests; rings unpinned at `on_dying`; the cursor under the switch lock and the copy outside it; 536 bytes; host-endpoint connections; the control-pool exception; the payload defined as what follows the headers; torn-down connections' frames completed with an error; the socket-layer change in Costs; the interrupts-off window named as the host's interrupt-latency cost. The cut list applied in part: the six fixes added text, and the page stands at about 4,200 prose words against the 3,000 target; the reviewer's own estimate was that 3,400 is the floor without cutting the validation list or the unit-cost derivation, so about 800 words of tightening remain open.
 
 **Closed.** Five design iterations and a final pass, five reviews. This last pass was not re-reviewed by a subagent; what it changed is listed above and its items are one sentence each.
+
+## Iteration 16: Linux as the host
+
+**Written.** A new chapter, `src/blueprint/linux-mode/`, after Design: index, background
+(self-contained Linux, every claim hyperlinked to v6.12 source or docs), one-address-space
+(the gate), endovisor, tenant, what-differs, evidence. Plus
+`src/notes/linux-mode-experiments.md` with the programs and unedited output.
+
+**The gate, and it passed.** A colleague's observation was that kernelets may not need a
+private kernel page table if the image is position-independent. Evaluating it turned up a
+stronger form: one *physical* copy of the text, mapped at N different kernel addresses,
+each followed by that instance's own data at the same relative offset, so that
+program-counter-relative addressing selects the right instance's data with no register,
+no table and no lookup. Verified in a VM: four instances, one physical text page, four
+correct answers.
+
+**Measured** (details in the Notes page): Syscall User Dispatch 936 ns, a twenty-line
+per-task hook 118 ns, against 46 ns for a call Linux services itself, all in one guest
+under KVM; seccomp user notification 5,721 ns and ptrace 8,221 ns on the build host,
+where the floor is 485 ns. Linux mode needs exactly one exported symbol
+(`set_memory_x`), because `vmap()` strips the execute bit, no permission setter is
+exported, and `execmem_alloc()` is not exported.
+
+**Design chapter changed in the same branch**, because the scheme is better in Asterinas
+mode too. Sentences changed and why:
+- `builds-and-images.md`, the whole `## The kernelet image` section: D3 said the image is
+  linked at fixed addresses inside two top-level entries of a per-kernelet page table.
+  That cannot be done on a host whose kernel half is shared, and the separation it
+  appeared to give was never real, since the linear map is shared into every kernelet's
+  page table. Replaced by the position-independent scheme.
+- `virtualizing-ostd/memory.md`, the opening paragraph, the `paddr_to_vaddr` listing,
+  step 2 of "How memory arrives", and the cost paragraph: the physical window is gone;
+  `paddr_to_vaddr` uses the host's linear-map base; only the metadata window remains
+  per instance.
+- `virtualizing-ostd/index.md`, the `paddr_to_vaddr` row: same reason.
+- `faults-and-reclamation.md`, destroy step 7: there are no two private level-3 tables to
+  free; the image range is unmapped and the metadata window's tables are freed.
+- `kernelet-api-control.md`, the host-mapped-regions table and the sentence after it: the
+  `KW_PHYS` row is gone, since granted frames need no mapping.
+- `principles.md`: a new paragraph saying plainly that kernelets are mutually addressable
+  and that isolation between them has no second layer.
+- Register: D3 and D58 revised, A2 and A13 withdrawn, D78–D80 and A17–A18 added.
+
+**Not changed**, per the task's guard rail: the Paper and the Overview, which describe
+per-kernelet data as "per-kernelet windows". That is still a fair one-phrase description
+and neither page depends on the addresses.
+
+**Open.** The two hosts' system-call costs have never been compared, because Asterinas
+mode's `user_run` return is not measured anywhere in the book. The zero-copy argument has
+not been rechecked against Linux's block layer. The metadata address-space budget is
+arithmetic, not measurement.

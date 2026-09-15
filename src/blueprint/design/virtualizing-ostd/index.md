@@ -32,7 +32,7 @@ Over the inventory's items, grouped as the tables below group them and counted p
 | `AnyFrameMeta`, `AnyUFrameMeta`, `impl_frame_meta_for!`, `impl_untyped_frame_meta_for!`, `GetFrameError`, `FRAME_METADATA_MAX_SIZE` | identical | the metadata protocol, over the kernelet's own slots | none | nothing |
 | `frame::linked_list::{LinkedList, Link, CursorMut}` | identical | intrusive lists over the kernelet's own metadata | none | nothing |
 | `heap::GlobalHeapAllocator` (hook), `HeapSlot`, `SlotInfo`, `Slab`, `SlabMeta`, `SlabSlotList` | identical | the tree's code over the physical window, through `paddr_to_vaddr` | none | nothing |
-| `kspace::paddr_to_vaddr` | identical | `KW_PHYS + pa`, the tree's function over the physical window's base constant, never the linear map ([Memory](memory.md)) | none | nothing |
+| `kspace::paddr_to_vaddr` | identical | the host's linear-map base plus `pa`, the tree's function over a base the host supplies at creation, never the linear map ([Memory](memory.md)) | none | nothing |
 | `kspace::{KVirtArea, kernel_loaded_offset, LINEAR_MAPPING_*, VMALLOC_*}` | absent | kernel-half virtual memory is the host's; no user in the kernel proper | | |
 | `VmSpace::new` | virtualized, no crossing | copies the kernel half from the kernelet's kernel page table (its 256 entries are in `BootArgs`, entries 500 and 501 among them) into a root frame from the grant | none beyond today's | nothing |
 | `VmSpace::activate` | virtualized | `pt_root_register` on first activation, `pt_activate` on each; each task holds the `Arc` of the space it last activated, so `Drop` unregisters without a pending list ([Memory](memory.md)) | one crossing per activation; the CR3 write | nothing |

@@ -39,10 +39,18 @@
   - [Zero-copy I/O](blueprint/design/zero-copy-io.md)
   - [The endovisor](blueprint/design/endovisor.md)
   - [The kernelet runtime](blueprint/design/kernelet-runtime.md)
+- [Linux as the host](blueprint/linux-mode/index.md)
+  - [Background: the Linux this chapter needs](blueprint/linux-mode/background.md)
+  - [One address space, many kernelets](blueprint/linux-mode/one-address-space.md)
+  - [The endovisor as a Linux module](blueprint/linux-mode/endovisor.md)
+  - [The tenant: user mode and system calls](blueprint/linux-mode/tenant.md)
+  - [What differs between the two hosts](blueprint/linux-mode/what-differs.md)
+  - [Evidence](blueprint/linux-mode/evidence.md)
 
 # The Notes
 
 - [The Notes](notes/index.md)
 - [OSTD API inventory](notes/ostd-api-inventory.md)
 - [I/O microbenchmarks](notes/io-microbenchmarks.md)
+- [Linux-mode experiments](notes/linux-mode-experiments.md)
 - [Design register](notes/design-register.md)

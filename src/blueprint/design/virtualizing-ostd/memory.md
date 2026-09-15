@@ -2,17 +2,18 @@
 
 *Part of question 2. Virtualizes `mm`: frames and their metadata, the heap, `paddr_to_vaddr`, address spaces and page tables, TLB shootdown, and the DMA objects. Discharges invariants I2 (ownership) and I3 (privacy) on the kernelet side.*
 
-A kernelet's memory is a set of **runs**: physically contiguous, 2 MiB-aligned sequences of **grains** the host has granted it, and nothing else. Everything the kernel proper allocates, every frame of every process, every page-table node, every slab, every DMA buffer, comes from a run. vOSTD addresses a frame exactly as OSTD addresses one, by adding a constant to its physical address: the host's linear map becomes the kernelet's **physical window** `KW_PHYS`, and the host's frame-metadata array becomes the kernelet's **metadata window** `KW_META` ([Builds and images](../builds-and-images.md#window)). Both windows are sparse, holding only what the kernelet has been granted, and both are mapped by the host at the moment it grants a grain. The kernelet never writes a page-table entry of its window, and the host's own frame metadata is never shared with a kernelet, which is what makes reclamation a release of whole runs with no per-frame obligation.
+A kernelet's memory is a set of **runs**: physically contiguous, 2 MiB-aligned sequences of **grains** the host has granted it, and nothing else. Everything the kernel proper allocates, every frame of every process, every page-table node, every slab, every DMA buffer, comes from a run. vOSTD addresses a frame exactly as OSTD addresses one, by adding a base to its physical address. That base is **the host's own linear map**, whose address the host writes into `BootArgs` at creation and which the instance holds in its own data ([Builds and images](../builds-and-images.md#window)); granted frames are not mapped anywhere else, and the host has no per-grain page-table work to do. Frame metadata is different: each kernelet keeps its own **metadata window** `KW_META`, sparse, holding slots only for frames it has been granted, at a base the host chooses per instance and writes into `BootArgs`. The kernelet never writes a page-table entry of that window, and the host's own frame metadata is never shared with a kernelet, which is what makes reclamation a release of whole runs with no per-frame obligation.
 
 ## What is identical, and why
 
 On the tree, `paddr_to_vaddr` is `pa + LINEAR_MAPPING_BASE_VADDR` (checked: `ostd/src/mm/kspace/mod.rs`), and the `mapping` module places frame `pa`'s 64-byte `MetaSlot` at `FRAME_METADATA_RANGE.start + (pa / PAGE_SIZE) × 64` (checked: `ostd/src/mm/frame/meta.rs`, `META_SLOT_SIZE`). vOSTD changes the two base constants and nothing else:
 
 ```rust
-// vOSTD: the same functions as the host build, over the window's constants.
-pub const KW_PHYS: Vaddr = KERNELET_WINDOW_PHYS;            // entry 500
-pub const KW_META: Vaddr = KERNELET_WINDOW + (8 << 30);     // entry 501, offset 8 GiB
-pub fn paddr_to_vaddr(pa: Paddr) -> Vaddr { KW_PHYS + pa }
+// vOSTD: the same functions as the host build, over two bases the host supplies
+// at creation and the instance holds in its own writable data.
+static LINEAR_BASE: Vaddr = /* BootArgs::linear_map_base, the host's own */;
+static KW_META: Vaddr     = /* BootArgs::meta_base, chosen per instance */;
+pub fn paddr_to_vaddr(pa: Paddr) -> Vaddr { LINEAR_BASE + pa }
 pub(crate) fn frame_to_meta(pa: Paddr) -> Vaddr { KW_META + (pa / PAGE_SIZE) * META_SLOT_SIZE }
 pub(crate) fn meta_to_frame(va: Vaddr) -> Paddr { (va - KW_META) / META_SLOT_SIZE * PAGE_SIZE }
 ```
@@ -36,7 +37,7 @@ pub const GRAIN_SIZE: usize = 2 << 20;
 For every run, at creation or later, the host does the same six things, through its linear map, before it publishes the run:
 
 1. Allocates the run with `alloc_segment_aligned` ([control half](../kernelet-api-control.md)) and zeroes it (register D55).
-2. Maps each grain as one 2 MiB page at `KW_PHYS + paddr`, read-write, non-executable, not Global, allocating a level-2 table for entry 500 for each GiB of physical address the kernelet touches for the first time; those tables are host frames charged to the kernelet's host-overhead account.
+2. Nothing. The grain is already addressable, through the host's linear map, which maps all of physical memory once and is shared into every address space. This step is where the earlier design mapped the grain into a per-kernelet physical window; it no longer exists.
 3. Allocates and zeroes eight frames per grain for its metadata, host frames charged to the kernelet, and maps them at `KW_META + paddr / 64`, allocating the level-2 and level-1 tables under entry 501 that the range needs for the first time (one level-1 table per 128 MiB of physical address, one level-2 per 64 GiB).
 4. Writes the owner array.
 5. Appends the `RunDesc` and raises `max_paddr` if the run is the highest.
@@ -46,7 +47,7 @@ Nothing the kernelet sees is partial: a run it can read in the table is mapped, 
 
 Everything the kernelet writes here is in its own grant or in the metadata frames dedicated to it: the metadata slots, the allocator's free lists inside them, and the page-table nodes of its own address spaces, which are grant frames reached through `KW_PHYS`. Everything the host writes is host memory, or the grant at creation through the linear map. That is invariant I2 as this page discharges it, and it needs no exception for page-table nodes and no page-table entry written by the kernelet outside its own user page tables.
 
-The cost is 32 KiB of host memory per grain, 1.56 percent, plus one level-2 frame per GiB of physical address the kernelet's grains touch and one level-1 frame per 128 MiB for the metadata window; a kernelet whose grains are scattered pays a few more page-table frames than one whose grains are adjacent, and the host allocator's preference for adjacent grains keeps the count small. What it buys: the host's metadata array is untouched by kernelets, `Frame::clone` and `drop`, which sit on every page fault and every `mmap`, cost a shift and an add as on the tree, and destroy has nothing per frame to reset.
+The cost is 32 KiB of host memory per grain, 1.56 percent, plus one level-1 frame per 128 MiB of physical address the kernelet's grains touch, for the metadata window alone; the granted frames themselves cost no page-table work at all. A kernelet whose grains are scattered pays a few more page-table frames than one whose grains are adjacent, and the host allocator's preference for adjacent grains keeps the count small. The metadata window also reserves address space in proportion to the physical span the kernelet may be granted, one byte for every sixty-four; on a host with four-level paging that reservation, not memory, is what bounds the number of kernelets, which [One address space, many kernelets](../../linux-mode/one-address-space.md) works out. What it buys: the host's metadata array is untouched by kernelets, `Frame::clone` and `drop`, which sit on every page fault and every `mmap`, cost a shift and an add as on the tree, and destroy has nothing per frame to reset.
 
 ## Allocation, contiguity, and exhaustion
 

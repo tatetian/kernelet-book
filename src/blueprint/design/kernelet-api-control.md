@@ -14,10 +14,9 @@ The control half and the service half share the [window](builds-and-images.md#wi
 | `KW_TEXT` | control half | the kind's shared frames, 2 MiB-aligned so that they map as 2 MiB pages | `create` |
 | `KW_DATA` (template and replicas) | control half | host memory, charged to the kernelet, one 2 MiB page | `create` |
 | `KW_SHARED` | control half | host memory, charged to the kernelet | `create` |
-| `KW_PHYS`, one 2 MiB entry per grain | control half | the grant | `create`, `grant`, `grains_request` |
 | `KW_META`, eight entries per grain | control half | host memory, charged to the kernelet | `create`, `grant`, `grains_request` |
 
-So the host maps everything in the window, through its linear map, at the moment it grants a grain; the grant table the kernelet reads is a host-written page in `KW_SHARED` ([Memory](virtualizing-ostd/memory.md)). The kernelet writes no page-table entry of the window and no page-table entry in host memory; the only page tables it writes are its own user page tables, in frames of its grant.
+So the host maps the image's regions at creation and the metadata of a grain when it grants it, through its linear map; granted frames themselves need no mapping, since the linear map already holds them; the grant table the kernelet reads is a host-written page in `KW_SHARED` ([Memory](virtualizing-ostd/memory.md)). The kernelet writes no page-table entry of the window and no page-table entry in host memory; the only page tables it writes are its own user page tables, in frames of its grant.
 
 ## Images
 
