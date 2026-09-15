@@ -56,7 +56,7 @@ The rows are split into three tables by **what the difference reaches**:
 
 One row is deliberately not in any of the three. The [zero-copy design](../design/zero-copy-io.md)'s lending rings need a non-sleeping submission path, which is work we must do on Asterinas and which Linux's block layer already has. The shape carries over; whether the measured argument survives the substitution is **unchecked**, so the row has no verdict yet.
 
-Two rows in the third table have no verdict either, in a different sense: *device addressing* under an enforced address-translation unit, where a device address is not a physical address and the design assumes it is, is not addressed for either host; and the tenant's **virtual system-call page**, which Linux maps into every process and which neither interception mechanism sees, must be unmapped or replaced and is not designed.
+Two rows in the third table have no verdict either, in a different sense: *device addressing* under an enforced address-translation unit, where a device address is not a physical address and the design assumes it is, is not addressed for either host; and the tenant's **virtual system-call pages**, which Linux maps into every process and which neither interception mechanism sees. The modern one must be unmapped or replaced, and that is not designed; the legacy one is emulated below every interception point and must be turned off on the kernel command line, which is an operator requirement Linux mode adds.
 
 ## Reading the tables {#user-mode}
 

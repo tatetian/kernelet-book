@@ -18,7 +18,15 @@ Since the kernelet cannot create a user-mode context, it borrows one: **the tena
 
 Memory is the easier half and needs no patch. The endovisor gives the tenant's address space a **virtual memory area whose fault handler is the kernelet's**, so when the tenant touches an address, Linux calls that handler and the kernelet supplies a frame from its own grant.
 
-Two cautions, because "the kernelet owns its tenant's memory" is too strong for what this buys. Linux still owns the address-space *structure* — the list of areas, and therefore `mmap`, `mprotect`, `mremap`, reclaim and copy-on-write — so the kernel proper's memory management must be re-expressed over Linux's interfaces rather than carried across unchanged. And pages handed out this way carry no memory-cgroup charge unless the endovisor adds one, so a tenant's memory escapes the host's accounting by default.
+That sentence is short because the mechanism is standard. What it buys is narrower than it sounds, and the limits are worth stating in full, because they decide whether the design is buildable.
+
+**The pages are not ordinary pages.** A module has two ways to supply one. It can return a page from a folio it owns, which puts the page on Linux's reclaim lists under rules the kernelet does not control. Or it can mark the area as holding raw frame numbers and insert them directly, which is what device drivers do. The second is the right shape here and it costs a list of things the tenant can no longer do: the kernel's pinning interface refuses such pages, so direct file I/O, `vmsplice`, cross-process reads, registered buffers for asynchronous I/O and remote direct memory access all fail on them; a debugger cannot read them; and `fork` cannot copy them on write. They are also outside the reverse map, so nothing can migrate, compact or reclaim them.
+
+**Linux does not tell the kernelet when a mapping goes away.** Tearing down an area — `munmap`, discarding pages, a process exiting — does not consult the handler that supplied them. The kernelet's own record of which of its frames are mapped where would go stale silently, and keeping it true needs a design this chapter does not have.
+
+**A module cannot create an area in another task's address space.** There is no exported way to do it, and the interfaces that exist act on the caller's own. So the kernel proper's `mmap`, `brk` and program loading can run only while the kernelet is executing *on the tenant's own task* — which is to say only on the patched path. The no-patch path cannot give a tenant memory at all.
+
+**Linux keeps the address-space structure**, and therefore `mmap`, `mprotect`, `mremap`, reclaim and copy-on-write, so the kernel proper's memory management must be re-expressed over Linux's interfaces rather than carried across. And pages handed out this way carry no memory-cgroup charge unless the endovisor adds one, so a tenant's memory escapes accounting by default.
 
 System calls are the hard half.
 
@@ -62,11 +70,15 @@ Two honest notes about the 929 ns. The program that produced it ran with no exem
 
 And now the part that decides the chapter.
 
-**On this path the tenant can reach Linux's own system calls.** Two ways, neither exotic. The selector byte lives in the tenant's memory, so the tenant can store *allow* and make an ordinary call. Or it can jump to the `syscall` instruction inside the stub, which is in the exempt range by construction, with registers of its own choosing.
+**On this path the tenant can reach Linux's own system calls.** Three ways, none exotic.
+
+The selector byte lives in the tenant's memory, so the tenant can store *allow* and make an ordinary call. It can jump to the `syscall` instruction inside the stub, which is in the exempt range by construction, with registers of its own choosing. And it can simply **fork or exec**: Linux clears the dispatch setting in `copy_process()` and again in `begin_new_exec()`, and [the manual](https://docs.kernel.org/admin-guide/syscall-user-dispatch.html) says so — any fork or exec of the process resets the mechanism to off. So without a patch, only the tenant's *first thread* is ever intercepted. Every child runs with its calls going straight to Linux from its first instruction, and nothing inside the sandbox can re-arm the setting before that instruction runs.
 
 So on the no-patch path the kernelet is **not** the tenant's boundary. What confines the tenant is Linux's own machinery: an unprivileged user id, a set of namespaces, and a seccomp filter — which is the container boundary this work exists to improve on. The Paper opens by observing that a tenant which finds a global the namespaces do not partition has found its neighbors; on this path that sentence applies to a kernelet's tenant too.
 
-Two things narrow the hole without closing it. Mapping the selector page read-only to the tenant stops the store but not the jump. A seccomp filter over the tenant turns "the whole Linux system-call interface" into "whatever the filter allows", which is what gVisor does and is worth doing. Neither makes the kernelet the boundary.
+Two of the three can be narrowed. The selector pointer is **optional**: dispatch may be armed with no selector at all, in which case every call outside the exempt range is diverted unconditionally and there is no byte to flip. And a seccomp filter over the tenant turns "the whole Linux system-call interface" into "whatever the filter allows", which is what gVisor does and is worth doing. The jump into the exempt range cannot be closed, and neither can the fork.
+
+Linux's own documentation reaches this chapter's conclusion in its own voice: the mechanism "is not a mechanism for sandboxing system calls, and it should not be seen as a security mechanism, since it is trivial for a malicious application to subvert.
 
 ## The patched path, and why it is the real one
 
@@ -78,7 +90,8 @@ That is the argument for the patch. The difference in cost is real and secondary
 
 **What is still wrong with it** is recorded rather than repaired, because it changes the size of the ask:
 
-- **Only one of four entry points is hooked.** A 64-bit process on a kernel built with 32-bit compatibility — which production kernels usually are — can enter through the legacy interrupt or the fast 32-bit path, neither of which passes the hook. Its call is then serviced by Linux, with the tenant's own credentials, invisibly to the kernelet. That is a complete escape, and the guest used here had compatibility compiled out, so it could not appear in the measurement.
+- **Only one entry point is hooked, and there are three.** A kernel built with 32-bit compatibility — which production kernels are — also enters through the legacy software interrupt and through the fast 32-bit instruction, neither of which passes the hook. A tenant that enters that way has its call serviced by Linux, with its own credentials, invisibly to the kernelet. That is a complete escape, and the guest used here had compatibility compiled out, so it could not appear in the measurement.
+- **A fourth path bypasses the hook even with compatibility off.** The legacy virtual system-call page at a fixed high address is emulated inside the page-fault handler, which calls three system calls directly and never reaches the dispatch path, seccomp, or the hook. It is compiled into distribution kernels and its mode is a boot-time setting, so the endovisor cannot turn it off per tenant. Linux mode must require `vsyscall=none` on the kernel command line, and that is an operator requirement, not a patch.
 - **No lifetime management.** `fork` copies the two fields into the child, nothing clears them when a task exits, and nothing takes a reference on the module, so unloading it can leave a task pointing into freed memory.
 - **The return-value convention is unstated.** Several negative values mean *restart this call* to Linux's signal machinery; a kernelet returning one would have its call silently re-executed.
 
@@ -90,13 +103,13 @@ Two gaps larger than anything above, stated because the chapter would be dishone
 
 **Process lifecycle.** The hook's shape — take a register set, return a value — cannot express `fork`, which returns twice; `execve`, which replaces the address space and the register file; or the return from a signal handler, which restores a saved frame. Only Linux can create a Linux task, and the functions that do so are not available to a module. How a kernelet's processes map onto Linux tasks, and who owns the tenant's signals, is **not designed here**, and it is the largest open item in this chapter.
 
-**The virtual system-call page.** Some calls — reading the clock, asking which processor you are on — are served from a page Linux maps into every process, without entering the kernel at all. Neither dispatch nor the hook sees them, so a tenant would read the *host's* clock rather than its kernelet's. The endovisor must unmap that page from its tenants or supply its own.
+**The virtual system-call page.** Some calls — reading the clock, asking which processor you are on — are served from a page Linux maps into every process, without entering the kernel at all. Neither dispatch nor the hook sees them, so a tenant would read the *host's* clock rather than its kernelet's. The endovisor must unmap that page from its tenants or supply its own. This is the modern page, and it is a correctness problem; the legacy page named above is a separate and more serious one.
 
 ## Four things Linux will not do, which the design assumed
 
 ### A runaway kernelet cannot be stopped
 
-[Faults, termination and reclamation](../design/faults-and-reclamation.md) requires that a kernelet task be terminable and its stack discarded, and that a kernelet be destroyed without running any of its code. Linux cannot: a task in kernel mode runs until it returns to user mode of its own accord, stopping a kernel thread is cooperative, and on the patched path the kernel proper's code runs *on the tenant's own task, in kernel mode*, where a kill signal cannot reach it. A kernelet that loops inside the hook is an unkillable task and a destroy that never completes. **Invariant I7, termination, does not hold in Linux mode.** The substitute is cooperative: a check of the dying flag at every service-call boundary, a deadline, and a watchdog. It is weaker, because it needs the kernelet to keep working well enough to notice.
+[Faults, termination and reclamation](../design/faults-and-reclamation.md) requires that a kernelet task be terminable and its stack discarded, and that a kernelet be destroyed without running any of its code. Linux cannot. A kill signal is acted on only where a task returns to user mode, so a task executing in kernel mode cannot be killed there, however long it stays; stopping a kernel thread is cooperative; and on the patched path the kernel proper's code runs *on the tenant's own task, in kernel mode*, exactly where a signal cannot reach it. Whether such a task also *holds* its processor depends on the kernel's preemption setting, which is the operator's choice; that it cannot be killed does not. A kernelet that loops inside the hook is an unkillable task and a destroy that never completes. **Invariant I7, termination, does not hold in Linux mode.** The substitute is cooperative: a check of the dying flag at every service-call boundary, a deadline, and a watchdog. It is weaker, because it needs the kernelet to keep working well enough to notice.
 
 ### The kernel stack is a fraction of what the design assumes
 

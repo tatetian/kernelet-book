@@ -42,7 +42,7 @@ Running one kernel's code under another kernel is an old idea, and Linux mode is
 
 **Many instances of one text in one address space.** Shared libraries, `dlmopen`, thread-local storage and per-CPU variables all solve this, and [One address space, many kernelets](one-address-space.md) says what is different about solving it from the program counter.
 
-**Hardware that could separate kernelets.** Protection keys for supervisor pages would let one kernel address space hold regions that only the right instance may touch. Nothing here uses them; they are the obvious next thing to try, and are not tried.
+**Hardware that could separate kernelets.** Protection keys for supervisor pages are the mechanism people reach for, and two facts are worth stating before anyone counts on them. Linux has no support for them at all: the merged work covers user-space keys only. And the hardware offers sixteen keys, while every instance of a kind executes the same shared text and would therefore have to share one — which buys "kernelet data versus the rest of the kernel", not one instance versus another among thousands. It is not a fix that is one patch away.
 
 So the contribution is not "kernel code can be virtualized" and not "one text can serve many instances". It is that the boundary can be an **API the kernel already compiles against**, that the host beneath it is replaceable, and that on Linux the replacement costs a handful of exported symbols and one patch whose absence is a security problem rather than a slowdown.
 
@@ -50,7 +50,7 @@ So the contribution is not "kernel code can be virtualized" and not "one text ca
 
 Linux mode is not free, and this chapter does not pretend otherwise:
 
-- **Exports, and a patch.** Three exported symbols for a complete module, and a fourth to keep the one hardware check the design has left. The system-call hook is a separate, larger patch, and it is what makes the kernelet the tenant's boundary.
+- **Exports, a patch, and a boot setting.** A pair of exported symbols before anything runs, two more for a complete module, a kernel command line that turns off the legacy virtual system-call page, and the system-call hook — a separate, larger patch, and the thing that makes the kernelet the tenant's boundary.
 - **Linux's own maturity is now in the trusted base.** The operator keeps their kernel, and keeps its bugs. Kernelets stop the tenant's *kernel* from being the attack surface; they do not make Linux smaller.
 - **The three weakened properties above**, which are the reason the two modes are a choice rather than a ladder.
 - **A crossing where there was none.** The kernel proper's copies to and from tenant memory must become service calls, because Linux's fault handler cannot recover them. The cost is unmeasured and it is the chapter's largest performance question.

@@ -79,13 +79,13 @@ And the honest total: **this is not the only export Linux mode needs.** Three sy
 | symbol | exported today? | what needs it |
 |---|---|---|
 | `set_memory_rox` | **no** | making a kernelet's text read-execute; nothing works without it |
-| `set_memory_ro` | **no** | making the relocated read-only data read-only again, and giving the shared text a read-only alias in the direct map |
-| `x86_fsbase_write_task` | **no** | servicing a tenant thread's request to set its own thread pointer |
+| `set_memory_rw` | **no** | giving those frames back. The call above makes them read-only in the host's direct map too, so releasing a kind without restoring the permission hands the next user a read-only page. The mandatory partner of the first |
+| `set_memory_ro` | **no** | making the relocated read-only data read-only again after the loader has patched it. Hardening, not function |
 | `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)) |
 
-One more was checked and came out the other way, correcting an earlier draft of this page: `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all. What is not exported is the wrapper that searches for a range to use, so the endovisor does that search itself.
+Two things this page once asked for do not belong on the list. `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all; only the wrapper that searches for a range is not, so the endovisor does that search itself. And writing a tenant thread's thread-pointer register needs no export: on the patched path the kernelet runs on the tenant's own task, so the module can set the field and write the register itself, which is ten lines of duplicated logic rather than a missing capability.
 
-So the hard requirement is one symbol; a complete Linux mode wants four. A fifth thing this page used to ask for turned out to be there already.
+So the hard requirement is a pair of symbols, and a complete Linux mode wants four.
 
 ## Experiment 3: the cost of reaching the kernelet
 
@@ -122,9 +122,11 @@ The library is linked the way a kernelet image is: a position-independent execut
 
 The design is indirect calls, so the image must be acceptable to a processor that checks them. Two things were tried on the same library as Experiment 4.
 
-In the ordinary build, the library's own functions carry no landing marker; the 35 in the binary come from the prebuilt standard library. Compiled with the unstable flag that asks for them, the entry function begins with the four bytes that are the marker. Neither build declares the property in the object file, because the prebuilt standard library does not, so a kernelet image would need the standard library rebuilt with the same flag.
+In the ordinary build, the library's own functions carry no landing marker; the 35 in the binary come from the prebuilt standard library. Compiled with the unstable flag that asks for them, the entry function begins with the four bytes that are the marker.
 
-*Shows:* the compiler half of the problem has an answer, and it costs an unstable flag and a rebuilt standard library. The kernel half does not: whether a host that rewrites indirect call sites into a stricter per-signature form can rewrite text shared by every instance of a kind is untested, and is assumption A19. **[unverified]**
+Neither build declares the property that a *user-space* loader reads before enabling the check for a process. That note is irrelevant here, because in kernel mode the check is enabled machine-wide and only the instructions matter — but it is why the standard library must be rebuilt: its compiled code lacks the instructions, not the note.
+
+*Shows:* the compiler half of the problem has an answer, and it costs an unstable flag and a rebuilt standard library. The kernel half is where the risk is, and [one address space](one-address-space.md) states it: on a host whose own build enforces the type-checked form, a kernelet's entry functions need preambles the host's compiler would accept, and the first call into a kernelet traps without them. Assumption A19. **[unverified]**
 
 ## The patch, in full
 
