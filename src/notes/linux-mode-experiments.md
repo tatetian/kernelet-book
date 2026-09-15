@@ -493,7 +493,7 @@ Read, not assumed. Each was checked in the tree this chapter builds and boots.
 | `zap_vma_ptes` | `mm/memory.c:1961` | `EXPORT_SYMBOL_GPL` |
 | `mmu_notifier_register` | `mm/mmu_notifier.c:709` | `EXPORT_SYMBOL_GPL` |
 | `mmu_interval_notifier_insert`, `mmu_interval_read_begin` | `mm/mmu_notifier.c:992, :261` | `EXPORT_SYMBOL_GPL`; `mmu_interval_read_retry` is inline |
-| `CONFIG_MMU_NOTIFIER` | `mm/Kconfig:724` | a bare `bool` nothing selects on its own; KVM and the shared-address-space work select it |
+| `CONFIG_MMU_NOTIFIER` | `mm/Kconfig:724` | a bare `bool` with no prompt of its own, so it cannot be enabled directly; KVM and the shared-address-space work select it |
 | `x86_fsbase_write_task` | `arch/x86/kernel/process_64.c:515` | **not exported**, and not needed |
 | `page_offset_base` | `arch/x86/kernel/head64.c:65` | `EXPORT_SYMBOL`, inside `#ifdef CONFIG_DYNAMIC_MEMORY_LAYOUT` |
 | `kthread_use_mm`, `kthread_unuse_mm` | `kernel/kthread.c:1479, :1512` | `EXPORT_SYMBOL_GPL` |
