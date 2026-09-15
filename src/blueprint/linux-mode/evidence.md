@@ -1,6 +1,6 @@
 # Evidence
 
-*What was built, what was run, and what is still argued rather than shown. Five experiments and one patch. The kernel work is against Linux 6.12, built from kernel.org sources for this chapter; three of the measurements in Experiment 3 were taken on the build host's own 6.8 kernel, and are kept apart from the rest. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
+*What was built, what was run, what is still argued rather than shown, and the order in which the rest should be attacked. Six experiments and one patch. The kernel work is against Linux 6.12, built from kernel.org sources for this chapter; three of the measurements in Experiment 3 were taken on the build host's own 6.8 kernel, and are kept apart from the rest. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
 
 ## The setting
 
@@ -128,6 +128,44 @@ Neither build declares the property that a *user-space* loader reads before enab
 
 *Shows:* the compiler half of the problem has an answer, and it costs an unstable flag and a rebuilt standard library. The kernel half is where the risk is, and [one address space](one-address-space.md) states it: on a host whose own build enforces the type-checked form, a kernelet's entry functions need preambles the host's compiler would accept, and the first call into a kernelet traps without them. Assumption A19. **[unverified]**
 
+## Experiment 6: can kernel-mode code touch a tenant address?
+
+Four cases, on the caller's own task, in the guest, with the hardware's user-access check enabled in the control register. A user-space program holds a value in an ordinary variable and asks a module to read it four ways; each case runs in a forked child, so that a case which kills its task does not end the run.
+
+```
+smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
+  bare read        -> child KILLED by signal 9
+  module-bracketed -> OK
+  copy_from_user   -> OK
+  direct-map alias -> OK
+  bracketed, bad   -> child KILLED by signal 9
+```
+
+and, in the kernel's log:
+
+```
+smapdemo: SMAP ENABLED in CR4
+smapdemo: bare read of 00000000004c70f0 ...
+BUG: unable to handle page fault for address: 00000000004c70f0
+#PF: supervisor read access in kernel mode
+Oops: Oops: 0001 [#1] SMP
+smapdemo: bracketed read returned 5a5a5a5a5a5a5a5a
+smapdemo: copy_from_user returned 5a5a5a5a5a5a5a5a
+smapdemo: direct-map alias ffff88803ffdb0f0 returned 5a5a5a5a5a5a5a5a
+smapdemo: bracketed read of unmapped 000003fffffff000 ...
+BUG: unable to handle page fault for address: 000003fffffff000
+Oops: Oops: 0000 [#2] SMP
+```
+
+*Shows:* four things, in order of how much they change the design.
+
+1. **A bare kernel-mode read of a tenant address ends the task**, on a page that is present, mapped and writable. The constraint has nothing to do with faulting pages in.
+2. **Code that is not Linux's own may bracket the access itself.** Those are kernel-mode instructions and a kernelet runs in kernel mode. So "only host code may touch user memory" is too strong.
+3. **The same value read through the supplier's own kernel alias needs no bracket at all**, because that alias is not marked as user memory.
+4. **A bracketed read of a bad address ends the task anyway**, because the fixup that would turn it into an error return is in the kernelet image and Linux searches its own table and the loaded modules'. So bracketing does not deliver the *fallible* contract the kernel proper needs.
+
+Together those say the rule is an addressing rule and not a crossing, which is [decision D82](not-as-assumed.md). One more fact makes it a finding about the API rather than about Linux: **Asterinas does not enable the check.** Its control-register setup names five bits and not that one, and nothing in its tree emits the bracketing instructions. The same source therefore works on one host and faults on the other, and nothing in the API or its taxonomy mentions the requirement. The [Design chapter now states it](../design/virtualizing-ostd/user-mode.md).
+
 ## The patch, in full
 
 About twenty-five lines across four files, applied to v6.12 and booted for the measurement above:
@@ -178,19 +216,19 @@ Stated plainly, because the chapter is a design and not a system.
 - **The zero-copy argument has not been rechecked against Linux's block layer.** Its shape carries over; its numbers were derived for a host we control. **[unverified]**
 - **The metadata address-space budget is arithmetic, not measurement.** The 16 GiB per instance on a 1 TiB machine, and the cap it implies on four-level paging, follow from the region sizes in Linux's documentation; no machine was filled with kernelets to check. **[unverified]**
 - **The guest's absolute numbers are from a `tinyconfig` kernel** without the mitigations a production host runs, so its floor is about a tenth of a production host's. What carries is the overhead each mechanism adds, not the ratio against that floor.
-- **The kernel-mode fault path was not tested at all.** That a kernelet's exception table is invisible to Linux's fault handler is read from the source, not demonstrated, and the service-call answer proposed for it is not built or measured. **[unverified]**
+- **How often the alias rule misses is not known.** Experiment 6 settles what the kernel proper may and may not dereference; how often it will hold no alias for an address its tenant touches is a property of workloads, and nothing here measures it. **[unverified]**
 
 ## What to build first
 
 The chapter names more open items than a reader can hold in order, and they are not equal: some block the first line of code and some block the second process. This is the order they should be attacked in, and what each stage is gated on.
 
-**1. Settle whether the host is eligible at all.** Build a small position-independent image with indirect-branch landing markers, load it from a module on a kernel built with type-checked indirect branches, and call into it. If the call traps and cannot be made to work, that class of host is excluded and everything after this is scoped to kernels without it (assumption A19). This is a day of work and it decides how much of the rest is worth doing, which is why it is first.
+**1. Settle the branch-tracking question on the configuration that ships.** Put a landing marker in front of the eight bytes of Experiment 2 and run it on a distribution kernel with plain indirect-branch tracking enabled. Experiment 5 showed the compiler emits the marker; nothing has yet shown a kernelet-shaped indirect call *lands* on a kernel that enforces it. That is an hour on hardware already to hand (*estimated*), and it covers every machine an operator would deploy on. The stricter, type-checked form is a scoping question rather than a gate, because it needs a kernel built with a different compiler than distributions use, and most of it is answerable without a kernel at all: compile one function with each toolchain's type-hash option and compare the two constants. If they disagree, no kernel work fixes it (assumption A19).
 
 **2. The loader.** Export the permission pair, assemble an instance's range, relocate it, and enter a kernelet image that initializes vOSTD far enough to write a line through the log service call and stop. Nothing on this path is open; what it proves is that the [one-address-space scheme](one-address-space.md) works on a real image rather than on eight bytes.
 
 **3. Memory.** The metadata region, which needs the fourth export and is where invariant I3's last hardware check lives; grains from the page allocator; the owner array; the kernel proper's own allocator running over granted frames. Gated on step 2.
 
-**4. Tasks, interrupts, time, devices.** Nothing here is open. Kernel threads, wait queues, workqueues and high-resolution timers cover it, and the [what differs](what-differs.md) tables say so: this is the twelve-row half of the design that Linux answers without argument. Gated on step 3.
+**4. Tasks, interrupts, time, devices.** Kernel threads, wait queues, workqueues and high-resolution timers cover almost all of it, and the [what differs](what-differs.md) tables say so: this is the twelve-row half of the design that Linux answers without argument. The exception is the per-CPU selector, which needs the framework's preemption count to become a real host preemption disable before any of this is safe, since a kernelet's own threads use it too. Gated on step 3.
 
 **5. The tenant.** The system-call hook, the stack switch, the migration hold on the tenant's task, and the service-call form of every access to tenant memory. This stage is where the first system call that passes a buffer works, and where the chapter's largest performance question gets its number. Gated on everything above.
 
