@@ -74,7 +74,17 @@ picdemo: instance 0 text pte 0x73e121  W=0 X=1
 
 One reviewer objection is worth closing here, because the answer is in Linux's own source. Does making the alias executable also make the **direct map** executable, handing every module a way around W^X? No: the code that propagates attribute changes to the direct-map alias masks the execute bit out first, with the comment *"Directmap always has NX set, do not modify"*. What it does cost is on the next line — a machine-wide translation-buffer flush per call, so per instance created.
 
-And the honest total: **this is not the only export Linux mode needs.** Allocating grains larger than the page allocator's maximum order needs the contiguous allocator, which is not exported; making `.data.rel.ro` read-only after relocation needs `set_memory_ro`, which is not exported; and a tenant's thread-local storage needs the helper that writes a task's segment base, which is not exported either. The hard requirement for the scheme in this chapter is one symbol. The requirement for a complete Linux mode is at least three.
+And the honest total: **this is not the only export Linux mode needs.** Three symbols were checked in the v6.12 tree:
+
+| symbol | exported today? | what needs it |
+|---|---|---|
+| `set_memory_rox` | **no** | making a kernelet's text read-execute; nothing works without it |
+| `set_memory_ro` | **no** | making the relocated read-only data read-only again, and giving the shared text a read-only alias in the direct map |
+| `x86_fsbase_write_task` | **no** | servicing a tenant thread's request to set its own thread pointer |
+
+One more was checked and came out the other way, correcting an earlier draft of this page: `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all. What is not exported is the wrapper that searches for a range to use, so the endovisor does that search itself.
+
+So the hard requirement is one symbol, the requirement for a complete Linux mode is three, and the fourth thing this page used to ask for was already there.
 
 ## Experiment 3: the cost of reaching the kernelet
 

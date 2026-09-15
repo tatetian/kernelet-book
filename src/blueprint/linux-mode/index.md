@@ -28,7 +28,7 @@ Linux can host kernelets. Three things had to be true. Two were tested on a kern
 
 3. **Everything else maps onto ordinary Linux.** Kernelet tasks are kernel threads, tenant memory is a virtual memory area whose fault handler is the kernelet's, grains are pages from Linux's allocator addressed through its direct map, and a virtual interrupt is a wakeup. None of this needs a patch, and none of it was built: this third point is argued from Linux's interfaces, not demonstrated.
 
-One thing is needed unconditionally: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. Linux mode therefore needs `set_memory_rox` exported, which is a one-line change; a complete Linux mode needs at least three exports, listed on the [evidence](evidence.md) page with the failure each one fixes.
+One thing is needed unconditionally: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. Linux mode therefore needs `set_memory_rox` exported, which is a one-line change; a complete Linux mode needs three exports, listed on the [evidence](evidence.md) page with what each one is for.
 
 ## What this is not
 

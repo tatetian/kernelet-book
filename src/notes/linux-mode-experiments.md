@@ -252,10 +252,17 @@ built and booted for the measurements in RESULTS.md.
  }
 +EXPORT_SYMBOL_GPL(set_memory_rox);
 
-   A complete Linux mode needs at least three exports: this one, set_memory_ro()
-   for the relocated read-only data and for a read-only alias of the shared text,
-   and a way to allocate physically contiguous runs larger than the page
-   allocator's 4 MiB maximum, whose current implementation is not exported.
+   A complete Linux mode needs three exports, all checked against the v6.12 tree:
+   this one; set_memory_ro(), for the relocated read-only data and for a read-only
+   alias of the shared text; and x86_fsbase_write_task(), for servicing a tenant
+   thread's request to set its own thread pointer.
+
+   A fourth was expected and is not needed. alloc_contig_range() IS exported
+   (mm/page_alloc.c, as alloc_contig_range_noprof, plain EXPORT_SYMBOL, under
+   CONFIG_CONTIG_ALLOC), as is free_contig_range(). What is not exported is
+   alloc_contig_pages(), the wrapper that searches the zones for a suitable
+   range, so a module can allocate long physical runs but must do the search
+   itself. MAX_PAGE_ORDER is 10, so the plain page allocator stops at 4 MiB.
 
 2. A per-task system-call hook, so a kernelet can service its tenant's calls
    without a trip through user space, and so that Linux's own system calls are

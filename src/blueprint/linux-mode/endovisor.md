@@ -25,7 +25,11 @@ Two costs of this sequence belong here rather than in a footnote. `vmap()` maps 
 
 ## Memory
 
-A **grain** is 2 MiB of physically contiguous memory, and Linux's page allocator hands out physically contiguous blocks directly, up to a maximum of 4 MiB. A grain is one such allocation. Runs larger than that need the contiguous allocator Linux uses for huge pages, which is **not exported to modules**, so either the endovisor is limited to runs of two grains or a second symbol must be exported. The allocation may also sleep while it reclaims, so it cannot be made from a context holding a spin lock, and it fails under fragmentation where the host's own allocator would not.
+A **grain** is 2 MiB of physically contiguous memory, and Linux's page allocator hands out physically contiguous blocks directly, up to a maximum of **4 MiB** ([`MAX_PAGE_ORDER`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/mmzone.h#L30) is 10, so 2¹⁰ pages). A grain is one such allocation, and a run of two grains is the largest the page allocator will give.
+
+Longer runs come from the machinery Linux uses for huge pages and contiguous device memory, which migrates whatever is in the way. [`alloc_contig_range()`](https://elixir.bootlin.com/linux/v6.12/source/mm/page_alloc.c#L6645) *is* exported to modules, and so is its counterpart that frees, but it takes a page-frame range the caller has already chosen; the wrapper that searches for a suitable range is not exported. So the endovisor can allocate long runs without a patch, at the price of doing its own search over the zones, and the interface is gated on a configuration option a distribution kernel normally has on.
+
+Either way the allocation **may sleep** while it reclaims, so it cannot be made from a context holding a spin lock, and it can fail under fragmentation where a host that owned its own allocator would have succeeded. That last point is a real difference and is a row in the [what differs](what-differs.md) table.
 
 Addressing is the [previous page](one-address-space.md)'s answer. On Linux the base is the direct map's, so there is nothing to map per grain and no page-table entry for the endovisor to write — at the price of the fail-stop property that page describes, since every frame on the machine is then addressable from every kernelet.
 
