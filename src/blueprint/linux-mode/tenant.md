@@ -33,19 +33,27 @@ System calls are the hard half, and there are four candidates.
 
 ## The four candidates, measured
 
-All four were measured on the same machine. The first three need no kernel change; the fourth is the patch.
+All four were measured. Three need no kernel change; the fourth is the patch. Two machines were used, and the tables below are kept apart so that nothing is compared across them.
+
+Measured in the **guest**, where a call Linux services itself costs 46 ns:
 
 | mechanism | per call | needs a patch | what happens |
 |---|---|---|---|
-| a call Linux services itself, for scale | 46 ns | — | the floor |
+| a call Linux services itself | 46 ns | — | the floor |
 | **Syscall User Dispatch** | **936 ns** | no | `SIGSYS` to a stub in the tenant, one call into the endovisor |
-| seccomp user notification | 5,721 ns | no | the caller parks; a supervisor *process* answers |
-| `ptrace(PTRACE_SYSEMU)` | 8,221 ns | no | a tracer process stops the tenant at each call |
 | **per-task hook** | **118 ns** | 20 lines | the entry path calls the kernelet directly |
 
-The 46 ns and the two bold rows were measured together in one guest with hardware virtualization; the other two were measured on the build host, which runs with speculative-execution mitigations and whose floor is 485 ns. The [evidence](evidence.md) page gives both runs and the exact conditions. The ratios are what matter and they are stable: **not patching costs about twenty bare system calls per tenant call; patching costs about two and a half.**
+Measured on the **build host**, where the floor is 485 ns, for the two candidates this chapter rejects:
 
-Two candidates fall away immediately. Both seccomp user notification and ptrace put the answer in a *different process*, so each tenant call becomes a pair of context switches to a supervisor and back. They are five to eight times more expensive than Syscall User Dispatch and structurally worse, since a supervisor process is one more thing to schedule, account and keep alive.
+| mechanism | per call | against Syscall User Dispatch on the same machine |
+|---|---|---|
+| Syscall User Dispatch | 1,887 ns | — |
+| seccomp user notification | 5,721 ns | 3.0× more |
+| `ptrace(PTRACE_SYSEMU)` | 8,221 ns | 4.4× more |
+
+The two machines are never compared against each other; each table stands on its own. What carries across both is the shape: **not patching costs about twenty bare system calls per tenant call; patching costs about two and a half.**
+
+Two candidates fall away immediately. Both seccomp user notification and ptrace put the answer in a *different process*, so each tenant call becomes a pair of context switches to a supervisor and back. On the same machine they cost three to four times what Syscall User Dispatch costs, and they are structurally worse, since a supervisor process is one more thing to schedule, account and keep alive.
 
 ## The no-patch path: Syscall User Dispatch
 
@@ -58,7 +66,7 @@ In Linux mode the sandbox is set up like this. The kernelet runtime starts the t
 3. the endovisor hands it to the kernelet, which services it and returns a result;
 4. the stub writes the result into the signal frame and returns; the tenant resumes.
 
-The cost is the 890 ns above: a signal delivered and returned from, plus one call into the module. The tenant's own kernel code — the kernel proper, doing the actual work of the system call — costs whatever it costs, on both sides of the comparison.
+The cost is the 936 ns in the table, which is 890 ns more than a call Linux services itself: a signal delivered and returned from, plus one call into the module. The tenant's own kernel code — the kernel proper, doing the actual work of the system call — costs whatever it costs, on both sides of the comparison.
 
 **What this path cannot do.** A signal is delivered on the tenant's own stack, so the stub needs a guaranteed stack, and a tenant that deliberately corrupts its own signal state breaks only itself. More seriously, the tenant can see the stub and the selector byte, because they are in its address space. That is acceptable: the tenant is *inside* the sandbox and is assumed hostile to its own kernelet only in the sense that any program is hostile to its own kernel. It cannot use the selector to escape, because turning dispatch off means its calls go to *Linux*, with the tenant's own unprivileged credentials, which is exactly the confinement the runtime set up with Linux's own facilities.
 
@@ -66,7 +74,7 @@ The cost is the 890 ns above: a signal delivered and returned from, plus one cal
 
 The patch adds one field to the task structure and one check at the top of the system-call path: if this task has a kernelet, call it and skip Linux's dispatch. With the module's setter it is twenty lines across four files, given in full on the [evidence](evidence.md) page.
 
-Measured at **118 ns** against 46 ns for a call Linux services itself, so the hook itself costs about 72 ns: a load, a branch that predicts not-taken for every ordinary task on the machine, and an indirect call. Against the 936 ns of the no-patch path that is **7.9× cheaper**.
+Measured at **118 ns** against 46 ns for a call Linux services itself, so reaching the kernelet and returning costs about 72 ns end to end. That covers the load and the branch on Linux's entry path, the indirect call, the toy servicer's own work and the return; the measurement does not separate them. Against the 936 ns of the no-patch path it is **7.9× cheaper**.
 
 **Would it be accepted upstream?** Honestly, probably not as written. It adds a per-task function pointer that lets out-of-tree code take over a task's system calls, and that is close to what Linux's maintainers have historically pushed back on. A version with a better chance would be framed as a generalization of Syscall User Dispatch — an in-kernel dispatch target rather than a signal — and would come with an in-tree user. The chapter's position is that the patch is *small, measurable and optional*: an operator who will not patch gets the 936 ns path and everything else in this chapter unchanged.
 
@@ -77,4 +85,4 @@ Worth saying plainly, because it is easy to lose: in both paths the kernelet is 
 ## What this page decides
 
 - **The tenant's processes are Linux processes, and the kernelet owns their memory through a fault handler on their virtual memory areas** (register D78). The alternative, a kernelet-built address space entered from a kernel thread, is not possible on Linux.
-- **The tenant's system calls reach the kernelet through Syscall User Dispatch where Linux is unmodified, and through a per-task hook where the twenty-line patch is accepted** (register D79). Seccomp user notification and ptrace are rejected on measurement: both put the answer in another process and cost five to eight times more.
+- **The tenant's system calls reach the kernelet through Syscall User Dispatch where Linux is unmodified, and through a per-task hook where the twenty-line patch is accepted** (register D79). Seccomp user notification and ptrace are rejected on measurement: both put the answer in another process and, on the same machine, cost three to four times what Syscall User Dispatch costs.

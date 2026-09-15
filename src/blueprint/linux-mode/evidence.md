@@ -78,7 +78,7 @@ Three paths, measured by one program in one run inside the guest, timed with the
 | Syscall User Dispatch, no kernel change | 936 ns | +890 ns |
 | the per-task hook, with the patch | 118 ns | +72 ns |
 
-**7.9× cheaper with the patch.** On the build host, where a bare call costs 485 ns, the two no-patch alternatives that this chapter rejects measured 5,721 ns for seccomp user notification and 8,221 ns for `ptrace(PTRACE_SYSEMU)`, against 1,887 ns for Syscall User Dispatch on the same machine — the same ordering, five to eight times worse, for the same structural reason.
+**7.9× cheaper with the patch.** The two no-patch alternatives this chapter rejects were measured on the build host, where a bare call costs 485 ns: 5,721 ns for seccomp user notification and 8,221 ns for `ptrace(PTRACE_SYSEMU)`, against 1,887 ns for Syscall User Dispatch on that same machine — 3.0× and 4.4× more, for the same structural reason. Numbers from the two machines are not compared with each other anywhere in this chapter.
 
 ## The optional patch, in full
 
