@@ -443,3 +443,36 @@ branches; that an unmodified Linux is ruled out; and that the most useful thing 
 port produced was not a Linux fact but a defect in our own interface, which specified
 a copy as an instruction while silently depending on the host's policy for a hardware
 feature.
+
+## Linux mode: closed
+
+Three reviewers in the roles the task named — a senior Linux kernel developer, a
+senior systems researcher, and a technical writer — each read the chapter six times.
+All three have confirmed that nothing substantive remains.
+
+What the rounds cost and bought, in one place:
+
+| round | what it found |
+|---|---|
+| 1 | a defective patch presented as a measurement; the wrong symbol asked of Linux; a hook that would override seccomp |
+| 2 | the private window the chapter claimed Asterinas keeps does not exist, so Linux mode was paying a cost it did not owe |
+| 3 | four taxonomy rows missing, all of which cut against the claim; dispatch cleared at every fork and exec; the legacy virtual system-call page below every interception point |
+| 4 | the kernel proper cannot dereference a tenant address at all, and the same call that protects a kernelet's text makes those frames unreturnable |
+| 5 | the alias answer, which made that constraint a lookup rather than a crossing |
+| 6 | one experiment case proved less than it claimed; the alias rule's map was cited wrongly and in the wrong direction; a callback is half the protocol |
+
+The chapter ends where the evidence puts it. Nothing found rules out a patched Linux
+built without type-checked indirect branches; an unmodified Linux is ruled out, because
+it cannot intercept a process tree and the patch is what makes the kernelet a boundary
+at all. Six experiments, one patch, four exports, one build option and one boot setting.
+
+The most useful thing the port produced is not a Linux fact. It is that our own API
+specifies a copy to user memory as an instruction while silently depending on the host's
+policy for a hardware feature, which no amount of reading the Asterinas source would
+have revealed. That is the argument for having done it.
+
+What is left open is listed rather than hidden: the address-to-frame map and what keeps
+it true, the tenant's process lifecycle, the per-CPU and preemption model, device
+addressing under an enforced translation unit, and whether a kernelet can be entered at
+all on a kernel built with type-checked indirect branches. The build order on the
+evidence page says which of those gate which.
