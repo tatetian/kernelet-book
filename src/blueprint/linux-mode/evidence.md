@@ -1,6 +1,6 @@
 # Evidence
 
-*What was built, what was run, and what is still argued rather than shown. Three experiments and one patch, all against Linux 6.12 built from kernel.org sources for this chapter. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
+*What was built, what was run, and what is still argued rather than shown. Four experiments and one patch, the first three against Linux 6.12 built from kernel.org sources for this chapter. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
 
 ## The setting
 
@@ -8,9 +8,9 @@ Two machines are involved and the difference matters.
 
 The **build host** is an Intel Xeon E3-1270 v6 running Linux 6.8 with the default speculative-execution mitigations. A bare system call there costs 485 ns. This is where the mechanisms that need no kernel change were measured, because they need no kernel change.
 
-The **guest** is Linux 6.12.0, configured from `tinyconfig` plus what a virtual machine and loadable modules need, booted under hardware virtualization on the same host. A bare system call there costs 46 ns, because the configuration carries none of the mitigations. This is where the patched paths were measured, and where all three yes-or-no experiments ran.
+The **guest** is Linux 6.12.0, configured from `tinyconfig` plus what a virtual machine and loadable modules need, booted under hardware virtualization on the same host. A bare system call there costs 44 ns, because the configuration carries none of the mitigations. This is where the patched paths were measured, and where every yes-or-no experiment ran.
 
-Absolute numbers from the two are not comparable and are never mixed below. Ratios are, and they agree.
+Absolute numbers from the two are not comparable and are never mixed below. Neither are ratios taken against them: a floor ten times lower flatters every ratio measured against it, so the guest's ratios are reported as the guest's and nothing is carried across.
 
 ## Experiment 1: two instances of one image, each with its own data
 
@@ -92,9 +92,22 @@ The hook measures below a bare `getppid` because the servicer returns a constant
 
 The two no-patch alternatives this chapter rejects were measured on the build host, where a bare call costs 485 ns: 5,721 ns for seccomp user notification and 8,221 ns for `ptrace(PTRACE_SYSEMU)`, against 1,887 ns for Syscall User Dispatch on that same machine — 3.0× and 4.4× more, for the same structural reason. Numbers from the two machines are not compared with each other anywhere in this chapter.
 
-## The optional patch, in full
+## Experiment 4: where the relocations land
 
-Twenty lines across four files, applied to v6.12 and booted for the measurement above:
+Not a kernel experiment: a Rust staticlib, built with the flags a kernelet image would use, examined with `readelf`. It answers the question Experiment 2 cannot, which is whether a *real* image's shared regions are free of addresses.
+
+| section | size | relocations inside |
+|---|---|---|
+| `.text` | 274,307 B | **0** |
+| `.rodata` | 64,914 B | **0** |
+| `.data.rel.ro` | 4,192 B | 181 |
+| `.got` | 1,200 B | 150 |
+
+*Shows:* 98 percent of the read-only material is address-free and therefore shareable, and everything that must be patched per instance is a few kilobytes. By type, the 331 relocations are 236 base-relative, 92 global-data and 3 absolute; all name symbols defined inside the image, so all three reduce to one addition, which is what keeps the host's relocation loop small. The shapes tested — tables of trait objects, of string slices and of function pointers — are the ones a kernel image is full of, but this is a synthetic library and not the kernelet image, which does not exist. **[unverified]** as a statement about the real image.
+
+## The patch, in full
+
+About twenty-five lines across four files, applied to v6.12 and booted for the measurement above:
 
 ```c
 /* include/linux/sched.h — in struct task_struct */

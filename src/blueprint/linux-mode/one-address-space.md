@@ -70,7 +70,7 @@ A C build of the same shapes adds one relocation in `.init_array`.
 
 The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. But it also corrects the first draft of this chapter, which had put `.init_array` in the shared region and had not mentioned `.data.rel.ro` or `.got` at all. Anything holding an address belongs on the private side, and the [build's audit](../design/builds-and-images.md#audit) now checks exactly that rather than checking which page-table entry the image lies under.
 
-One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_x` is not exported. That is hardening, not function, so the hard requirement stays at one exported symbol and the desirable requirement is two.
+One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is the second of the [three exports](evidence.md) a complete Linux mode wants rather than the one it cannot start without.
 
 ## Two things the scheme must survive
 

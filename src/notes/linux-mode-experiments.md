@@ -1,6 +1,6 @@
 # Linux-mode experiments
 
-*Working material behind [Linux as the host](../blueprint/linux-mode/index.md): the programs, the kernel configuration, and the unedited output. Two machines are used and their numbers are never mixed. The **build host** is an Intel Xeon E3-1270 v6 running Linux 6.8.0-100-generic with the distribution's default speculative-execution mitigations; a bare system call costs 485 ns there. The **guest** is Linux 6.12.0 built from kernel.org sources with `tinyconfig` plus what QEMU and loadable modules need, booted under hardware virtualization on that host; a bare system call costs 46 ns there. Measured 2026-09-15.*
+*Working material behind [Linux as the host](../blueprint/linux-mode/index.md): the programs, the kernel configuration, and the unedited output. Two machines are used and their numbers are never mixed. The **build host** is an Intel Xeon E3-1270 v6 running Linux 6.8.0-100-generic with the distribution's default speculative-execution mitigations; a bare system call costs 485 ns there. The **guest** is Linux 6.12.0 built from kernel.org sources with `tinyconfig` plus what QEMU and loadable modules need, booted under hardware virtualization on that host; a bare system call costs 44 ns there. Measured 2026-09-15; the guest figures below were re-measured after two defects in the patch were found in review, and are medians of five runs.*
 
 ## Building the guest kernel
 
@@ -30,6 +30,18 @@ qemu-system-x86_64 -enable-kvm -cpu host -nographic -no-reboot -m 1G -smp 2 \
   -kernel linux-6.12/arch/x86/boot/bzImage -initrd initrd.gz \
   -append "console=ttyS0 panic=1 quiet no_hash_pointers"
 ```
+
+## Experiment 1: two copies of one module
+
+`instdemo.c` declares one initialized global and one zeroed one, and prints their
+addresses. `instdemo2.c` is the same file with the module renamed. Guest output:
+
+```
+instdemo [instdemo ]: &counter=ffffffffa0002000 counter=101 &scratch=ffffffffa0002440 text=ffffffffa0006000
+instdemo2[instdemo2]: &counter=ffffffffa000c000 counter=101 &scratch=ffffffffa000c440 text=ffffffffa0010000
+```
+
+Both land in the module region, which begins at `0xffffffffa0000000`.
 
 ## Experiment 2: one physical text page, four instances
 
@@ -117,18 +129,6 @@ picdemo: RESULT PASS
 The stride printed as a large unsigned value because `vmap()` returned the four ranges
 out of order; the four base addresses above are what matter.
 
-## Experiment 1: two copies of one module
-
-`instdemo.c` declares one initialized global and one zeroed one, and prints their
-addresses. `instdemo2.c` is the same file with the module renamed. Guest output:
-
-```
-instdemo [instdemo ]: &counter=ffffffffa0002000 counter=101 &scratch=ffffffffa0002440 text=ffffffffa0006000
-instdemo2[instdemo2]: &counter=ffffffffa000c000 counter=101 &scratch=ffffffffa000c440 text=ffffffffa0010000
-```
-
-Both land in the module region, which begins at `0xffffffffa0000000`.
-
 ## Experiment 3: the cost of reaching the kernelet
 
 `guest_bench.c` measures three paths in one run, calibrating the cycle counter against
@@ -137,14 +137,26 @@ that no measurement makes a system call while the task's system calls are taken 
 `hookdemo.ko` is a toy endovisor: it takes the task over through the patched hook,
 answers `getppid` itself, and hands the task back after a fixed number of calls.
 
-Guest output:
+Guest output, five runs, in nanoseconds:
 
 ```
-tsc calibration: 3.792 cycles/ns
-plain syscall                           46 ns
-Syscall User Dispatch                  936 ns   (+890)
-patched per-task hook                  118 ns   (+72 vs plain, 7.9x cheaper than SUD)
+plain syscall           47  43  43  44  48     median  44
+Syscall User Dispatch  926 938 929 927 961     median 929   (+885)
+patched per-task hook   39  38  39  39  39     median  39   (24.0-24.9x cheaper than SUD)
 ```
+
+The hook measures *faster* than a plain `getppid` because `hookdemo.ko` returns a
+constant while `getppid` walks the task's parent pointer under a lock. The reading is
+not "a kernelet is free": it is that the hook adds nothing measurable to Linux's entry
+path.
+
+**The first version of this measurement was wrong, and the error was in the patch, not
+in the benchmark.** The hook returned `false` from `do_syscall_64`, which forces the
+slow interrupt-return path and skips the checks that would have allowed the fast one.
+That, not the hook, was most of the 118 ns first reported. The patch below is the
+corrected version, which falls through to the common exit instead. The corrected hook
+also tests `nr != -1`; without that test, attaching a kernelet would override a verdict
+seccomp, ptrace or syscall user dispatch had already reached for that task.
 
 Build-host output, for the two mechanisms this chapter rejects:
 
@@ -154,6 +166,35 @@ Syscall User Dispatch round trip          1887 ns   (+1405)
 seccomp user notification round trip      5721 ns   (+5231)
 ptrace PTRACE_SYSEMU round trip           8221 ns   (+7736)
 ```
+
+## Experiment 4: where relocations actually land
+
+The scheme requires that the **shared** part of the image carry no relocations, since one
+physical copy serves every instance. Tested with a Rust staticlib built exactly as a
+kernelet image would be (`-C relocation-model=pic -C code-model=small --target
+x86_64-unknown-none`), containing the shapes a kernel image is full of: a table of trait
+objects, a table of string slices, a table of function pointers, and address-free data.
+
+| section | size | relocations inside |
+|---|---|---|
+| `.text` | 274,307 B | **0** |
+| `.rodata` | 64,914 B | **0** |
+| `.data.rel.ro` | 4,192 B | 181 |
+| `.got` | 1,200 B | 150 |
+
+A C build of the same shapes also puts one relocation in `.init_array` and one in
+`.data`.
+
+So the scheme holds, and the region table in the chapter's first draft was wrong.
+Shareable: `.text` and `.rodata`, 339 KB of the 345 KB of read-only material, 98 percent.
+Per-instance: `.got`, `.data.rel.ro`, `.init_array`, `.data`, `.cpu_local`, `.bss` —
+about 5.4 KB of relocated material in this image. The first draft put `.init_array` in
+the shared region and did not mention `.data.rel.ro` or `.got` at all.
+
+A consequence: `.data.rel.ro` wants to be read-only *after* relocation, which on Linux
+needs `set_memory_ro`, also unexported. Nothing breaks without it, so it is the second of
+the three exports a complete Linux mode wants rather than the one it cannot start
+without.
 
 ## The failure that pinned down the requirement
 
@@ -177,19 +218,31 @@ what the caller asked for.
 Two changes to Linux that kernelet mode needs. Both were applied to v6.12 and
 built and booted for the measurements in RESULTS.md.
 
-1. Export set_memory_x(), so an out-of-tree module can make an executable alias
-   of a page it already owns. vmap() forcibly clears the execute bit and
+1. Export set_memory_rox(), so an out-of-tree module can make a read-execute
+   alias of pages it already owns. vmap() forcibly clears the execute bit and
    execmem_alloc() is not exported, so today there is no other way.
+
+   set_memory_rox() and not set_memory_x(): the latter clears only the no-execute
+   bit, leaving a mapping that is writable *and* executable, which is a W^X
+   violation on a kernel that enforces it everywhere else. set_memory_rox()
+   clears the write bit in the same call. Verified in the guest: the text page's
+   entry prints W=0 X=1 afterward.
 
 --- a/arch/x86/mm/pat/set_memory.c
 +++ b/arch/x86/mm/pat/set_memory.c
-@@ int set_memory_x(unsigned long addr, int numpages)
- 	return change_page_attr_clear(&addr, numpages, __pgprot(_PAGE_NX), 0);
+@@ int set_memory_rox(unsigned long addr, int numpages)
+ 	return change_page_attr_clear(&addr, numpages, clr, 0);
  }
-+EXPORT_SYMBOL_GPL(set_memory_x);
++EXPORT_SYMBOL_GPL(set_memory_rox);
+
+   A complete Linux mode needs at least three exports: this one, set_memory_ro()
+   for the relocated read-only data and for a read-only alias of the shared text,
+   and a way to allocate physically contiguous runs larger than the page
+   allocator's 4 MiB maximum, whose current implementation is not exported.
 
 2. A per-task system-call hook, so a kernelet can service its tenant's calls
-   without a trip through user space. 20 lines across four files.
+   without a trip through user space, and so that Linux's own system calls are
+   out of the tenant's reach. About 25 lines across four files.
 
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
@@ -207,12 +260,13 @@ built and booted for the measurements in RESULTS.md.
 @@ __visible noinstr bool do_syscall_64(struct pt_regs *regs, int nr)
  	instrumentation_begin();
 +#ifdef CONFIG_KERNELET_HOOK
-+	if (unlikely(current->kernelet_syscall)) {
++	/* nr == -1 means seccomp, ptrace or syscall user dispatch already
++	 * answered this call, so the kernelet must not be consulted and
++	 * regs->ax must stand. Falling through to the common exit below keeps
++	 * the fast return path; returning false here does not. */
++	if (unlikely(current->kernelet_syscall) && nr != -1) {
 +		regs->ax = current->kernelet_syscall(regs, nr);
-+		instrumentation_end();
-+		syscall_exit_to_user_mode(regs);
-+		return false;
-+	}
++	} else
 +#endif
  	if (!do_syscall_x64(regs, nr) && !do_syscall_x32(regs, nr) && nr != -1) {
 
@@ -245,6 +299,30 @@ built and booted for the measurements in RESULTS.md.
 +	depends on X86_64
 ```
 
+## What is still wrong with the patch
+
+Recorded rather than repaired, because each changes the size of the ask:
+
+- **Only `do_syscall_64` is hooked.** A kernel with 32-bit compatibility also enters
+  through `do_int80_emulation`, `do_fast_syscall_32` and `do_SYSENTER_32`. A tenant
+  could use any of them and have its call serviced by Linux, invisibly to the kernelet.
+  The test guest had compatibility compiled out, so this could not appear in the
+  measurement.
+- **No lifetime management.** `fork` copies the two fields into the child, nothing
+  clears them at exit, and nothing takes a reference on the module.
+- **The return-value convention is unstated.** Several negative values mean *restart
+  this call* to Linux's signal machinery.
+- **Upstream prospects.** Not as posted. A version with a chance would be framed as a
+  generalization of Syscall User Dispatch, with an in-kernel dispatch target instead of
+  a signal, an in-tree user, and the lifetime rules worked out.
+
+## Relocation types in the measured image
+
+The 331 relocations of section 6 are, by type: 236 `R_X86_64_RELATIVE`, 92
+`R_X86_64_GLOB_DAT` and 3 `R_X86_64_64`. All three name symbols defined inside the
+image, so all three reduce to *add the instance's base to a value stored in the image*,
+which is what makes the host's relocation loop a few dozen lines.
+
 ## Pitfalls met along the way, recorded so they are not met twice
 
 - A `SIGSYS` handler for Syscall User Dispatch must leave the selector byte reading
@@ -255,3 +333,9 @@ built and booted for the measurements in RESULTS.md.
 - Building modules against a kernel tree needs the full build, not `modules_prepare`:
   `Module.symvers` is produced by the main build and without it every symbol is
   reported undefined.
+- A hook in `do_syscall_64` must not return `false` to signal *handled*. That value
+  means *leave through the interrupt-return path*, which costs more than the hook
+  itself and hides the result being measured.
+- The test processor predates indirect-branch tracking. The eight-byte position-
+  independent toy has no landing instruction at its entry, so on a processor with the
+  feature enabled the same experiment would fault rather than pass.
