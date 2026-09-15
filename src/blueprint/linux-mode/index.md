@@ -65,6 +65,6 @@ Linux mode is not free, and this chapter does not pretend otherwise:
 - [One address space, many kernelets](one-address-space.md) — the position-independent scheme, why it is needed, what it costs, and the Design-chapter decisions it revises.
 - [The endovisor as a Linux module](endovisor.md) — loading a kernelet, its memory, its tasks, its interrupts.
 - [The tenant: user mode and system calls](tenant.md) — the hard part: what a fault handler can and cannot supply, four candidate mechanisms, and the measured choice.
-- [Five places where Linux does not behave as the design assumed](not-as-assumed.md) — termination, fault containment, tenant memory, the kernel stack, and per-CPU data, collected in one place.
+- [Five places where the host does not behave as the design assumed](not-as-assumed.md) — termination, fault containment, tenant memory, the kernel stack, and per-CPU data, collected in one place.
 - [What differs between the two hosts](what-differs.md) — the item-by-item tables, which are this chapter's central claim.
 - [Evidence](evidence.md) — what was built, what was measured, and what is still argued rather than shown.

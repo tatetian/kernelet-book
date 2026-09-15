@@ -213,6 +213,60 @@ needs `set_memory_ro`, also unexported. Nothing breaks without it, so it is one 
 four exports a complete Linux mode wants rather than one of the pair it cannot start
 without.
 
+## Experiment 6: can kernel-mode code touch a tenant address?
+
+`mod/smapdemo.c` plus `smap_test.c`. A user program holds a value in an ordinary
+variable and asks a module to read it four ways, each in a forked child so that a case
+which kills its task does not end the run. The module's ioctl runs on the caller's own
+task, so `current->mm` is the tenant's.
+
+The starting fact, checked in the Asterinas tree rather than in Linux: Asterinas does
+**not** enable supervisor-access prevention. `ostd/src/arch/x86/mod.rs` sets OSFXSR,
+OSXMMEXCPT, PAGE_GLOBAL, OSXSAVE and FSGSBASE in CR4, never SMAP, and nothing in the
+tree emits `stac`/`clac`. Linux enables it wherever the hardware has it.
+
+```
+smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
+  bare read        -> child KILLED by signal 9
+  module-bracketed -> OK
+  copy_from_user   -> OK
+  direct-map alias -> OK
+  bracketed, bad   -> child KILLED by signal 9
+```
+
+```
+smapdemo: SMAP ENABLED in CR4
+smapdemo: bare read of 00000000004c70f0 ...
+BUG: unable to handle page fault for address: 00000000004c70f0
+#PF: supervisor read access in kernel mode
+Oops: Oops: 0001 [#1] SMP
+smapdemo: bracketed read returned 5a5a5a5a5a5a5a5a
+smapdemo: copy_from_user returned 5a5a5a5a5a5a5a5a
+smapdemo: direct-map alias ffff88803ffdb0f0 returned 5a5a5a5a5a5a5a5a
+smapdemo: bracketed read of unmapped 000003fffffff000 ...
+BUG: unable to handle page fault for address: 000003fffffff000
+Oops: Oops: 0000 [#2] SMP
+```
+
+What each case settles:
+
+1. A bare kernel-mode read of a tenant address oopses on a page that is present,
+   mapped and writable. The constraint is not about faulting pages in.
+2. Code that is not Linux's own may bracket the access itself: `stac`/`clac` are
+   kernel-mode instructions and a kernelet runs in kernel mode. "Only host code may
+   touch user memory" is too strong.
+3. Linux's own copy routine works, as expected.
+4. The same value read through the supplier's own kernel alias works with **no
+   bracket**, because that alias is not marked as user memory. `get_user_pages_fast`
+   stands in here for the frame index a kernelet already keeps.
+5. A bracketed read of a *bad* address still oopses: the bracket gets past the SMAP
+   check, the fault reaches the fixup search, and a module's fixup would be found but
+   a kernelet is not a module. So bracketing does not deliver the *fallible* contract.
+
+Hence D82's shape: an addressing rule, not a crossing. The kernel proper reaches
+tenant memory through its own alias of the frames it granted; a crossing is needed
+only on a miss.
+
 ## The failure that pinned down the requirement
 
 Asking `vmap()` for executable memory and calling through it:
@@ -384,3 +438,28 @@ the endovisor loaded itself is untested.
 - The test processor predates indirect-branch tracking. The eight-byte position-
   independent toy has no landing instruction at its entry, so on a processor with the
   feature enabled the same experiment would fault rather than pass.
+
+## The module and the program of Experiment 6
+
+```c
+/* mod/smapdemo.c — four ways to read a tenant's memory, on the caller's task */
+	case SMAP_BARE:
+		v = *(volatile const unsigned long *)p;        /* no bracket  */
+	case SMAP_STAC:
+		stac(); v = *(volatile const unsigned long *)p; clac();
+	case SMAP_COPY:
+		copy_from_user(&v, p, sizeof(v));
+	case SMAP_ALIAS: {
+		struct page *pg;
+		get_user_pages_fast((unsigned long)p & PAGE_MASK, 1, 0, &pg);
+		v = *(volatile unsigned long *)((char *)page_address(pg) + off);
+		put_page(pg);
+	}
+	case SMAP_BAD:                                     /* unmapped user address */
+		stac(); v = *(volatile const unsigned long *)0x3fffffff000UL; clac();
+```
+
+The program runs each case in a forked child and reports whether the child returned or
+was killed, so that the two cases which oops do not end the run. The guest was booted
+with `-cpu host` on a Kaby Lake, so the hardware check is present and the module prints
+that it is enabled in CR4.

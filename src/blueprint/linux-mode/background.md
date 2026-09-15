@@ -51,7 +51,9 @@ A kernel thread may temporarily borrow a process's address space with `kthread_u
 
 A process's address space is a list of **virtual memory areas**. Each area covers a range of addresses and names the code that owns it. When the processor faults on an address, Linux finds the area and calls its owner's **fault handler** to supply the page.
 
-That handler is an ordinary function pointer a driver provides, through a structure called `vm_operations_struct`. This is a completely standard, unpatched Linux mechanism — it is how graphics drivers hand device memory to programs — and this chapter uses it to let a kernelet own its tenant's memory: the kernelet supplies the pages, out of its own grant, at the moment the tenant touches them.
+**One rule about user memory matters more than anything else on this page.** Since Broadwell and Zen, an x86-64 processor refuses a kernel-mode access to a page marked as user memory unless one flag in the processor's status register is set. Linux sets it for the length of a copy and clears it again, with the [`stac` and `clac`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/smap.h) instructions, which is why its own copy routines are the only code it allows to touch user memory. [`do_user_addr_fault()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/fault.c#L1257) checks the flag before it looks the address up in the process's areas and before it searches for a fixup, and reports a bad kernel pointer if it is clear. A kernel that enables this and one that does not are different environments for the same code, which is the subject of a [later page](not-as-assumed.md).
+
+That fault handler is an ordinary function pointer a driver provides, through a structure called `vm_operations_struct`. This is a completely standard, unpatched Linux mechanism — it is how graphics drivers hand device memory to programs — and this chapter uses it to let a kernelet own its tenant's memory: the kernelet supplies the pages, out of its own grant, at the moment the tenant touches them.
 
 ## How a system call reaches the kernel, and who may intercept it
 

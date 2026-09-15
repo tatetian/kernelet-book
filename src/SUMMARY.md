@@ -44,7 +44,7 @@
   - [One address space, many kernelets](blueprint/linux-mode/one-address-space.md)
   - [The endovisor as a Linux module](blueprint/linux-mode/endovisor.md)
   - [The tenant: user mode and system calls](blueprint/linux-mode/tenant.md)
-  - [Five places where Linux does not behave as the design assumed](blueprint/linux-mode/not-as-assumed.md)
+  - [Five places where the host does not behave as the design assumed](blueprint/linux-mode/not-as-assumed.md)
   - [What differs between the two hosts](blueprint/linux-mode/what-differs.md)
   - [Evidence](blueprint/linux-mode/evidence.md)
 

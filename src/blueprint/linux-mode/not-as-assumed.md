@@ -1,4 +1,4 @@
-# Five places where Linux does not behave as the design assumed
+# Five places where the host does not behave as the design assumed
 
 *Five things the Design chapter takes for granted do not hold when the host is Linux: an invariant, an assumption, a property the boundary owes, a mechanism, and one constraint that comes from the hardware rather than from Linux at all. They are collected here rather than scattered, because together they are the honest measure of what Linux mode costs. Four have an answer sketched below and not built; one has none. Each applies to a kernelet's own kernel threads as much as to a tenant's task, which is why they are not on the [previous page](tenant.md).*
 
