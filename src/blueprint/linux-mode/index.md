@@ -30,6 +30,20 @@ Linux can host kernelets. Three things had to be true. Two were tested on a kern
 
 One thing is needed unconditionally: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. Linux mode therefore needs `set_memory_rox` exported, which is a one-line change; a complete Linux mode needs at least three exports, listed on the [evidence](evidence.md) page with the failure each one fixes.
 
+## What this is not
+
+Running one kernel's code under another kernel is an old idea, and Linux mode is not new in that respect. It is worth saying which old idea it is closest to, and where it differs, so the contribution is not read as larger than it is.
+
+**Kernel code in a host kernel.** [Rump kernels](https://rumpkernel.org/) and the [Linux Kernel Library](https://github.com/lkl/linux) take a kernel's subsystems and run them somewhere else, usually a user-space process. The shape is the same: an operating system's code above a small, portable substrate. Two things differ. Those projects move code *out* of the kernel and reach user space; a kernelet stays in kernel mode, which is where its performance comes from. And their substrate is hand-written for each environment, whereas vOSTD is the same API the unmodified kernel already compiles against.
+
+**Sandboxes that service a tenant's system calls.** [gVisor](https://gvisor.dev/docs/architecture_guide/platforms/), [Gramine](https://gramineproject.io/) and User-Mode Linux all put a kernel personality between the tenant and the host, and gVisor's current platform uses precisely the interception mechanism this chapter measures as its no-patch path. The difference is where the personality runs: theirs in user mode, paying a ring transition per call, and a kernelet's in kernel mode, which is what the patched hook's measurement is about. [Dune](https://dl.acm.org/doi/10.5555/2387880.2387913) gives a user process privileged hardware features for the same reason and takes a different route to it.
+
+**Many instances of one text in one address space.** Shared libraries have had one text and per-process data since the 1980s; `dlmopen` gives several independent instances of one library inside one address space; thread-local storage and Linux's own per-CPU variables solve the same selection problem. All of them are prior art for the mechanism on the [next page but one](one-address-space.md). What is different there is only the selector: those mechanisms find the instance through a register or a table, and a kernelet finds it from the program counter, which costs nothing because the address computation was going to happen anyway.
+
+**Hardware that could separate kernelets.** Protection keys for supervisor pages would let one kernel address space hold regions that only the right instance may touch, and would restore something like the fail-stop property Linux mode gives up. Nothing in this chapter uses them; they are the obvious next thing to try, and are not tried here.
+
+So the contribution is not "kernel code can be virtualized" and not "one text can serve many instances". It is that the boundary can be an **API the kernel already compiles against**, that the host beneath it is replaceable, and that on Linux the replacement costs three exported symbols and one patch whose absence is a security problem rather than a slowdown.
+
 ## What it costs, stated once
 
 Linux mode is not free, and this chapter does not pretend otherwise:

@@ -218,3 +218,45 @@ and neither page depends on the addresses.
 mode's `user_run` return is not measured anywhere in the book. The zero-copy argument has
 not been rechecked against Linux's block layer. The metadata address-space budget is
 arithmetic, not measurement.
+
+## Linux mode: review round one
+
+Three reviewers read the new chapter in the roles the task asked for: a senior
+Linux kernel developer, a senior systems researcher, and a technical writer.
+Between them they found three defects in what had been shipped as verified work,
+and each one changed the text rather than only its wording.
+
+**The patch was wrong, and it under-sold the result.** The hook returned `false`
+from `do_syscall_64`, which forces the interrupt-return path and skips the checks
+that allow the fast one. That, not the hook, was most of the 118 ns first
+reported. Falling through to the common exit instead gives a median of 39 ns over
+five runs, so the gap against Syscall User Dispatch is about 24×, not 7.9×. A
+defective patch had been presented as a measurement.
+
+**`vmap` plus `set_memory_x` yields a writable, executable mapping.** The chapter
+had asked Linux to export exactly the wrong symbol. `set_memory_rox` clears both
+bits; the guest now prints `W=0 X=1` for the text page. And a complete Linux mode
+needs three exports, not one.
+
+**The hook overrode seccomp.** It did not test for the marker that says an earlier
+stage already answered the call.
+
+The researcher's finding was structural: the Design chapter's revision was
+half-done, with about fifteen stale references to the superseded window scheme and
+two invariants left stating properties that no longer held. The writer's was that
+a ratio had been formed by dividing one machine's numerator by another machine's
+denominator.
+
+What the round changed in the argument, not just in the facts: the patch is a
+**security** mechanism. Without it a tenant can store to the selector byte, or jump
+to the stub's own `syscall` instruction, and reach Linux directly. So on the
+no-patch path the kernelet is not the tenant's boundary, and the container's is.
+Leading with the speed number had made a boundary look like an optimization.
+
+Also recorded rather than repaired, because each is larger than an edit: invariant
+I7 does not hold on Linux; the tenant's process lifecycle and the virtual
+system-call page are not designed; the image must satisfy indirect-branch tracking
+and nothing in the design says how; and Linux's 16 KiB kernel stack is a
+thirty-two-fold mismatch against assumption A3.
+
+Next: re-run the three reviewers against the revised chapter.
