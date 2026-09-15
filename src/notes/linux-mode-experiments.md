@@ -162,8 +162,8 @@ Build-host output, for the two mechanisms this chapter rejects:
 
 ```
 plain syscall                              485 ns
-Syscall User Dispatch round trip          1887 ns   (+1405)
-seccomp user notification round trip      5721 ns   (+5231)
+Syscall User Dispatch round trip          1887 ns   (+1402)
+seccomp user notification round trip      5721 ns   (+5236)
 ptrace PTRACE_SYSEMU round trip           8221 ns   (+7736)
 ```
 

@@ -260,3 +260,53 @@ and nothing in the design says how; and Linux's 16 KiB kernel stack is a
 thirty-two-fold mismatch against assumption A3.
 
 Next: re-run the three reviewers against the revised chapter.
+
+## Linux mode: review rounds two and three
+
+Three reviewers read the chapter a second time. Two of them, independently,
+led with the same defect, and it was the chapter's own central claim about
+security.
+
+**The private window never existed.** The chapter said Asterinas maps only a
+kernelet's own grains, so that a miscomputed physical address faults, and that
+Linux gives that up. The Design chapter says the opposite in four places, and
+decision D58 rejects the private window outright, for the reason that it
+reserves address space in proportion to the machine's physical memory for every
+kernelet. Grain addressing is fail-stop on neither host. Correcting it removed a
+cost Linux mode did not owe and made the host-replaceability claim stronger,
+which is the opposite of what a reviewer usually does for you.
+
+**Four taxonomy rows were missing, and all four cut against the claim.** The
+kernel-mode fault path, where Linux's handler cannot find a kernelet's exception
+table, so a routine first-touch fault becomes an oops. Any other fault in
+kernelet code, which is an oops rather than a contained kill. The per-CPU
+replica selector, which is safe only under a preemption count no Linux honors,
+and which on the patched path runs on the tenant's unpinned task. And the
+segment-base registers, which Linux caches per task.
+
+The Linux kernel developer then found four facts that change what the chapter
+concludes, each verified in the tree before it was applied:
+
+- Linux clears Syscall User Dispatch in `copy_process()` and in
+  `begin_new_exec()`. On the unpatched path only a tenant's first thread is ever
+  intercepted. The no-patch path is not a weaker boundary; for a multi-process
+  tenant it is barely a boundary at all.
+- The legacy virtual system-call page is emulated inside the page-fault handler
+  and calls three system calls directly, below every interception point. Linux
+  mode carries an operator requirement to boot with it disabled.
+- `set_memory_rox` propagates its write-bit clear to the direct-map alias, so
+  the shared text protects itself — and cannot be handed back to Linux until the
+  permission is restored, which needs a second export.
+- A module cannot create a mapping in another task's address space, and pages
+  inserted as raw frame numbers lose the pinning interface and copy-on-write. So
+  tenant memory works only on the patched path, and the design's memory story is
+  narrower than it read.
+
+What the rounds changed in the argument: the chapter no longer says "Linux can
+host kernelets". It says nothing found rules Linux out, names three properties
+the boundary owes that Linux weakens, and enumerates what is unfinished rather
+than glossing it. The one place Linux mode might simply not work is now stated
+sharply: on a host whose own build enforces type-checked indirect branches, the
+first call into a kernelet traps, and sharing the text is not why.
+
+Next: whatever survives the third pass of the same three reviewers.
