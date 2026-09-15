@@ -64,9 +64,9 @@ So that was measured too, on a Rust image built with the flags a kernelet image 
 | `.text` | 274,307 B | **0** | yes |
 | `.rodata` | 64,914 B | **0** | yes |
 | `.data.rel.ro` | 4,192 B | 181 | no |
-| `.got` | 1,200 B | 150 | no |
+| `.got` | 952 B | 119 | no |
 
-A C build of the same shapes adds one relocation in `.init_array`.
+All 300 are of one type, the base-relative fixup, so the host's relocation loop has a single case. A C build of the same shapes adds one relocation in `.init_array`.
 
 The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. But it also corrects the first draft of this chapter, which had put `.init_array` in the shared region and had not mentioned `.data.rel.ro` or `.got` at all. Anything holding an address belongs on the private side, and the [build's audit](../design/builds-and-images.md#audit) now checks exactly that rather than checking which page-table entry the image lies under.
 
@@ -74,7 +74,7 @@ One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its
 
 ## Two things the scheme must survive
 
-**Indirect-branch tracking.** Recent x86-64 processors refuse an indirect call whose target is not a designated landing instruction, and Linux enables this for its own code and rewrites module call sites into a stricter, per-signature form. The kernelet design is built on indirect calls: the service table vOSTD calls down through, and the entry table the host calls up through. So a kernelet image must emit the landing instruction at every indirect-branch target, and on a kernel that rewrites them the endovisor must either perform the same rewrite as it relocates or accept the weaker hardware-only check. The toy on the [evidence](evidence.md) page passes only because the test processor predates the feature. Nothing else in this chapter or in the [build audit](../design/builds-and-images.md#audit) addresses it, and it is recorded as an open item (assumption A19). **[unverified]**
+**Indirect-branch tracking.** Recent x86-64 processors refuse an indirect call whose target is not a designated landing instruction, and Linux both enables this for its own code and rewrites indirect call sites into a stricter, per-signature form. The kernelet design is built on indirect calls: the service table vOSTD calls down through, and the entry table the host calls up through. So the question cannot be avoided, and it was [tested](evidence.md): the Rust compiler emits the landing instruction on request, at the cost of an unstable flag and of rebuilding the standard library with it. That is half an answer. The other half — whether a kernel that rewrites call sites can rewrite text that every instance of a kind shares — is untested, and is assumption A19. The toy on the evidence page passes only because the test processor predates the feature, and the [build audit](../design/builds-and-images.md#audit) gains a check for the markers. **[unverified]**
 
 **Translation-buffer pressure.** Sharing the text physically does not share it in the translation buffer. On Linux the image is assembled with `vmap()`, which maps at the smallest page size only, so each instance holds its own small-page translations for text it shares with every sibling. The Design chapter's 2 MiB mapping of the image is therefore an Asterinas-mode property, not a property of the scheme. What this does to the density argument's per-instance overhead is not re-derived here. **[unverified]**
 

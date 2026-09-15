@@ -175,12 +175,29 @@ kernelet image would be (`-C relocation-model=pic -C code-model=small --target
 x86_64-unknown-none`), containing the shapes a kernel image is full of: a table of trait
 objects, a table of string slices, a table of function pointers, and address-free data.
 
+Linked as a position-independent executable, which is what a kernelet image is:
+
+```
+rustc --crate-type=staticlib -C relocation-model=pic -C code-model=small \
+      -C opt-level=2 --target x86_64-unknown-none -o libt.a t.rs
+ld -pie --no-dynamic-linker -z norelro -e entry --whole-archive libt.a -o t.elf
+```
+
+`e_type` is `DYN`, there is no `DT_NEEDED`, and `.dynsym` holds only the null entry.
+
 | section | size | relocations inside |
 |---|---|---|
 | `.text` | 274,307 B | **0** |
 | `.rodata` | 64,914 B | **0** |
 | `.data.rel.ro` | 4,192 B | 181 |
-| `.got` | 1,200 B | 150 |
+| `.got` | 952 B | 119 |
+| `.got.plt` | 24 B | **0** |
+
+All 300 are `R_X86_64_RELATIVE`. An earlier version of this measurement linked the same
+objects with `-shared` and saw 331 relocations of three types, including 92
+`R_X86_64_GLOB_DAT` and 3 `R_X86_64_64`. Those are an artifact of the shared-object link:
+with everything defined inside the image and linked `-pie`, every reference resolves
+internally and reduces to "add the load base".
 
 A C build of the same shapes also puts one relocation in `.init_array` and one in
 `.data`.
@@ -188,7 +205,7 @@ A C build of the same shapes also puts one relocation in `.init_array` and one i
 So the scheme holds, and the region table in the chapter's first draft was wrong.
 Shareable: `.text` and `.rodata`, 339 KB of the 345 KB of read-only material, 98 percent.
 Per-instance: `.got`, `.data.rel.ro`, `.init_array`, `.data`, `.cpu_local`, `.bss` —
-about 5.4 KB of relocated material in this image. The first draft put `.init_array` in
+about 5.2 KB of relocated material in this image. The first draft put `.init_array` in
 the shared region and did not mention `.data.rel.ro` or `.got` at all.
 
 A consequence: `.data.rel.ro` wants to be read-only *after* relocation, which on Linux
@@ -316,12 +333,23 @@ Recorded rather than repaired, because each changes the size of the ask:
   generalization of Syscall User Dispatch, with an in-kernel dispatch target instead of
   a signal, an in-tree user, and the lifetime rules worked out.
 
-## Relocation types in the measured image
+## Experiment 5: can a kernelet image satisfy indirect-branch tracking?
 
-The 331 relocations of section 6 are, by type: 236 `R_X86_64_RELATIVE`, 92
-`R_X86_64_GLOB_DAT` and 3 `R_X86_64_64`. All three name symbols defined inside the
-image, so all three reduce to *add the instance's base to a value stored in the image*,
-which is what makes the host's relocation loop a few dozen lines.
+Half of it, and the half that can is a compiler flag.
+
+- In the default build, the crate's own functions carry no `endbr64`. The 35 in the
+  binary come from the prebuilt `core` shipped for the target.
+- With `-Z cf-protection=branch`, `entry` begins with `f3 0f 1e fa`, which is `endbr64`.
+  So the compiler emits the markers on demand, at the cost of an unstable flag.
+- Neither build emits a `.note.gnu.property` declaring the property, because the
+  prebuilt `core` does not. A kernelet image would need `core` rebuilt with the same
+  flag for the whole image to be marked.
+
+What this does **not** settle, and why A19 stays open: whether a kernel that rewrites
+indirect call sites into a stricter per-signature form can do so in text that every
+instance of a kind shares. The rewrite happens once, at load, to one physical copy,
+which is consistent with sharing; that the kernel's rewriter can be pointed at an image
+the endovisor loaded itself is untested.
 
 ## Pitfalls met along the way, recorded so they are not met twice
 

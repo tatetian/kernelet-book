@@ -1,6 +1,6 @@
 # The endovisor as a Linux module
 
-*What the endovisor becomes when the host kernel is Linux: how a kernelet is loaded, where its memory comes from, what its tasks are, and how it is interrupted. Everything on this page runs in an ordinary loadable module and needs no change to Linux except the one exported symbol the [background](background.md) page named.*
+*What the endovisor becomes when the host kernel is Linux: how a kernelet is loaded, where its memory comes from, what its tasks are, and how it is interrupted. Everything on this page runs in an ordinary loadable module, and the only changes it needs of Linux are the exported symbols the [background](background.md) page named.*
 
 The endovisor is defined by what it does, not by where it lives: it creates, schedules, destroys and mediates kernelets ([Terminology](../overview/terminology.md)). In Asterinas mode it is a module of the host kernel crate. In Linux mode it is a Linux loadable module, written in Rust or C, exposing the same `/dev/kernelet` interface to the kernelet runtime that the [endovisor page](../design/endovisor.md) specifies.
 
@@ -55,4 +55,4 @@ The [zero-copy design](../design/zero-copy-io.md) carries over in shape and not 
 
 ## What a tenant sees
 
-The same sandbox: a full Linux user space served by a kernelet. Nothing on this page is visible to it. What *is* visible to the operator is that the machine is running their own kernel, with one module loaded and, if they accept the optional patch, twenty lines changed.
+The same sandbox: a full Linux user space served by a kernelet. Nothing on this page is visible to it. What *is* visible to the operator is that the machine is running their own kernel, with one module loaded, three symbols exported, and — if they take the system-call patch that [the next page](tenant.md) argues for — about twenty-five lines changed in the entry path.

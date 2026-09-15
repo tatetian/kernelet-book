@@ -101,9 +101,19 @@ Not a kernel experiment: a Rust staticlib, built with the flags a kernelet image
 | `.text` | 274,307 B | **0** |
 | `.rodata` | 64,914 B | **0** |
 | `.data.rel.ro` | 4,192 B | 181 |
-| `.got` | 1,200 B | 150 |
+| `.got` | 952 B | 119 |
 
-*Shows:* 98 percent of the read-only material is address-free and therefore shareable, and everything that must be patched per instance is a few kilobytes. By type, the 331 relocations are 236 base-relative, 92 global-data and 3 absolute; all name symbols defined inside the image, so all three reduce to one addition, which is what keeps the host's relocation loop small. The shapes tested — tables of trait objects, of string slices and of function pointers — are the ones a kernel image is full of, but this is a synthetic library and not the kernelet image, which does not exist. **[unverified]** as a statement about the real image.
+The library is linked the way a kernelet image is: a position-independent executable, with no dynamic linker, no imports, and every symbol defined inside it.
+
+*Shows:* 98 percent of the read-only material is address-free and therefore shareable, and everything that must be patched per instance is a few kilobytes. All 300 relocations are of a single type, the base-relative fixup, so the host's relocation loop has one case rather than three — which is why the [build audit](../design/builds-and-images.md#audit) can require that type and refuse the rest. The shapes tested — tables of trait objects, of string slices and of function pointers — are the ones a kernel image is full of, but this is a synthetic library and not the kernelet image, which does not exist. **[unverified]** as a statement about the real image.
+
+## Experiment 5: indirect-branch markers
+
+The design is indirect calls, so the image must be acceptable to a processor that checks them. Two things were tried on the same library as Experiment 4.
+
+In the ordinary build, the library's own functions carry no landing marker; the 35 in the binary come from the prebuilt standard library. Compiled with the unstable flag that asks for them, the entry function begins with the four bytes that are the marker. Neither build declares the property in the object file, because the prebuilt standard library does not, so a kernelet image would need the standard library rebuilt with the same flag.
+
+*Shows:* the compiler half of the problem has an answer, and it costs an unstable flag and a rebuilt standard library. The kernel half does not: whether a host that rewrites indirect call sites into a stricter per-signature form can rewrite text shared by every instance of a kind is untested, and is assumption A19. **[unverified]**
 
 ## The patch, in full
 
@@ -148,7 +158,7 @@ Checks 1 and 4 replace the audit's earlier requirement that the image be a fixed
 Stated plainly, because the chapter is a design and not a system.
 
 - **No kernelet has run on either host.** Nothing of the kernelet design is built. What ran here is the mechanism each argument turns on, in isolation.
-- **The gate experiment ran on a processor without indirect-branch tracking.** Newer processors, with the same kernel, refuse an indirect call whose target is not marked as a legal landing point. The toy's eight bytes carry no such marker, so on such a machine it would fault. This matters far beyond the toy: the whole design is indirect calls, through the service table and the entry table, so a kernelet image must be built to emit those markers, and on a kernel that rewrites them into a checked form it must match that scheme. Nothing in this chapter or the build audit addresses it. **[unverified]**
+- **The gate experiment ran on a processor without indirect-branch tracking**, so the toy's unmarked eight bytes were accepted where a newer machine would fault. Experiment 5 below settles the compiler half of that question and leaves the kernel half open. **[unverified]**
 - **The tenant's process lifecycle is not designed**, as the [tenant page](tenant.md) says. Nor is the handling of the virtual system-call page.
 - **Invariant I7 does not hold on Linux.** A task in kernel mode cannot be forcibly stopped.
 - **The two hosts' system-call costs have not been compared.** Linux mode's path is measured; Asterinas mode's `user_run` return is not measured anywhere in the book. Until it is, "which host is faster per system call" has no answer. **[unverified]**
