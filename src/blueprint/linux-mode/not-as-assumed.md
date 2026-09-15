@@ -30,7 +30,7 @@ Since Broadwell and Zen, x86-64 processors refuse a kernel-mode access to a page
 
 **Asterinas does not enable the check and Linux does.** The framework sets five bits in the control register and not that one, and nothing in its tree emits the bracketing instructions. So the kernel proper's copy routines work on one host and fault on the other, and neither the API nor its [taxonomy](../design/virtualizing-ostd/index.md) says a word about it. That is a host property leaking through an interface that claims to be host-independent, and it is the clearest thing porting found.
 
-The experiment ran six cases ([evidence](evidence.md)), and two of them decide the rule.
+The experiment ran six cases ([evidence](evidence.md)), and three of them decide the rule.
 
 Reading the same value through **the supplier's own kernel alias needed no bracket at all**. The frame is the kernelet's, it reaches it through the linear map as it reaches every other frame it owns, and that alias is not marked as user memory, so there is nothing to refuse. And a **bracketed** read of a **bad** address ended the task anyway, while the same read with a fixup entry recovered — which works there only because the code is in a module and Linux searches the loaded modules' tables. A kernelet is not a module and cannot become one without giving up the shared text.
 
@@ -48,7 +48,14 @@ Two things about that map are open, and the second is the more serious.
 
 **A stale entry is worse than a miss.** Linux tears a mapping down without consulting the handler that supplied it, which [the previous page](tenant.md) records and calls a design this chapter does not have. Under the alias rule that gap stops being untidy and becomes unsound: an entry that outlives its mapping does not miss, it **resolves**. A miss is safe — it faults, it costs a crossing, the design notices. A stale hit is silent: the kernel proper writes data the tenant will never see, or reads a frame that has gone back to the host and on to another kernelet. The alias rule is what makes that reachable, because before it the hardware would have refused the access outright.
 
-Linux's answer to exactly this problem is exported, and it is what its own virtual-machine monitor uses to keep shadow page tables coherent with a host address space: register for the callback that announces a range is being invalidated, and drop the entries it names. Whether that callback's context rules fit what vOSTD must do inside them is not worked out here. **Closing this is a precondition of the rule, not a detail of it.** **[unverified]**
+Linux's answer to exactly this problem is exported, and it is what its own virtual-machine monitor uses to keep shadow page tables coherent with a host address space. A callback alone is not enough, and the difference matters to whoever builds this: being told that a range is going away does not stop a copy already in flight, where one processor is between the lookup and the write through the alias while another tears the mapping down. So the mechanism is not the bare callback but the **sequence protocol** Linux ships with it — take the sequence number before the lookup, copy, re-check before committing, retry if it moved. All three calls it needs are exported.
+
+Two constraints come with it, and both belong with the rule rather than in a footnote:
+
+- The notifier machinery is a build option that nothing selects on its own; a kernel with virtualization support has it, and Linux mode joins the virtual system-call page in requiring it of the build rather than assuming it.
+- The invalidation callback may be invoked in a context where it **must not sleep**, and part of the machinery runs under Linux's own page-table locks. So whatever lock protects the address-to-frame map has to be a non-sleeping one, and no crossing into the kernelet may happen while it is held — which constrains the lookup path too, since it takes the same lock.
+
+**Closing this is a precondition of the rule, not a detail of it.** **[unverified]**
 
 One consequence for the interface, in the rule's favor. A Linux-compatible kernel must perform an *atomic* compare-and-exchange on tenant memory, because that is what a futex is; a copy routine cannot express it, and Linux keeps separate internal primitives for it. Through the alias it is an ordinary atomic on a kernel address, so the problem does not arise.
 
