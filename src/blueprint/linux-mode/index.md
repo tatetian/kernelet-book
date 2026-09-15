@@ -52,7 +52,7 @@ So the contribution is not "kernel code can be virtualized" and not "one text ca
 
 Linux mode is not free, and this chapter does not pretend otherwise:
 
-- **Exports, a patch, and a boot setting.** A pair of exported symbols before anything runs, two more for a complete module, a kernel command line that turns off the legacy virtual system-call page, and the system-call hook, which is required rather than optional.
+- **Exports, a patch, a build option, and a boot setting.** A pair of exported symbols before anything runs and two more for a complete module; a kernel built with the notifier machinery the alias rule needs, which any kernel with virtualization support already has; a kernel command line that turns off the legacy virtual system-call page; and the system-call hook, which is required rather than optional.
 - **A class of kernel that may be excluded outright.** Where the host's own build enforces type-checked indirect branches, a kernelet's entry functions must carry preambles the host's compiler would accept, and nothing in this design produces them. The first call into a kernelet would trap. This is assumption A19 and it should be tested before anything else is built.
 - **Linux's own maturity is now in the trusted base.** The operator keeps their kernel, and keeps its bugs. Kernelets stop the tenant's *kernel* from being the attack surface; they do not make Linux smaller.
 - **The three weakened properties above**, which are the reason the two modes are a choice rather than a ladder.

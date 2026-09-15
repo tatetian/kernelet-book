@@ -139,8 +139,7 @@ smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
   copy_from_user   -> OK
   direct-map alias -> OK
   bracketed, bad   -> child KILLED by signal 9
-  bad, with fixup  -> OK
-smapdemo: recovered from the fault, fail=-14
+  bad, with fixup  -> OK          (smapdemo: recovered from the fault, fail=-14)
 ```
 
 and, in the kernel's log:
