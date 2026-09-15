@@ -1,6 +1,6 @@
 # One address space, many kernelets
 
-*The mechanism that makes Linux mode possible. The Design chapter gives every kernelet its own kernel page table; Linux cannot. This page shows how to put every kernelet in one shared kernel address space instead, what that costs the trusted base, and what protection it gives up. The scheme is better in Asterinas mode too, so this page also replaces a Design-chapter decision.*
+*The mechanism that makes Linux mode possible. The Design chapter gives every kernelet its own kernel page table; Linux cannot. This page shows how to put every kernelet in one shared kernel address space instead, what that costs the trusted base, and what protection it gives up. The scheme is better in Asterinas mode too, so this page also revises two Design-chapter decisions and withdraws two assumptions.*
 
 ## The problem, stated exactly
 
@@ -68,7 +68,7 @@ So that was measured too, on a Rust image built with the flags a kernelet image 
 
 All 300 are of one type, the base-relative fixup, so the host's relocation loop has a single case. A C build of the same shapes adds one relocation in `.init_array`.
 
-The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. But it also corrects the first draft of this chapter, which had put `.init_array` in the shared region and had not mentioned `.data.rel.ro` or `.got` at all. Anything holding an address belongs on the private side, and the [build's audit](../design/builds-and-images.md#audit) now checks exactly that rather than checking which page-table entry the image lies under.
+The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. The rule it establishes is simple and is what the [build's audit](../design/builds-and-images.md#audit) now checks: anything holding an address belongs on the private side, whatever section it is in. `.init_array` and `.got` are easy to overlook, and they hold addresses.
 
 One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is the second of the [three exports](evidence.md) a complete Linux mode wants, rather than the one it cannot start without.
 
@@ -80,36 +80,32 @@ One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its
 
 ## Addressing physical memory
 
-The image is only part of a kernelet. The larger part is the memory it has been granted, and vOSTD must turn a physical address into something it can dereference. In OSTD today that is one addition, `paddr_to_vaddr(pa) = pa + LINEAR_MAPPING_BASE_VADDR`, and the Design chapter preserves the shape by giving each kernelet a private window at a fixed address.
+The image is only part of a kernelet. The larger part is the memory it has been granted, and vOSTD must turn a physical address into something it can dereference. In OSTD today that is one addition, `paddr_to_vaddr(pa) = pa + LINEAR_MAPPING_BASE_VADDR`, where the base is a compile-time constant.
 
-Under one shared address space the base can no longer be a compile-time constant, so the host supplies it at creation and the instance holds it in its own data. `paddr_to_vaddr` becomes a load from a line that is always hot, then an add. **The kernelet's code is the same either way**, which is what lets the two hosts differ underneath it.
+Under one shared address space it cannot be, so the host supplies it at creation in [`BootArgs`](../design/kernelet-api-control.md) and the instance holds it in its own data. `paddr_to_vaddr` becomes a load from a line that is always hot, then an add. **The kernelet's code is the same either way**, which is what lets the two hosts differ underneath it: the base is Asterinas's linear map on one and Linux's direct map on the other, and nothing above `paddr_to_vaddr` knows which.
 
-What the base points at is the interesting question, and the two hosts answer it differently.
+What that base points at is the question a reader expects to divide the two hosts, and it does not.
 
-## The fail-stop property, and what it costs to keep
+## Where a miscomputed physical address lands
 
-In the Design chapter the base points at a **private window that maps only this kernelet's grains**. That buys something beyond convenience: a physical address vOSTD miscomputes lands on an unmapped page and stops the kernelet, instead of quietly writing another tenant's memory. The same page keeps that property for frame metadata and says it is worth keeping.
+The Design chapter already made this choice, and made it the same way on both hosts. Decision D58 addresses granted frames through **the host's own linear map**, and [Memory](../design/virtualizing-ostd/memory.md) is explicit that a grain is mapped nowhere else and costs the host no page-table work per grain. A per-instance physical window was considered there and rejected, because it reserves address space in proportion to the machine's physical memory for every kernelet. [Boundaries and trust](../design/principles.md) draws the consequence in invariant I2: vOSTD is trusted with no second layer, and a wrong physical address is a write to whatever lies there.
 
-The first draft of this chapter gave it up for grains without doing the arithmetic. Here it is.
+So **grain addressing is not a place where the hosts differ.** It is fail-stop on neither. What Asterinas retains is the *option*: a host that owns its own frame allocator could confine a kernelet's grains to a bounded slice and map only that, at the address-space cost D58 declined to pay. Linux does not offer the option at all, because its page allocator has no supported way to confine allocations to a physical range. That is a difference in what could be built later, not in what either host does today.
 
-A private window must span the physical range the kernelet can be granted. If the host confines a kernelet's grains to a bounded slice of physical memory, the window reserves that slice's size in address space:
+## Frame metadata, which is the check that is left
 
-| the kernelet's physical slice | address space per kernelet | kernelets in 32 TB (4-level vmalloc) | in 12.5 PB (5-level) |
+One hardware check does survive, and it is the one invariant I3 now rests on. Each kernelet has its own **metadata region**, holding a 64-byte record for each frame it has been granted, found by the same arithmetic OSTD uses, over a per-instance base. The region is **sparse**: only the pages covering frames this kernelet actually holds are mapped. A metadata address computed from a frame the kernelet was never granted therefore meets an unmapped page and stops it.
+
+Sparseness is what makes this affordable, because the region's address span is fixed by the physical span the kernelet's grains may touch — one byte of address for every sixty-four of physical memory.
+
+| physical span a kernelet's grains may touch | metadata address space per kernelet | kernelets in 32 TB (4-level vmalloc) | in 12.5 PB (5-level) |
 |---|---|---|---|
-| a 2 GiB slice | 2 GiB | about 16,000 | far more than wanted |
-| a whole 1 TiB machine | 1 TiB | 32 | unusable |
-| metadata window only, 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
+| a bounded 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
+| a whole 1 TiB machine | 16 GiB | about 2,000 | about 800,000 |
 
-So the property is affordable — at 2 GiB per kernelet, sixteen thousand of them fit in four-level paging's vmalloc area — **provided the host can confine each kernelet's grains to a bounded physical slice**. That is the condition, and it is where the two hosts part company.
+Read the second row for Linux, since Linux mode cannot bound the slice: **on a 1 TiB machine with four-level paging, the metadata regions alone cap a host at a few thousand kernelets.** Five-level paging removes the cap. This is the sharpest number in the chapter and it is arithmetic over the region sizes in Linux's documentation, not a measurement. **[unverified]**
 
-- **Asterinas mode keeps the window.** The host owns its own frame allocator and can hand a kernelet grains out of a reserved slice, so it does, and the fail-stop property survives. The base in `BootArgs` points at the private window.
-- **Linux mode uses the direct map.** Linux's page allocator offers no supported way to confine allocations to a physical slice, short of reserving memory at boot with the contiguous allocator and managing it ourselves, which is a larger design than this chapter wants to propose. So on Linux the base is `page_offset_base`, every frame on the machine is addressable, and **the fail-stop property is lost**.
-
-This is a real difference between the hosts, it is the only one that touches a security property, and it is a row in the [what differs](what-differs.md) table rather than a footnote.
-
-## Frame metadata
-
-OSTD keeps a 64-byte record for every frame, found by arithmetic on the frame's physical address. Each kernelet gets its own metadata region at a base the loader chooses and writes into `BootArgs`, holding records only for its own frames. The formula stays OSTD's, with a per-instance base instead of a constant, and the region is sparse, so a miscomputed metadata address still meets an unmapped page and stops the kernelet. This holds on **both** hosts: the region is small enough (one byte per sixty-four of physical span) that even a machine-wide span costs 16 GiB of address space per kernelet, and a bounded slice costs 32 MiB.
+And the region is harder to build on Linux than the [endovisor page](endovisor.md)'s one-line description suggests. `vmap()` maps a fixed array of pages densely at an address of its own choosing: it cannot leave holes, and it cannot be extended when the kernelet is granted more memory, because re-mapping elsewhere would invalidate every metadata pointer the kernelet holds. A sparse, growable kernel range needs a reserved address range that is populated later — `get_vm_area` followed by `apply_to_page_range`. The second of those is exported and the first is not, so **keeping I3's remaining check on Linux costs a fourth exported symbol.** Without it the region must be dense, which on a machine-wide span means gigabytes of real memory per kernelet, and that is not a trade anyone would take.
 
 ## What it costs, honestly
 
@@ -117,9 +113,9 @@ OSTD keeps a 64-byte record for every frame, found by arithmetic on the frame's 
 
 **Kernelets become mutually addressable.** In the Design chapter a stray kernel pointer in kernelet A that happened to name kernelet B's image would fault, because B's image is not in A's page table. Under one address space it would not.
 
-How much that matters depends on which host. A kernelet could always reach any frame *through the linear map*, so on Linux, where the base is the direct map, the change adds little to a reach that was already total. In Asterinas mode, where the window stays private, the shared image is now the one part of another kernelet that a stray pointer can name. Either way the security argument rests, as [Boundaries and trust](../design/principles.md) now says explicitly, on the kernel proper being safe Rust and vOSTD being correct.
+It adds less than it appears to, on either host. A kernelet could already reach any frame through the linear map, so what is new is only that another instance's *image* can be named as well as its frames. The security argument rests, as [Boundaries and trust](../design/principles.md) now says explicitly, on the kernel proper being safe Rust and vOSTD being correct.
 
-**One physical copy of the text is one physical copy to corrupt.** This is the cost the first draft missed. The text of a kind is now a single set of frames that every instance of that kind is executing. On Linux, where every kernelet can address every frame, a sufficiently wrong write from one tenant's kernel rewrites the code all of its neighbors are running. The mitigation is to keep the text out of any writable alias — it is mapped read-only in the instances' ranges, and on Asterinas the host can map it read-only in the linear map as well; on Linux that needs `set_memory_ro`, the second unexported symbol. Until then it is a real and stated exposure, and it is strictly worse than mutual addressability, which is why it is listed second.
+**One physical copy of the text is one physical copy to corrupt.** The text of a kind is now a single set of frames that every instance of that kind is executing. On Linux, where every kernelet can address every frame, a sufficiently wrong write from one tenant's kernel rewrites the code all of its neighbors are running. The mitigation is to keep the text out of any writable alias — it is mapped read-only in the instances' ranges, and the host can map it read-only in the linear map as well; on Linux that needs `set_memory_ro`, the second of the [symbols](evidence.md) that are not exported. Until then it is a real and stated exposure, and it is strictly worse than mutual addressability, which is why it is listed second.
 
 **The per-instance footprint has to be re-derived.** Assumption A4 puts a kernelet's fixed cost at about 128 KiB, and that figure was taken under the old scheme, where the image was one shared read-only mapping per kind and the per-instance cost was page tables and metadata. Under this scheme the per-instance cost is the writable segment plus the few kilobytes of relocated read-only data plus, on Linux, one small-page translation per page of image. The direction is favorable — no per-kernelet top-level page-table entries at all — but the number is not recomputed here, and A4 is marked as resting on the superseded scheme. **[unverified]**
 
@@ -130,9 +126,11 @@ How much that matters depends on which host. A kernelet could always reach any f
 This scheme is better in Asterinas mode too. It removes two top-level page-table entries per kernelet and everything beneath them, removes the rule that the image's mappings cannot use global page-table entries and the translation refill that rule costs after every address-space switch, and removes the assumption that the machine's physical memory fits in a 512 GiB window. The Design chapter is changed accordingly, in this branch:
 
 - **D3** becomes: the image is position-independent, and the loader places each instance at an offset of its choosing in the shared kernel address space; the shared regions carry no relocations, which the audit checks.
-- **D58** becomes: `paddr_to_vaddr` adds a base the host supplies — a private window on Asterinas, the direct map on Linux — and frame metadata keeps a per-instance region on both.
+- **D58** is unchanged in substance and clarified in wording: `paddr_to_vaddr` adds the host's linear-map base, which the host supplies at creation instead of the compile-time constant it was, and frame metadata keeps a sparse per-instance region on both hosts.
 - **A13**, that the machine's physical range fits the window's 512 GiB, is withdrawn.
 - **A2**, about the refill cost of non-global window translations, is withdrawn in the form it was asked; the image's own mappings are still per-instance and still not global, so the question returns in a smaller shape and is recorded as such.
-- [Builds and images](../design/builds-and-images.md), [Memory](../design/virtualizing-ostd/memory.md) and [Boundaries and trust](../design/principles.md) are edited to match, and invariant I3 drops from *checked by the page tables* to *trusted*.
+- [Builds and images](../design/builds-and-images.md), [Memory](../design/virtualizing-ostd/memory.md) and [Boundaries and trust](../design/principles.md) are edited to match, and invariant I3 drops from *checked by the page tables* to *trusted, with the metadata region as its one remaining hardware check*.
 
-A reader who wants the old scheme will find it in the register, marked superseded, with the reason.
+The decisions are in the [design register](../../notes/design-register.md), where a reader who wants the old scheme will find it marked superseded, with the reason.
+
+

@@ -1,6 +1,6 @@
 # The endovisor as a Linux module
 
-*What the endovisor becomes when the host kernel is Linux: how a kernelet is loaded, where its memory comes from, what its tasks are, and how it is interrupted. Everything on this page runs in an ordinary loadable module, and the only changes it needs of Linux are the exported symbols the [background](background.md) page named.*
+*What the endovisor becomes when the host kernel is Linux: how a kernelet is loaded, where its memory comes from, what its tasks are, and how it is interrupted. Everything on this page runs in an ordinary loadable module, and what it needs of Linux is the handful of exported symbols the [evidence](evidence.md) page lists.*
 
 The endovisor is defined by what it does, not by where it lives: it creates, schedules, destroys and mediates kernelets ([Terminology](../overview/terminology.md)). In Asterinas mode it is a module of the host kernel crate. In Linux mode it is a Linux loadable module, written in Rust or C, exposing the same `/dev/kernelet` interface to the kernelet runtime that the [endovisor page](../design/endovisor.md) specifies.
 
@@ -12,7 +12,7 @@ Creating an **instance** is then four steps:
 
 1. **Take pages for the data.** One allocation from Linux's page allocator, sized by the image's writable segment plus one replica of the per-CPU section for each virtual CPU. Copy the template in, zero the rest.
 2. **Build the image's address range.** Call `vmap()` with the kind's text pages followed by this instance's data pages. Linux returns one contiguous kernel address for the lot: this instance's image base.
-3. **Make the text read-execute.** `vmap()` returns a read-write, non-executable mapping, so the endovisor calls `set_memory_rox()` on the text pages of *this mapping only*, which clears both the write and the no-execute bits and leaves the data pages writable and non-executable. Clearing only the no-execute bit, as the first draft of this chapter said, would leave the text writable *and* executable. `set_memory_rox` is not exported; this is the change Linux mode needs.
+3. **Make the text read-execute.** `vmap()` returns a read-write, non-executable mapping, so the endovisor calls `set_memory_rox()` on the text pages of *this mapping only*, which clears both the write and the no-execute bits and leaves the data pages writable and non-executable. It must be that call and not the one that clears the no-execute bit alone, which would leave the text writable *and* executable. `set_memory_rox` is not exported; this is the change Linux mode needs.
 4. **Relocate the data.** Walk the image's relocation entries, adding the instance's base to each. The text has none, by construction and by audit.
 
 Then write the two bases the instance needs — the host's direct-map base and this instance's metadata base — into its boot arguments, and call its entry point.
@@ -33,7 +33,7 @@ Either way the allocation **may sleep** while it reclaims, so it cannot be made 
 
 Addressing is the [previous page](one-address-space.md)'s answer. On Linux the base is the direct map's, so there is nothing to map per grain and no page-table entry for the endovisor to write — at the price of the fail-stop property that page describes, since every frame on the machine is then addressable from every kernelet.
 
-What the endovisor must still do at each grant is the accounting: zero the grain before publishing it (register D55), write the owner array, extend the instance's metadata region to cover the new frames, append the run descriptor, and publish the new length. The metadata region is the one thing still mapped per instance, with `vmap()` over pages the endovisor allocates for it.
+What the endovisor must still do at each grant is the accounting: zero the grain before publishing it (register D55), write the [owner array](../design/virtualizing-ostd/memory.md), extend the instance's metadata region to cover the new frames, append the run descriptor, and publish the new length. The metadata region is the one thing still mapped per instance, with `vmap()` over pages the endovisor allocates for it.
 
 ## Tasks
 

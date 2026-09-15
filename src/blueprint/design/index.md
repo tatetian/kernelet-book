@@ -5,7 +5,7 @@
 <div class="tag">The kernelet architecture</div>
 <div class="title">One kernel source, two builds, one boundary at OSTD's API</div>
 </div>
-<svg viewBox="0 0 900 400" role="img" aria-label="The kernelet architecture. Left, the host: Linux apps and the kernelet runtime in user space; the host kernel with its Linux functionality and the endovisor; OSTD exposing the vanilla OSTD API and the kernelet API, whose control half the endovisor uses and whose service half vOSTD calls through the service table. Right, a kernelet: Linux apps in user mode over the kernel proper over vOSTD, the virtualized OSTD API, over the kernelet window. The host enters the kernelet only through the entry table to start a thread; devices are virtio over function calls between the endovisor and the kernelet.">
+<svg viewBox="0 0 900 400" role="img" aria-label="The kernelet architecture. Left, the host: Linux apps and the kernelet runtime in user space; the host kernel with its Linux functionality and the endovisor; OSTD exposing the vanilla OSTD API and the kernelet API, whose control half the endovisor uses and whose service half vOSTD calls through the service table. Right, a kernelet: Linux apps in user mode over the kernel proper over vOSTD, the virtualized OSTD API, over its own image and the frames it has been granted. The host enters the kernelet only through the entry table to start a thread; devices are virtio over function calls between the endovisor and the kernelet.">
 <defs>
 <linearGradient id="kad-cg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -63,7 +63,7 @@
 <rect x="20" y="322" width="330" height="30" rx="5" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.12)"/>
 <text x="185" y="341" fill="#6A6F8C" text-anchor="middle" font-size="9.5">hardware</text>
 <rect x="510" y="322" width="370" height="30" rx="5" fill="rgba(0,247,255,.05)" stroke="rgba(0,247,255,.3)"/>
-<text x="695" y="341" fill="#5C93A8" text-anchor="middle" font-size="8.5">kernelet window: text · data · shared pages · granted frames</text>
+<text x="695" y="341" fill="#5C93A8" text-anchor="middle" font-size="8.5">kernelet image: text · data · shared pages, plus granted frames</text>
 <path d="M100 70 V132" stroke="#9AA0BE" stroke-width="1.2" marker-end="url(#kad-arrow)"/>
 <path d="M265 70 V132" stroke="#9AA0BE" stroke-width="1.2" marker-end="url(#kad-arrow)"/>
 <text x="272" y="103" fill="#6A6F8C" font-size="8">endovisor ABI: /dev/kernelet</text>

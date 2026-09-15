@@ -1,6 +1,6 @@
 # The tenant: user mode and system calls
 
-*The hardest part of Linux mode. A kernelet must run its tenant's programs and answer their system calls, and Linux gives an out-of-tree component no way to do either directly. This page works through what Linux does offer, measures the candidates, and reaches a conclusion the first draft of this chapter got wrong: the optional patch is not a performance option. It is what decides whether the kernelet is the tenant's boundary at all.*
+*The hardest part of Linux mode. A kernelet must run its tenant's programs and answer their system calls, and Linux gives an out-of-tree component no way to do either directly. This page works through what Linux does offer, measures the candidates, and reaches a conclusion that matters more than any of the costs: the patch is not a performance option. It is what decides whether the kernelet is the tenant's boundary at all.*
 
 ## Why this is hard
 
@@ -38,9 +38,11 @@ Measured on the **build host**, where the floor is 485 ns:
 
 | mechanism | per call | overhead |
 |---|---|---|
-| Syscall User Dispatch | 1,887 ns | +1,405 ns |
-| seccomp user notification | 5,721 ns | +5,231 ns |
+| Syscall User Dispatch | 1,887 ns | +1,402 ns |
+| seccomp user notification | 5,721 ns | +5,236 ns |
 | `ptrace(PTRACE_SYSEMU)` | 8,221 ns | +7,736 ns |
+
+Those are single runs rather than medians, which is enough to separate mechanisms an order of magnitude apart and not enough for anything finer.
 
 The hook measures *faster* than a bare `getppid` because the servicer used for the measurement returns a constant while `getppid` does real work. So the number does not say a kernelet is free. It says that **the hook adds nothing measurable to Linux's entry path**: reaching a kernelet costs about what reaching Linux's own handler costs, and the kernelet's actual work is the kernel proper's code, identical on both hosts.
 
@@ -56,9 +58,9 @@ Syscall User Dispatch lets a process ask Linux to stop executing its system call
 
 The sandbox is set up like this. The kernelet runtime starts the tenant's first process with a small **stub** mapped into it. The range handed to Linux is the range that is *exempt*, so the stub goes **inside** it and the stub's own calls run normally while everything outside traps. The stub arms dispatch and sets the selector byte to *block*. From then on: the tenant executes a system call; Linux raises `SIGSYS` instead of running it; the stub's handler makes one call into the endovisor carrying the register set; the kernelet services it; the stub writes the result into the signal frame and returns; the tenant resumes.
 
-Two honest notes about the 929 ns. The program that produced it ran with **no** exempt range and a handler that filled in a result directly, so it measures the signal delivery and return — steps one and four — and not the call into the endovisor in between. A real stub adds at least one more kernel entry, so 929 ns is a floor.
+Two honest notes about the 929 ns. The program that produced it ran with no exempt range, and a handler that filled in a result directly. So it measures the signal delivery and the return, steps one and four, and not the call into the endovisor in between. A real stub adds at least one more kernel entry. **The figure is therefore a floor: ≥929 ns**, and it is quoted that way everywhere else in the chapter.
 
-Now the part the first draft of this page got wrong.
+And now the part that decides the chapter.
 
 **On this path the tenant can reach Linux's own system calls.** Two ways, neither exotic. The selector byte lives in the tenant's memory, so the tenant can store *allow* and make an ordinary call. Or it can jump to the `syscall` instruction inside the stub, which is in the exempt range by construction, with registers of its own choosing.
 
@@ -70,7 +72,7 @@ Two things narrow the hole without closing it. Mapping the selector page read-on
 
 The patch adds one field to the task structure and one branch at the top of the system-call path: if this task has a kernelet, call it instead of dispatching. There is no selector for the tenant to flip and no exempt range to jump into. **The kernelet becomes the tenant's only system-call surface**, which is what the design claims everywhere else and what the no-patch path cannot deliver.
 
-That is the argument for the patch. The twenty-four-fold difference is real but secondary, and the first draft led with it, which was a mistake: it made a security mechanism look like an optimization.
+That is the argument for the patch. The difference in cost is real and secondary: leading with it would make a security mechanism look like an optimization.
 
 **The patch as first measured had two defects, both found in review.** It returned a value meaning *leave through the slow exit path*, which sent every serviced call out the expensive way and skipped the checks that would have allowed the fast one; that, and not the hook, was most of the cost first reported. And it did not test for the marker meaning *an earlier stage already answered this call*, so attaching a kernelet would have overridden that task's seccomp verdict. Both are fixed and the numbers above are from the fixed version.
 
@@ -90,14 +92,39 @@ Two gaps larger than anything above, stated because the chapter would be dishone
 
 **The virtual system-call page.** Some calls — reading the clock, asking which processor you are on — are served from a page Linux maps into every process, without entering the kernel at all. Neither dispatch nor the hook sees them, so a tenant would read the *host's* clock rather than its kernelet's. The endovisor must unmap that page from its tenants or supply its own.
 
-## Two things Linux will not do, which the design assumed
+## Four things Linux will not do, which the design assumed
 
-**A runaway kernelet cannot be stopped.** [Faults, termination and reclamation](../design/faults-and-reclamation.md) requires that a kernelet task be terminable and its stack discarded, and that a kernelet be destroyed without running any of its code. Linux cannot: a task in kernel mode runs until it returns to user mode of its own accord, stopping a kernel thread is cooperative, and on the patched path the kernel proper's code runs *on the tenant's own task, in kernel mode*, where a kill signal cannot reach it. A kernelet that loops inside the hook is an unkillable task and a destroy that never completes. **Invariant I7, fault containment, does not hold in Linux mode.** The substitute is cooperative — a check of the dying flag at every service-call boundary, a deadline, a watchdog — and it is weaker, because it needs the kernelet to keep working well enough to notice.
+### A runaway kernelet cannot be stopped
 
-**The kernel stack is a fraction of what the design assumes.** The [control half](../design/kernelet-api-control.md) gives a kernelet task a 512 KiB stack, and assumption A3 reserves 64 KiB of headroom for the deepest host path a service call takes. On Linux a kernel stack is 16 KiB, for kernel threads and for the tenant's task alike, and on the patched path a full Linux-compatible kernel's system-call path runs on that stack on top of Linux's own entry frame, with a guard page that turns overflow into a crash. That is a thirty-two-fold mismatch against the design's own assumption, and this chapter does not resolve it.
+[Faults, termination and reclamation](../design/faults-and-reclamation.md) requires that a kernelet task be terminable and its stack discarded, and that a kernelet be destroyed without running any of its code. Linux cannot: a task in kernel mode runs until it returns to user mode of its own accord, stopping a kernel thread is cooperative, and on the patched path the kernel proper's code runs *on the tenant's own task, in kernel mode*, where a kill signal cannot reach it. A kernelet that loops inside the hook is an unkillable task and a destroy that never completes. **Invariant I7, termination, does not hold in Linux mode.** The substitute is cooperative: a check of the dying flag at every service-call boundary, a deadline, and a watchdog. It is weaker, because it needs the kernelet to keep working well enough to notice.
+
+### The kernel stack is a fraction of what the design assumes
+
+The [control half](../design/kernelet-api-control.md) gives a kernelet task a 512 KiB stack, and assumption A3 reserves 64 KiB of headroom for the deepest host path a service call takes. On Linux a kernel stack is 16 KiB, for kernel threads and for the tenant's task alike, and on the patched path a full Linux-compatible kernel's system-call path runs on that stack on top of Linux's own entry frame, with a guard page that turns overflow into a crash. That is a thirty-two-fold mismatch against the design's own assumption, and this chapter does not resolve it.
+
+### A fault in kernelet code is a Linux oops
+
+The design's second tier of containment is that a fault inside a kernelet kills that kernelet and nothing else ([Faults, termination and reclamation](../design/faults-and-reclamation.md)). It works because the host's fault handler is ours: it recognizes the faulting address as a kernelet's, kills it, and reclaims.
+
+Linux's fault handler is Linux's. A kernel-mode fault in kernelet code is an **oops**: Linux prints a trace and kills the task that was running, which on the patched path is the tenant's own task, holding whatever it held. The machine survives only if it was configured not to panic on an oops, and the kernelet is left half-dead rather than reclaimed.
+
+There is a narrower version of the same problem, and it reaches ordinary operation rather than bugs. The kernel proper's copies to and from tenant memory are *fallible*: they fault by design on a first touch, and OSTD recovers by way of an entry in the image's exception table. Linux's handler searches its own table and those of loaded modules, and a kernelet is not a module, so the entry is never found and a routine first-touch fault becomes an oops.
+
+That one has an answer, and it is a design change rather than a patch: a fallible copy becomes a **service call**, and the host performs it with Linux's own copy routine, whose exception-table entry Linux does find. The cost is a crossing per fallible copy on a path that today is a `rep movsb`. Whether that is acceptable is not settled here, and it is the largest performance question Linux mode raises. **[unverified]**
+
+### The per-CPU model has no Linux counterpart
+
+vOSTD gives each kernelet one replica of its per-CPU data per virtual CPU, and finds the right replica by the virtual-CPU number in the host's CPU slot ([Tasks](../design/virtualizing-ostd/tasks.md)). Forming that address is safe only if the task cannot migrate in the middle of it, which the design arranges with a preemption count in the task record that the host honors.
+
+Linux honors no such count. Worse, on the patched path the kernel proper runs on the **tenant's own task**, which is an ordinary Linux task with no virtual-CPU binding and nothing pinning it. So the selector can change under the code. This reaches every per-CPU access, every lock taken with preemption disabled, and the read side of read-copy-update, which is most of the kernel.
+
+The repair is not deep but it is real: `disable_preempt` must become an actual host preemption disable, which Linux exports, and the tenant's task must be given a virtual-CPU binding for the duration of a serviced call. Neither is designed here.
 
 ## What this page decides
 
+The decisions are recorded in the [design register](../../notes/design-register.md) and the invariants they touch are in [Boundaries and trust](../design/principles.md).
+
 - **The tenant's processes are Linux processes, and the kernelet supplies their memory through a fault handler on their virtual memory areas** (register D78). A kernelet-built address space entered from a kernel thread is not possible on Linux. Linux keeps ownership of the address-space structure, so the kernel proper's memory management must be re-expressed over Linux's interfaces.
 - **The tenant's system calls reach the kernelet through a per-task hook where the patch is accepted, and through Syscall User Dispatch where it is not** (register D79). The patch is a security mechanism, not an optimization: without it the tenant can reach Linux's system calls and the effective boundary is the container's. Seccomp user notification and ptrace are rejected on measurement.
-- **Invariant I7 does not hold in Linux mode, and the tenant's process lifecycle is not designed** (register D81). Both are recorded, not solved.
+- **A fallible copy becomes a service call performed by the host** (register D82), because Linux's fault handler cannot find a kernelet's exception table. This is the one item on this page with a proposed answer rather than an open question, and its cost is unmeasured.
+- **Invariant I7 does not hold, fault containment is weakened, the per-CPU model needs a host preemption disable, and the tenant's process lifecycle is not designed** (register D81). These are recorded, not solved.

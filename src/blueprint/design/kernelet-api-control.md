@@ -45,7 +45,7 @@ pub struct ImageInfo {
 pub fn image_info(id: ImageId) -> Option<&'static ImageInfo>;
 ```
 
-Registration repeats, in trusted code and on the bytes actually booted, every check of the [audit](builds-and-images.md#audit) that can be made on the ELF alone: no relocations, no undefined symbols, every segment inside `KW_TEXT` or `KW_DATA` and none both writable and executable, `e_entry` inside `KW_TEXT`, the entry table at its fixed offset with the expected size, the exception-table and `.cpu_local` bounds inside their segments, and the source hash equal to the host build's. The bounds check is what invariant I5 needs before the host ever jumps to an exception-table fixup. A failure is a boot-time error for that kind, not for the host.
+Registration repeats, in trusted code and on the bytes actually booted, every check of the [audit](builds-and-images.md#audit) that can be made on the ELF alone: every relocation of the one permitted type and inside the per-instance region, none in the shared regions, no undefined symbols, every segment inside the `KW_TEXT` or `KW_DATA` offset range and none both writable and executable, `e_entry` inside `KW_TEXT`, the entry table at its fixed offset with the expected size, the exception-table and `.cpu_local` bounds inside their segments, and the source hash equal to the host build's. The bounds check is what invariant I5 needs before the host ever jumps to an exception-table fixup. A failure is a boot-time error for that kind, not for the host.
 
 ## Identity
 

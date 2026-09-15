@@ -1,6 +1,6 @@
 # Evidence
 
-*What was built, what was run, and what is still argued rather than shown. Four experiments and one patch, the first three against Linux 6.12 built from kernel.org sources for this chapter. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
+*What was built, what was run, and what is still argued rather than shown. Five experiments and one patch. The kernel work is against Linux 6.12, built from kernel.org sources for this chapter; two of the measurements in Experiment 3 were taken on the build host's own 6.8 kernel, and are kept apart from the rest. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
 
 ## The setting
 
@@ -59,7 +59,7 @@ Three facts in the source explain it and close every alternative:
 - [`arch/x86/mm/pat/set_memory.c`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c) exports helpers that change caching and **none** that change permissions.
 - `execmem_alloc()`, which replaced `module_alloc()` in v6.12, has no export at all, and on x86-64 it is confined to the 1520 MB module region with no fallback.
 
-So a symbol must be exported — and the first version of this page named the wrong one. `set_memory_x` clears only the no-execute bit, and `vmap()` returns a **read-write** mapping, so the result is memory that is writable *and* executable: a W^X violation rather than the read-execute the design wants. The right primitive clears both bits at once:
+So a symbol must be exported, and it is easy to name the wrong one. `set_memory_x` clears only the no-execute bit, and `vmap()` returns a **read-write** mapping, so the result is memory that is writable *and* executable: a W^X violation rather than the read-execute the design wants. The right primitive clears both bits at once:
 
 ```c
 /* arch/x86/mm/pat/set_memory.c, after set_memory_rox() */
@@ -81,10 +81,11 @@ And the honest total: **this is not the only export Linux mode needs.** Three sy
 | `set_memory_rox` | **no** | making a kernelet's text read-execute; nothing works without it |
 | `set_memory_ro` | **no** | making the relocated read-only data read-only again, and giving the shared text a read-only alias in the direct map |
 | `x86_fsbase_write_task` | **no** | servicing a tenant thread's request to set its own thread pointer |
+| `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)) |
 
 One more was checked and came out the other way, correcting an earlier draft of this page: `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all. What is not exported is the wrapper that searches for a range to use, so the endovisor does that search itself.
 
-So the hard requirement is one symbol, the requirement for a complete Linux mode is three, and the fourth thing this page used to ask for was already there.
+So the hard requirement is one symbol; a complete Linux mode wants four. A fifth thing this page used to ask for turned out to be there already.
 
 ## Experiment 3: the cost of reaching the kernelet
 
@@ -98,7 +99,7 @@ Three paths, measured by one program in one run inside the guest, timed with the
 
 The hook measures below a bare `getppid` because the servicer returns a constant while `getppid` does work; what it shows is that the hook adds nothing measurable to the entry path.
 
-**The first version of these numbers was wrong, and the error was in the patch, not the measurement.** The hook returned a value meaning *leave through the slow exit path*, which forced every serviced call out through the expensive return and skipped the checks that would have permitted the cheap one. That accounted for most of the 118 ns first reported. With the hook falling through to Linux's ordinary exit, the same measurement gives 39 ns, and the difference against Syscall User Dispatch is about **24×**, not the 7.9× first published. The same review found that the hook did not test for the marker meaning *an earlier stage already answered this call*, so it would have overridden a tenant's seccomp verdict; that is fixed too.
+**An earlier version of these numbers was published and was wrong, so a reader may be holding it.** The error was in the patch, not the measurement: the hook returned a value meaning *leave through the slow exit path*, which forced every serviced call out through the expensive return and skipped the checks that would have permitted the cheap one. That accounted for most of the 118 ns first reported. With the hook falling through to Linux's ordinary exit, the same measurement gives 39 ns. The same review found that the hook did not test for the marker meaning *an earlier stage already answered this call*, so it would have overridden a tenant's seccomp verdict; that is fixed too.
 
 The two no-patch alternatives this chapter rejects were measured on the build host, where a bare call costs 485 ns: 5,721 ns for seccomp user notification and 8,221 ns for `ptrace(PTRACE_SYSEMU)`, against 1,887 ns for Syscall User Dispatch on that same machine — 3.0× and 4.4× more, for the same structural reason. Numbers from the two machines are not compared with each other anywhere in this chapter.
 
@@ -168,10 +169,11 @@ Checks 1 and 4 replace the audit's earlier requirement that the image be a fixed
 Stated plainly, because the chapter is a design and not a system.
 
 - **No kernelet has run on either host.** Nothing of the kernelet design is built. What ran here is the mechanism each argument turns on, in isolation.
-- **The gate experiment ran on a processor without indirect-branch tracking**, so the toy's unmarked eight bytes were accepted where a newer machine would fault. Experiment 5 below settles the compiler half of that question and leaves the kernel half open. **[unverified]**
+- **The gate experiment ran on a processor without indirect-branch tracking**, so the toy's unmarked eight bytes were accepted where a newer machine would fault. Experiment 5 settles the compiler half of that question and leaves the kernel half open. **[unverified]**
 - **The tenant's process lifecycle is not designed**, as the [tenant page](tenant.md) says. Nor is the handling of the virtual system-call page.
 - **Invariant I7 does not hold on Linux.** A task in kernel mode cannot be forcibly stopped.
 - **The two hosts' system-call costs have not been compared.** Linux mode's path is measured; Asterinas mode's `user_run` return is not measured anywhere in the book. Until it is, "which host is faster per system call" has no answer. **[unverified]**
 - **The zero-copy argument has not been rechecked against Linux's block layer.** Its shape carries over; its numbers were derived for a host we control. **[unverified]**
 - **The metadata address-space budget is arithmetic, not measurement.** The 16 GiB per instance on a 1 TiB machine, and the cap it implies on four-level paging, follow from the region sizes in Linux's documentation; no machine was filled with kernelets to check. **[unverified]**
-- **The guest's absolute numbers are from a `tinyconfig` kernel** without the mitigations a production host runs. The ratios are the load-bearing part.
+- **The guest's absolute numbers are from a `tinyconfig` kernel** without the mitigations a production host runs, so its floor is about a tenth of a production host's. What carries is the overhead each mechanism adds, not the ratio against that floor.
+- **The kernel-mode fault path was not tested at all.** That a kernelet's exception table is invisible to Linux's fault handler is read from the source, not demonstrated, and the service-call answer proposed for it is not built or measured. **[unverified]**

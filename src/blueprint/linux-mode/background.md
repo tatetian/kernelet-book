@@ -6,7 +6,7 @@
 
 Every process on Linux has one page table. Its lower half describes the process; its upper half describes the kernel and is **the same in every process**. Linux keeps it that way deliberately: when the processor enters the kernel it must find the kernel already mapped, whichever process it came from.
 
-Four regions of that upper half matter here. Their addresses come from [Documentation/arch/x86/x86_64/mm.rst](https://docs.kernel.org/arch/x86/x86_64/mm.html):
+Four regions of that upper half matter here. Their addresses come from [Documentation/arch/x86/x86_64/mm.rst](https://docs.kernel.org/arch/x86/x86_64/mm.html), which states them in decimal units; the rest of the book uses binary ones, so a size given here as 32 TB is 32 × 10¹² bytes and a grain of 2 MiB is 2 × 2²⁰:
 
 | region | what it holds | size, 4-level paging | size, 5-level paging |
 |---|---|---|---|
@@ -17,9 +17,9 @@ Four regions of that upper half matter here. Their addresses come from [Document
 
 Two of these deserve a closer look.
 
-**The direct map** is the one that matters most. Because all of physical memory appears there in order, converting a physical address to a usable kernel address is a single addition. Linux spells it [`__va(x)`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/page.h#L58), which is literally `x + PAGE_OFFSET`. That is the same shape as OSTD's own `paddr_to_vaddr`, and the chapter leans on the coincidence. `PAGE_OFFSET` is not a compile-time constant: with address-space randomization it is the variable [`page_offset_base`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/head64.c#L64). It is exported to modules, without the licence restriction Linux attaches to most of its newer exports. That restriction is worth knowing about anyway: the symbols this chapter asks Linux to export would carry it, so the endovisor module must declare a compatible licence.
+**The direct map** is the one that matters most. Because all of physical memory appears there in order, converting a physical address to a usable kernel address is a single addition. Linux spells it [`__va(x)`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/page.h#L58), which is literally `x + PAGE_OFFSET`. That is the same shape as OSTD's own `paddr_to_vaddr`, and the chapter leans on the coincidence. `PAGE_OFFSET` is not a compile-time constant: with address-space randomization it is the variable [`page_offset_base`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/head64.c#L64). It is exported to modules, without the license restriction Linux attaches to most of its newer exports. That restriction is worth knowing about anyway: the symbols this chapter asks Linux to export would carry it, so the endovisor module must declare a compatible license.
 
-**Paging levels.** An x86-64 processor walks either four or five levels of page table. Five-level paging, present on server processors from Ice Lake onward, widens the direct map and the vmalloc area by about 400×; the module area and kernel text are the same size either way, as the table shows. The chapter states where that matters; mostly it is the difference between a few thousand kernelets per machine and as many as anyone would want.
+**Paging levels.** An x86-64 processor walks either four or five levels of page table. Five-level paging, present on server processors from Ice Lake onward, widens the vmalloc area by about 400× and the direct map by 512×; the module area and kernel text are the same size either way, as the table shows. The chapter states where that matters; mostly it is the difference between a few thousand kernelets per machine and as many as anyone would want.
 
 ## Loadable modules
 
@@ -61,23 +61,25 @@ Two notes on that sentence. On x86-64 the table is no longer a table of pointers
 
 Within that machinery there are exactly three places where a call can be **answered by something other than Linux**, in this order:
 
+They run in the order given here, which is the order in [`syscall_trace_enter()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/entry/common.c#L28): dispatch, then ptrace, then seccomp.
+
 **Syscall User Dispatch.** A process asks Linux, once, to stop executing its system calls and instead deliver a signal. Which calls are diverted is decided by a **single byte in the process's own memory**: when it reads *allow*, calls run normally; when it reads *block*, each one raises `SIGSYS` instead. Flipping that byte costs no system call, which is what makes the mechanism fast. It was built for Windows emulators, which must run a foreign program's calls themselves. See [the manual](https://docs.kernel.org/admin-guide/syscall-user-dispatch.html).
 
 A word on signals, since the chapter leans on them. A **signal** interrupts a thread and runs a handler the program registered. Linux saves the interrupted register state on the thread's stack, in a **signal frame**, runs the handler, and restores the frame when the handler returns. A handler may therefore *edit* the frame, and whatever it writes is what the thread resumes with. That is how a `SIGSYS` handler supplies the result of a system call that never ran.
+
+**ptrace.** The oldest mechanism: a debugger stops the traced process at each call. One variant, `PTRACE_SYSEMU`, stops it and *never runs the call*, leaving the tracer to supply the answer.
 
 **seccomp user notification.** A filter attached to the process can, instead of allowing or denying a call, park the caller and post a message to a **different process**, which answers it. That answering process is a supervisor in user space.
 
 A related but distinct mechanism is a seccomp filter that returns *trap* rather than *notify*, which raises `SIGSYS` in the calling thread itself. That is what [gVisor's current platform, systrap](https://gvisor.dev/docs/architecture_guide/platforms/), uses: a stub handler inside the sandboxed process hands the call to gVisor's kernel through shared memory. It is structurally the same shape as Syscall User Dispatch, and this chapter's chosen path resembles it.
 
-**ptrace.** The oldest mechanism: a debugger stops the traced process at each call. One variant, `PTRACE_SYSEMU`, stops it and *never runs the call*, leaving the tracer to supply the answer.
-
 What does **not** exist is an in-kernel version of any of these. All three are driven from user space, and none accepts a callback from a module. The old system-call array is [marked read-only after boot](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/entry/syscall_64.c), is not exported, and on x86-64 is no longer what dispatch reads; nothing in `kernel/entry/common.c` takes a kernel-side handler. Tracing machinery comes closest: a probe on the system-call entry tracepoint runs in the kernel and can even change the call *number*, which is how a call is turned into a failure. It still cannot supply a result, so it cannot service one.
 
-**A fourth entry point matters and is easy to forget.** `syscall` is how a 64-bit program enters, but a kernel built with 32-bit compatibility — which distribution kernels are — also accepts the legacy software interrupt and the fast 32-bit instruction, each with its own entry function. Anything that claims to intercept a task's system calls must cover all of them, or it covers none. This is the gap the optional patch fills, and the [tenant page](tenant.md) measures what it is worth.
+**There is more than one entry point, and this is easy to forget.** `syscall` is how a 64-bit program enters, but a kernel built with 32-bit compatibility — which distribution kernels are — also accepts the legacy software interrupt, the fast 32-bit instruction, and that instruction's emulated form. Four entry functions in all. Anything that claims to intercept a task's system calls must cover every one of them, or it covers none: a program that enters by an unhooked path has its call serviced by Linux, with its own credentials. The patch measured on the [tenant page](tenant.md) hooks one of the four, which that page records as a defect rather than hiding.
 
 ## Getting physical memory
 
-Linux's page allocator hands out physically contiguous blocks of 2ⁿ pages. A 2 MiB block is one such allocation; larger runs come from the same machinery that backs huge pages. Two properties matter later and are easy to miss: the allocation **may sleep** while it reclaims memory, so it cannot be made from a context that holds a spin lock; and memory taken this way is invisible to Linux's own reclaim, so nothing will take it back under pressure.
+Linux's page allocator hands out physically contiguous blocks of 2ⁿ pages, up to a maximum n of [`MAX_PAGE_ORDER`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/mmzone.h#L30), which is 10 — so **4 MiB is the largest block it will give**. A 2 MiB block is one such allocation. Longer runs come from the machinery that backs huge pages, which migrates whatever is in the way; its entry point is exported to modules, though the helper that searches for a suitable range is not. Two properties matter later and are easy to miss: the allocation **may sleep** while it reclaims memory, so it cannot be made from a context that holds a spin lock; and memory taken this way is invisible to Linux's own reclaim, so nothing will take it back under pressure.
 
 ## Words used throughout
 
