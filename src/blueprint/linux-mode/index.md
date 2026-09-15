@@ -12,7 +12,7 @@
 
 That does not make Linux mode the better design. Of the three properties the boundary owes a tenant, Linux weakens all three, and each is argued where it arises later:
 
-- **Confinement.** The kernelet stops being the tenant's only system-call surface unless Linux is patched, so on an unpatched kernel the real boundary is the container's ([the tenant](tenant.md)).
+- **Safety.** The kernelet stops being the tenant's only system-call surface unless Linux is patched, so on an unpatched kernel the real boundary is the container's ([the tenant](tenant.md)).
 - **Fault containment.** A fault in kernelet code is a Linux oops rather than a contained kill, and the routine first-touch faults the kernel proper depends on cannot be recovered at all without a redesign of that path ([the tenant](tenant.md)).
 - **Fairness.** A runaway kernelet cannot be stopped, because Linux will not stop a task in kernel mode, and a tenant's pages are charged to nobody by default.
 
@@ -20,15 +20,17 @@ So the two modes are a real choice and not a ladder. Linux mode is what an opera
 
 ## What this chapter concludes
 
-Nothing found here rules Linux out. Three things had to be true. Two were tested on a kernel built and booted for the purpose; the third is an argument from Linux's own interfaces, cited page by page:
+**Nothing found here rules out a patched Linux built without type-checked indirect branches.** That sentence has three qualifications and each one is earned. *Patched*: an unmodified Linux is ruled out, for reasons of function rather than speed. *Without type-checked indirect branches*: on a kernel built with them, whether a kernelet can be entered at all is open. *Nothing found*: no kernelet has run.
+
+Three things had to be true. Two were tested on a kernel built and booted for the purpose; the third is an argument from Linux's own interfaces, cited page by page:
 
 1. **Many kernelets can share one kernel address space.** The Design chapter gives each kernelet its own kernel page table, because each is linked at fixed addresses. Linux cannot do that: its kernel half is shared by every process by construction. The fix is to make the kernelet image position-independent and load each instance at a different offset. One physical copy of the text serves every instance, and each instance's data is selected by the processor's own program-counter-relative addressing, with no register, no table and no lookup. This was [measured](evidence.md): four instances, one physical text page, each call returning its own instance's data.
 
-2. **The tenant's system calls can reach the kernelet.** Linux offers an out-of-tree component no way to do this in the kernel, so the answer has two tiers. Without touching Linux, [Syscall User Dispatch](tenant.md) turns each tenant call into a signal and a short trip through user space, which added at least **885 ns** to each call in the test guest. With a per-task hook added by a small patch, reaching the servicer cost nothing measurable at all. Both were measured in the same guest in the same run, whose floor is far lower than a production kernel's, so it is the overheads and not the ratio between them that carries ([the tenant](tenant.md)). The patch matters for a reason larger than either number: without it the tenant can still reach Linux's own system calls, so the kernelet is not its boundary.
+2. **The tenant's system calls can reach the kernelet, and only with a patch.** Linux offers an out-of-tree component no way to answer a system call in the kernel, so the chapter first looked for a way without one, and there is not one. [Syscall User Dispatch](tenant.md) can divert a call to a stub in user space, but Linux clears it at every `fork` and every `exec`, so only a tenant's first thread is ever intercepted; and a module cannot build a mapping in another task's address space, so on that path a kernelet cannot give its tenant memory at all. What dispatch does give is a **measurement**: at least **885 ns** added to every call, which is the floor for any interception that goes through user space. The per-task hook a small patch adds costs nothing measurable against a floor of 44 ns in the same guest. So the patch is not the fast tier of two. It is the only tier, and what it buys first is that the kernelet is the tenant's boundary at all.
 
 3. **Most of the rest maps onto ordinary Linux.** Kernelet tasks are kernel threads, tenant memory is a virtual memory area whose fault handler is the kernelet's, grains are pages from Linux's allocator addressed through its direct map, and a virtual interrupt is a wakeup. None of that needs a patch. What does not map is enumerated rather than glossed: the kernel-mode fault path, the per-CPU and preemption model, the tenant's process lifecycle, and the virtual system-call page ([what differs](what-differs.md)). None of this was built; the third point is argued from Linux's interfaces, not demonstrated.
 
-One thing is needed unconditionally: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. Linux mode therefore needs `set_memory_rox` exported, which is a one-line change; a complete Linux mode wants four, listed on the [evidence](evidence.md) page with what each one is for.
+One thing is needed before any of it: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. So Linux mode needs `set_memory_rox` exported — and `set_memory_rw` with it, because the first call also makes those frames read-only in the host's direct map and they cannot be given back until that is undone. Two more are wanted for a complete module. The [evidence](evidence.md) page lists all four with what each one is for.
 
 ## What this is not
 
@@ -50,7 +52,8 @@ So the contribution is not "kernel code can be virtualized" and not "one text ca
 
 Linux mode is not free, and this chapter does not pretend otherwise:
 
-- **Exports, a patch, and a boot setting.** A pair of exported symbols before anything runs, two more for a complete module, a kernel command line that turns off the legacy virtual system-call page, and the system-call hook — a separate, larger patch, and the thing that makes the kernelet the tenant's boundary.
+- **Exports, a patch, and a boot setting.** A pair of exported symbols before anything runs, two more for a complete module, a kernel command line that turns off the legacy virtual system-call page, and the system-call hook, which is required rather than optional.
+- **A class of kernel that may be excluded outright.** Where the host's own build enforces type-checked indirect branches, a kernelet's entry functions must carry preambles the host's compiler would accept, and nothing in this design produces them. The first call into a kernelet would trap. This is assumption A19 and it should be tested before anything else is built.
 - **Linux's own maturity is now in the trusted base.** The operator keeps their kernel, and keeps its bugs. Kernelets stop the tenant's *kernel* from being the attack surface; they do not make Linux smaller.
 - **The three weakened properties above**, which are the reason the two modes are a choice rather than a ladder.
 - **A crossing where there was none.** The kernel proper's copies to and from tenant memory must become service calls, because Linux's fault handler cannot recover them. The cost is unmeasured and it is the chapter's largest performance question.

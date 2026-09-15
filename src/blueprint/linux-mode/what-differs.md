@@ -14,10 +14,11 @@ The rows are split into three tables by **what the difference reaches**:
 - **the operator**: the machine differs in memory, processor time, or a symbol that must be exported, and no program can tell.
 - **the kernelet or its tenant**: the kernelet's own code must take a different path, an operation that succeeds on one host can fail on the other, or a program inside the sandbox could tell by a result, a failure or a timing.
 
-## Eleven rows that reach the machine only
+## Twelve rows that reach the machine only
 
 | taxonomy item | Asterinas host | Linux host |
 |---|---|---|
+| `paddr_to_vaddr`, heap, `Frame`, `Segment` | the host's linear map, one add | Linux's direct map, one add — the same shape, over a different base supplied at creation |
 | `TlbFlusher`, `tlb_shootdown` | the host sends the inter-processor interrupt | Linux's own invalidation |
 | `Task`, `TaskOptions`, `spawn_task` | host tasks created by the endovisor | Linux kernel threads, pinned, with a `nice` value |
 | `task_park`, `task_unpark`, `Mutex`, `WaitQueue` | the host's park and unpark | Linux wait queues |
@@ -30,45 +31,48 @@ The rows are split into three tables by **what the difference reaches**:
 | `log_write`, console | the endovisor's log hook | the same, into Linux's log |
 | `stop(STOP_EXIT)`, `power::poweroff` on a healthy kernelet | the host ends it and reclaims | the same |
 
-## Four rows that reach the operator
+## Three rows that reach the operator
 
 | taxonomy item | Asterinas host | Linux host |
 |---|---|---|
 | the image's mapping | one shared read-only mapping per kind, 2 MiB pages | `vmap()` per instance, smallest pages only: sharing the physical text saves memory, not translation-buffer entries |
-| making the text read-execute | the host maps it so | `set_memory_rox()`, which **is not exported**, and which interrupts every processor once per instance |
-| `paddr_to_vaddr`, heap, `Frame`, `Segment` | the host's linear map, one add | Linux's direct map, one add — the same shape, a different constant |
+| making the text read-execute, and undoing it | the host maps it so | `set_memory_rox()` and `set_memory_rw()`, **neither exported**, the second needed before a kind's frames can go back to Linux; and the first interrupts every processor once per instance |
 | scheduler injection, `nice`, affinity | the host's scheduler under the kernelet's quota | Linux's scheduler under a control group |
 
 ## Ten rows that reach the kernelet or its tenant
 
 | taxonomy item | Asterinas host | Linux host | what reaches through |
 |---|---|---|---|
-| `UserMode::execute`, `user_run` | the host switches address space and returns with a reason | **inverted**: Linux enters the tenant, and the kernelet is entered from the tenant's own entry path | the kernelet: this item's contract does not survive ([below](#user-mode)) |
+| `UserMode::execute`, `user_run` | the host switches address space and returns with a reason | **inverted**: Linux enters the tenant, and the kernelet is entered from the tenant's own entry path. The obvious substitute — park a servicing kernel thread and hand it a reason — is ruled out, because address-space work must run on the task whose address space it is | the kernelet: this item's contract does not survive ([below](#user-mode)) |
 | process lifecycle: `fork`, `execve`, signal return | the kernel proper creates them through vOSTD | only Linux can create a Linux task, and the hook's shape cannot express a call that returns twice. **Not designed** | the tenant ([the tenant](tenant.md)) |
 | `VmSpace::{new, activate}`, `CursorMut`, the page-table walk | the kernelet's own page tables over its grant | the tenant's address space is **Linux's**; the kernelet supplies pages through a fault handler and does not own the structure | the kernelet: its memory management must be re-expressed over Linux's interfaces |
-| `VmReader`/`VmWriter` (`Fallible`), the exception table, `inject_user_page_fault_handler` | the host's fault handler consults the kernelet image's own exception table and jumps to its fixup, which invariant I5 bounds | Linux's fault handler searches its own table and the loaded modules', and a kernelet is not a module, so a fixup it would need is **not found**. The answer is to make a fallible copy a service call and let Linux's own copy routine take the fault | the kernelet: a crossing per fallible copy, and a redesign of the fault path |
+| `VmReader`/`VmWriter` over tenant addresses | a copy instruction, with the host's fault handler consulting the kernelet image's own exception table for a fixup, which invariant I5 bounds | **the hardware forbids it**: a kernel-mode access to a user address faults unless it is bracketed by the host's own copy routine, and the fault is reported as a bad pointer before any fixup is searched for. Every such access becomes a service call | the kernelet: a crossing where there was an instruction, on the path every system call with a buffer takes |
 | a fault in kernelet code that is *not* a fallible copy | tier-2 containment: kill this kernelet, reclaim its memory, the machine continues | a Linux oops on whichever task was running, which kills that task with whatever it held. **Fault containment does not hold** | the tenant: a neighbor's bug reaches further |
 | `cpu_local!` and `disable_preempt` | the replica is selected by the virtual CPU in the host's CPU slot, race-free under a preemption count the host honors | Linux honors no such count, and on the patched path the kernel proper runs on the **tenant's own task**, which is not pinned, so the virtual-CPU selector can change under the code. **Unresolved** | the kernelet: every per-CPU access, every preemption-disabled lock, and the read side of read-copy-update |
-| `FsBase`, `GsBase` | a base-register or model-specific-register write the host honors | both are per-task state Linux caches and restores at every switch, so a direct write is lost or corrupts Linux's copy. Servicing them needs `x86_fsbase_write_task`, **not exported** | the tenant: thread-local storage |
-| frame metadata, invariant I3's remaining check | sparse per-instance region, a wrong address faults | `vmap()` cannot map sparsely or grow, so keeping the check needs `get_vm_area` exported; and with the span unbounded, the regions cap a 1 TiB machine at a few thousand kernelets on four-level paging | the kernelet ([one address space](one-address-space.md)) |
+| `FsBase`, `GsBase` | a base-register or model-specific-register write the host honors | both are per-task state Linux caches and restores at every switch, so a direct write is lost or corrupts Linux's copy. The module must set the task's saved field and let Linux's own restore path write the register: ten lines of duplicated logic, not a missing export | the tenant: thread-local storage |
+| frame metadata, invariant I3's remaining check | sparse per-instance region, a wrong address faults | `vmap()` cannot map sparsely or grow, so keeping the check needs `get_vm_area` exported, with the exported `apply_to_page_range` to fill it; and with the span unbounded, the regions cap a 1 TiB machine at a few thousand kernelets on four-level paging | the kernelet ([one address space](one-address-space.md)) |
 | `FrameAllocOptions`, a grant | the host's own frame allocator | Linux's page allocator to 4 MiB and the contiguous allocator above it; either may sleep, and either can fail under fragmentation where a host that owned its allocator would not | the tenant: a grant can fail where it would have succeeded |
-| termination, `stop` on an unhealthy kernelet, accounting | invariant I7: a task at depth zero can be terminated and its stack discarded; the endovisor charges every page | Linux cannot stop a task running in kernel mode, and pages handed to a tenant carry no memory-cgroup charge unless the endovisor adds one | the tenant: a neighbor can hold a processor, and can escape accounting ([the tenant](tenant.md)) |
+| termination, `stop` on an unhealthy kernelet, accounting | invariant I7: a task at depth zero can be terminated and its stack discarded; the endovisor charges every page | a task executing in kernel mode cannot be killed there, since signals are acted on only at the return to user mode; and pages handed to a tenant carry no memory-cgroup charge unless the endovisor adds one | the tenant: a neighbor cannot be killed, and can escape accounting ([the tenant](tenant.md)) |
 
 One row is deliberately not in any of the three. The [zero-copy design](../design/zero-copy-io.md)'s lending rings need a non-sleeping submission path, which is work we must do on Asterinas and which Linux's block layer already has. The shape carries over; whether the measured argument survives the substitution is **unchecked**, so the row has no verdict yet.
 
-Two rows in the third table have no verdict either, in a different sense: *device addressing* under an enforced address-translation unit, where a device address is not a physical address and the design assumes it is, is not addressed for either host; and the tenant's **virtual system-call pages**, which Linux maps into every process and which neither interception mechanism sees. The modern one must be unmapped or replaced, and that is not designed; the legacy one is emulated below every interception point and must be turned off on the kernel command line, which is an operator requirement Linux mode adds.
+Two more items are absent for the same reason, and are named here so that they are counted: *device addressing* under an enforced address-translation unit, where a device address is not a physical address and the design assumes it is, is not addressed for either host; and the tenant's **virtual system-call pages**, which Linux maps into every process and which neither interception mechanism sees. The modern one must be unmapped or replaced, and that is not designed; the legacy one is emulated below every interception point and must be turned off on the kernel command line, which is an operator requirement Linux mode adds.
 
 ## Reading the tables {#user-mode}
 
-Eleven rows of twenty-five change nothing anyone can observe. They cover tasks, synchronization, interrupts, time, device access, boot and logging — the bulk of what a kernel does, and the part of the claim that holds cleanly. Four more cost the operator memory, processor time or an export.
+Twelve rows of twenty-five change nothing anyone can observe. They cover physical addressing, tasks, synchronization, interrupts, time, device access, boot and logging — the bulk of what a kernel does, and the part of the claim that holds cleanly. Three more cost the operator memory, processor time or an export.
 
-The ten that reach further are the chapter's real answer, and they fall into three groups.
+The ten that reach further are the chapter's real answer, and they fall into four groups.
 
-**Three things the boundary owed are weakened.** Fault containment fails twice over — once because a kernelet's own exception table is invisible to Linux's fault handler, and once because any other fault in kernelet code is an oops rather than a contained kill. Termination fails because Linux will not stop a task in kernel mode. Fair accounting fails by default, because a tenant's pages are charged to nobody. None of the three has a fix inside this chapter; all three are Asterinas-mode properties.
+**Two of the three things the boundary owes are weakened, and the invariant behind a third fails.** *Safety* fails without the patch, because the kernelet is then not the tenant's only system-call surface. *Fault containment* fails because any fault in kernelet code is a Linux oops rather than a contained kill. *Fairness* fails by default, because a tenant's pages are charged to nobody. And invariant I7, *termination*, fails because a task executing in kernel mode cannot be killed there. None of the four has a fix inside this chapter.
 
 **One item's contract does not survive.** `UserMode::execute` is defined as a call that enters user mode and returns with a reason. On Linux the direction is inverted: Linux enters the tenant, and the kernelet is entered *from* the tenant's system-call path. vOSTD can present the same shape to the kernel proper, by parking a servicing task until the hook delivers a reason, but the task that then runs the kernel proper's code is the tenant's own — which is also what breaks the per-CPU row above. This is the one place where "the same image runs on either host" is a claim about vOSTD's interface rather than about its implementation.
 
-**Four things are unfinished rather than different.** Process lifecycle, the per-CPU and preemption model, the virtual system-call page, and device addressing under an enforced translation unit. Each is listed here so that it is counted rather than discovered later.
+**One thing the hardware forbids.** Kernelet code cannot touch tenant memory. Every read and write of it must be executed by host code, which is a crossing where the design has an instruction, on the path every system call with a buffer takes. This is the one row that is neither a difference nor an omission but a constraint, and it is the chapter's largest performance question.
+
+**Four things work differently and the kernelet can tell.** Its memory management is re-expressed over Linux's interfaces; its thread-pointer writes go through Linux's saved task state; its metadata region costs an export and bounds how many kernelets a machine holds; and a grant can fail under fragmentation where a host that owned its allocator would have succeeded.
+
+**Two things are unfinished.** Process lifecycle, and the per-CPU and preemption model. With the two items named above the tables — the virtual system-call pages and device addressing under an enforced translation unit — that is the whole list of what this chapter does not answer.
 
 ## What this does not show
 

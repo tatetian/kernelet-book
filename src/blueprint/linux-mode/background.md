@@ -6,7 +6,7 @@
 
 Every process on Linux has one page table. Its lower half describes the process; its upper half describes the kernel and is **the same in every process**. Linux keeps it that way deliberately: when the processor enters the kernel it must find the kernel already mapped, whichever process it came from.
 
-Four regions of that upper half matter here. Their addresses come from [Documentation/arch/x86/x86_64/mm.rst](https://docs.kernel.org/arch/x86/x86_64/mm.html), which states them in decimal units; the rest of the book uses binary ones, so a size given here as 32 TB is 32 × 10¹² bytes and a grain of 2 MiB is 2 × 2²⁰:
+Four regions of that upper half matter here. Their addresses come from [Documentation/arch/x86/x86_64/mm.rst](https://docs.kernel.org/arch/x86/x86_64/mm.html), whose sizes are binary quantities written with decimal-looking prefixes — the direct map's "64 TB" is 2⁴⁶ bytes, which is 64 TiB, and the module region's "1520 MB" is 1520 MiB. The arithmetic later in the chapter is binary throughout:
 
 | region | what it holds | size, 4-level paging | size, 5-level paging |
 |---|---|---|---|

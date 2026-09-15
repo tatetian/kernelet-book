@@ -74,14 +74,14 @@ picdemo: instance 0 text pte 0x73e121  W=0 X=1
 
 One reviewer objection is worth closing here, because the answer is in Linux's own source. Does making the alias executable also make the **direct map** executable, handing every module a way around W^X? No: the code that propagates attribute changes to the direct-map alias masks the execute bit out first, with the comment *"Directmap always has NX set, do not modify"*. What it does cost is on the next line — a machine-wide translation-buffer flush per call, so per instance created.
 
-And the honest total: **this is not the only export Linux mode needs.** Three symbols were checked in the v6.12 tree:
+And the honest total: **this is not the only export Linux mode needs.** Four symbols were checked in the v6.12 tree, of which the first two are mandatory:
 
 | symbol | exported today? | what needs it |
 |---|---|---|
 | `set_memory_rox` | **no** | making a kernelet's text read-execute; nothing works without it |
 | `set_memory_rw` | **no** | giving those frames back. The call above makes them read-only in the host's direct map too, so releasing a kind without restoring the permission hands the next user a read-only page. The mandatory partner of the first |
 | `set_memory_ro` | **no** | making the relocated read-only data read-only again after the loader has patched it. Hardening, not function |
-| `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)) |
+| `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)). Populating it needs `apply_to_page_range`, which **is** exported; nothing else that would do the job is |
 
 Two things this page once asked for do not belong on the list. `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all; only the wrapper that searches for a range is not, so the endovisor does that search itself. And writing a tenant thread's thread-pointer register needs no export: on the patched path the kernelet runs on the tenant's own task, so the module can set the field and write the register itself, which is ten lines of duplicated logic rather than a missing capability.
 
@@ -153,7 +153,7 @@ About twenty-five lines across four files, applied to v6.12 and booted for the m
 	}
 ```
 
-plus an exported setter and a configuration entry. What it still lacks is listed on the [tenant page](tenant.md): the three other entry points, lifetime management across `fork` and exit, a reference on the module, and a stated convention for the values that mean *restart this call*. The honest assessment of its upstream prospects is there too.
+plus an exported setter and a configuration entry. What it still lacks is listed on the [tenant page](tenant.md): the other entry points, lifetime management across `fork` and exit, a reference on the module, and a stated convention for the values that mean *restart this call*. The honest assessment of its upstream prospects is there too.
 
 ## What the build must check
 

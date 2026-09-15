@@ -203,7 +203,7 @@ A C build of the same shapes also puts one relocation in `.init_array` and one i
 `.data`.
 
 So the scheme holds, and the region table in the chapter's first draft was wrong.
-Shareable: `.text` and `.rodata`, 339 KB of the 345 KB of read-only material, 98 percent.
+Shareable: `.text` and `.rodata`, 339 KB of the 344 KB of read-only material, 98 percent.
 Per-instance: `.got`, `.data.rel.ro`, `.init_array`, `.data`, `.cpu_local`, `.bss` —
 about 5.2 KB of relocated material in this image. The first draft put `.init_array` in
 the shared region and did not mention `.data.rel.ro` or `.got` at all.
