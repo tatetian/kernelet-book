@@ -66,11 +66,11 @@ So that was measured too, on a Rust image built with the flags a kernelet image 
 | `.data.rel.ro` | 4,192 B | 181 | no |
 | `.got` | 952 B | 119 | no |
 
-All 300 are of one type, the base-relative fixup, so the host's relocation loop has a single case. A C build of the same shapes adds one relocation in `.init_array`.
+All 300 are of one type, the base-relative fixup, so the host's relocation loop has a single case. A C build of the same shapes adds one relocation in `.init_array` and one in `.data`.
 
 The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. The rule it establishes is simple and is what the [build's audit](../design/builds-and-images.md#audit) now checks: anything holding an address belongs on the private side, whatever section it is in. `.init_array` and `.got` are easy to overlook, and they hold addresses.
 
-One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is the second of the [three exports](evidence.md) a complete Linux mode wants, rather than the one it cannot start without.
+One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is one of the [four exports](evidence.md) a complete Linux mode wants, rather than one of the pair it cannot start without.
 
 ## Two things the scheme must survive
 
@@ -109,7 +109,7 @@ Sparseness is what makes this affordable, because the region's address span is f
 | physical span a kernelet's grains may touch | metadata address space per kernelet | kernelets in 32 TB (4-level vmalloc) | in 12.5 PB (5-level) |
 |---|---|---|---|
 | a bounded 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
-| a whole 1 TiB machine | 16 GiB | about 2,000 | about 800,000 |
+| a whole 1 TiB machine | 16 GiB | about 2,000 | about 700,000 |
 
 Read the second row for Linux, since Linux mode cannot bound the slice: **on a 1 TiB machine with four-level paging, the metadata regions alone cap a host at a few thousand kernelets.** Five-level paging removes the cap. This is the sharpest number in the chapter and it is arithmetic over the region sizes in Linux's documentation, not a measurement. **[unverified]**
 

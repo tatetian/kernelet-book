@@ -59,4 +59,4 @@ The [zero-copy design](../design/zero-copy-io.md) carries over in shape and not 
 
 ## What a tenant sees
 
-The same sandbox: a full Linux user space served by a kernelet. Nothing on this page is visible to it. What *is* visible to the operator is that the machine is running their own kernel, with one module loaded, three symbols exported, and — if they take the system-call patch that [the next page](tenant.md) argues for — about twenty-five lines changed in the entry path.
+The same sandbox: a full Linux user space served by a kernelet. Nothing on this page is visible to it. What *is* visible to the operator is that the machine is running their own kernel, with one module loaded, four symbols exported, and — if they take the system-call patch that [the next page](tenant.md) argues for — about twenty-five lines changed in the entry path.

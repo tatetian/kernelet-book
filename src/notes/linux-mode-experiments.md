@@ -209,8 +209,8 @@ about 5.2 KB of relocated material in this image. The first draft put `.init_arr
 the shared region and did not mention `.data.rel.ro` or `.got` at all.
 
 A consequence: `.data.rel.ro` wants to be read-only *after* relocation, which on Linux
-needs `set_memory_ro`, also unexported. Nothing breaks without it, so it is the second of
-the three exports a complete Linux mode wants rather than the one it cannot start
+needs `set_memory_ro`, also unexported. Nothing breaks without it, so it is one of the
+four exports a complete Linux mode wants rather than one of the pair it cannot start
 without.
 
 ## The failure that pinned down the requirement
@@ -252,10 +252,20 @@ built and booted for the measurements in RESULTS.md.
  }
 +EXPORT_SYMBOL_GPL(set_memory_rox);
 
-   A complete Linux mode needs three exports, all checked against the v6.12 tree:
-   this one; set_memory_ro(), for the relocated read-only data and for a read-only
-   alias of the shared text; and x86_fsbase_write_task(), for servicing a tenant
-   thread's request to set its own thread pointer.
+   set_memory_rw() is this one's mandatory partner. set_memory_rox() also clears
+   the write bit on the frames' alias in the direct map (cpa_process_alias() masks
+   only _PAGE_NX out of the propagation), so a kind's text pages cannot go back to
+   the page allocator until the permission is restored, and no permission setter
+   is exported.
+
+   Two more are wanted: set_memory_ro(), for the relocated read-only data, which
+   is hardening; and get_vm_area(), because the frame-metadata region must be
+   sparse and must grow, which vmap() cannot do. apply_to_page_range(), which
+   populates such a range, is already exported.
+
+   x86_fsbase_write_task() was on this list and is not needed: on the patched path
+   the kernelet runs on the tenant's own task, so the module can set the saved
+   field itself.
 
    A fourth was expected and is not needed. alloc_contig_range() IS exported
    (mm/page_alloc.c, as alloc_contig_range_noprof, plain EXPORT_SYMBOL, under

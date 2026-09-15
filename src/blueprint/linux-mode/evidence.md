@@ -1,6 +1,6 @@
 # Evidence
 
-*What was built, what was run, and what is still argued rather than shown. Five experiments and one patch. The kernel work is against Linux 6.12, built from kernel.org sources for this chapter; two of the measurements in Experiment 3 were taken on the build host's own 6.8 kernel, and are kept apart from the rest. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
+*What was built, what was run, and what is still argued rather than shown. Five experiments and one patch. The kernel work is against Linux 6.12, built from kernel.org sources for this chapter; three of the measurements in Experiment 3 were taken on the build host's own 6.8 kernel, and are kept apart from the rest. The raw transcripts and the sources are in [Linux-mode experiments](../../notes/linux-mode-experiments.md) in The Notes.*
 
 ## The setting
 
@@ -42,7 +42,7 @@ picdemo: RESULT PASS
 
 *Shows:* one shared copy of position-independent code, executed through four different mappings, reaches four different instances' data, selected by the program counter with no register, no table and no lookup. This is [the scheme](one-address-space.md) in its entirety.
 
-## What Linux refused, and the one line that fixes it
+## What Linux refused, and the two lines that fix it
 
 The first attempt asked `vmap()` for executable memory and got a kernel that would not execute it:
 
@@ -59,7 +59,7 @@ Three facts in the source explain it and close every alternative:
 - [`arch/x86/mm/pat/set_memory.c`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c) exports helpers that change caching and **none** that change permissions.
 - `execmem_alloc()`, which replaced `module_alloc()` in v6.12, has no export at all, and on x86-64 it is confined to the 1520 MB module region with no fallback.
 
-So a symbol must be exported, and it is easy to name the wrong one. `set_memory_x` clears only the no-execute bit, and `vmap()` returns a **read-write** mapping, so the result is memory that is writable *and* executable: a W^X violation rather than the read-execute the design wants. The right primitive clears both bits at once:
+So a symbol must be exported — two, as it turns out — and it is easy to name the wrong one. `set_memory_x` clears only the no-execute bit, and `vmap()` returns a **read-write** mapping, so the result is memory that is writable *and* executable: a W^X violation rather than the read-execute the design wants. The right primitive clears both bits at once:
 
 ```c
 /* arch/x86/mm/pat/set_memory.c, after set_memory_rox() */
@@ -94,7 +94,7 @@ Three paths, measured by one program in one run inside the guest, timed with the
 | path | median | spread | over a bare call |
 |---|---|---|---|
 | a call Linux services itself | 44 ns | 43–48 | — |
-| Syscall User Dispatch, no kernel change | 929 ns | 926–961 | +885 ns |
+| Syscall User Dispatch, no kernel change | ≥929 ns | 926–961 | +885 ns |
 | the per-task hook, with the patch | 39 ns | 38–39 | below the noise |
 
 The hook measures below a bare `getppid` because the servicer returns a constant while `getppid` does work; what it shows is that the hook adds nothing measurable to the entry path.
@@ -179,3 +179,19 @@ Stated plainly, because the chapter is a design and not a system.
 - **The metadata address-space budget is arithmetic, not measurement.** The 16 GiB per instance on a 1 TiB machine, and the cap it implies on four-level paging, follow from the region sizes in Linux's documentation; no machine was filled with kernelets to check. **[unverified]**
 - **The guest's absolute numbers are from a `tinyconfig` kernel** without the mitigations a production host runs, so its floor is about a tenth of a production host's. What carries is the overhead each mechanism adds, not the ratio against that floor.
 - **The kernel-mode fault path was not tested at all.** That a kernelet's exception table is invisible to Linux's fault handler is read from the source, not demonstrated, and the service-call answer proposed for it is not built or measured. **[unverified]**
+
+## What to build first
+
+The chapter names more open items than a reader can hold in order, and they are not equal: some block the first line of code and some block the second process. This is the order they should be attacked in, and what each stage is gated on.
+
+**1. Settle whether the host is eligible at all.** Build a small position-independent image with indirect-branch landing markers, load it from a module on a kernel built with type-checked indirect branches, and call into it. If the call traps and cannot be made to work, that class of host is excluded and everything after this is scoped to kernels without it (assumption A19). This is a day of work and it decides how much of the rest is worth doing, which is why it is first.
+
+**2. The loader.** Export the permission pair, assemble an instance's range, relocate it, and enter a kernelet image that initializes vOSTD far enough to write a line through the log service call and stop. Nothing on this path is open; what it proves is that the [one-address-space scheme](one-address-space.md) works on a real image rather than on eight bytes.
+
+**3. Memory.** The metadata region, which needs the fourth export and is where invariant I3's last hardware check lives; grains from the page allocator; the owner array; the kernel proper's own allocator running over granted frames. Gated on step 2.
+
+**4. Tasks, interrupts, time, devices.** Nothing here is open. Kernel threads, wait queues, workqueues and high-resolution timers cover it, and the [what differs](what-differs.md) tables say so: this is the twelve-row half of the design that Linux answers without argument. Gated on step 3.
+
+**5. The tenant.** The system-call hook, the stack switch, the migration hold on the tenant's task, and the service-call form of every access to tenant memory. This stage is where the first system call that passes a buffer works, and where the chapter's largest performance question gets its number. Gated on everything above.
+
+Process lifecycle, which the chapter calls its largest open item, is deliberately last: it blocks a tenant's *second* process, not its first, and a single-process tenant is enough to measure everything in stage 5.
