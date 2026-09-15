@@ -404,3 +404,42 @@ tree; the fault-containment item explains why no patch is proposed for it, rathe
 adding a second ask the chapter could not defend; the stack switch became a decision
 with an assumption about it; and the build order's first stage now aims at the
 configuration that ships rather than at one no distribution builds.
+
+## Linux mode: round six, and where it stops
+
+All three reviewers converged on one short list and all three said to stop after it.
+
+**One experiment case proved less than I claimed.** I had written that a bracketed
+read of a bad address oopses "because the fixup is in the kernelet image and Linux
+searches its own table and the loaded modules'". The test ran in a module, whose
+fixups *are* searched, so the run only showed that an access with no fixup faults.
+A sixth case fixed it: the same bad access with an exception-table entry on the
+faulting instruction recovers with `-EFAULT`. The pair isolates the real claim — the
+mechanism works, it works there because the code is a module, and a kernelet is not
+one and cannot become one without giving up the shared text.
+
+**The alias rule's translation was not earned.** It cited an assumption that does not
+require the index, and in the wrong direction: a system call arrives with a *virtual
+address*, so what is wanted is address to frame. vOSTD's own fault handler supplies
+that pair as it hands each frame over, so the map is built rather than shadowed. Two
+halves of it are open, and the second is the serious one. A miss is structural — the
+tenant's address space also holds the runtime's stub, Linux's virtual system-call
+pages, and whatever Linux populated itself. And a stale entry does not miss; it
+*resolves*, silently, against a frame that may already have gone back to the host and
+on to another kernelet. The alias rule is what makes that reachable, because before it
+the hardware would have refused the access outright. Closing it is a precondition of
+the rule, not a detail, and the intended answer is the invalidation callback a
+hypervisor uses to keep shadow page tables coherent, which Linux exports.
+
+**The rule costs the kernel proper nothing in source**, which the chapter had never
+said. The copy routines are OSTD's, so the rule lives in vOSTD: the kernel proper
+still calls `VmReader` and `VmWriter` and does not know which host it is on. That is
+the taxonomy working as designed — a virtualized item with a second body — rather than
+a breach of it, and it answers the natural objection to D82 before it is raised.
+
+Six rounds, three reviewers, six experiments, one patch. The chapter's conclusion is
+that nothing found rules out a patched Linux built without type-checked indirect
+branches; that an unmodified Linux is ruled out; and that the most useful thing the
+port produced was not a Linux fact but a defect in our own interface, which specified
+a copy as an instruction while silently depending on the host's policy for a hardware
+feature.
