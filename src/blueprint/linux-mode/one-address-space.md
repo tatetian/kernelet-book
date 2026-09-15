@@ -1,14 +1,14 @@
 # One address space, many kernelets
 
-*The mechanism that makes Linux mode possible. The Design chapter gives every kernelet its own kernel page table; Linux cannot. This page shows how to put every kernelet in one shared kernel address space instead, at a cost of eight bytes of machine code and one idea. The scheme is better in Asterinas mode too, so this page also replaces a Design-chapter decision.*
+*The mechanism that makes Linux mode possible. The Design chapter gives every kernelet its own kernel page table; Linux cannot. This page shows how to put every kernelet in one shared kernel address space instead, what that costs the trusted base, and what protection it gives up. The scheme is better in Asterinas mode too, so this page also replaces a Design-chapter decision.*
 
 ## The problem, stated exactly
 
-A kernelet's image is linked at fixed addresses: its code at one address, its writable data at another, the same addresses in every kernelet ([Builds and images](../design/builds-and-images.md#window), register D3). Two kernelets therefore want the *same* virtual address to hold *different* data. The only way to grant both wishes is to give each kernelet its own page table, and that is what the Design chapter does: a kernelet's kernel page table is the host's, with two top-level entries swapped for its own.
+A kernelet's image is linked at fixed addresses: its code at one address, its writable data at another, the same addresses in every kernelet ([Builds and images](../design/builds-and-images.md#window), and the [design register](../../notes/design-register.md), D3). Two kernelets therefore want the *same* virtual address to hold *different* data. The only way to grant both wishes is to give each kernelet its own page table, and that is what the Design chapter does: a kernelet's kernel page table is the host's, with two top-level entries swapped for its own.
 
 Linux will not have it. Its kernel half is shared by every process by construction: one set of upper-half page-table entries, referenced from every process's page table, kept in step by the kernel itself. There is no supported way for a module to give one task a different kernel half, and no unsupported way that survives contact with Linux's own bookkeeping.
 
-So on Linux, all kernelets must live in **one** kernel address space. Every kernelet's memory is addressable from every other. The question is whether that can be made to work, and what it costs.
+So on Linux, all kernelets must live in **one** kernel address space. The question is whether that can be made to work, and what it costs.
 
 ## The idea
 
@@ -20,20 +20,20 @@ A kernelet's image has two parts with opposite requirements. Its **code** is ide
 
 One copy of the code, many copies of the data. How does a shared instruction reach the right instance's variable?
 
-**It already does.** Position-independent code on x86-64 names a variable by its distance from the currently executing instruction. If instance A's image sits at one address and instance B's at another, and each image keeps its code and data at the same distance apart, then the identical instruction, executed through A's mapping, computes A's data, and executed through B's mapping, computes B's. The processor does the selection, from the program counter, for free.
+**It already does.** Position-independent code on x86-64 names a variable by its distance from the currently executing instruction. Give each instance its own range, and keep its code and data at the same distance apart in every range. Then the identical instruction, executed through instance A's mapping, computes A's data, and executed through B's mapping, computes B's. The processor does the selection, from the program counter, for free.
 
 ```mermaid
-flowchart TB
+flowchart LR
   subgraph phys ["physical memory"]
-    T["one copy of the text<br/>(per kind)"]
-    DA["instance A data"]
-    DB["instance B data"]
-    DC["instance C data"]
+    T["one copy of the text<br/>per kind"]
+    DA["A's data"]
+    DB["B's data"]
+    DC["C's data"]
   end
   subgraph virt ["one shared kernel address space"]
-    VA["A: text | data"]
-    VB["B: text | data"]
-    VC["C: text | data"]
+    VA["A: text at base_A<br/>data at base_A + delta"]
+    VB["B: text at base_B<br/>data at base_B + delta"]
+    VC["C: text at base_C<br/>data at base_C + delta"]
   end
   T --> VA
   T --> VB
@@ -43,63 +43,96 @@ flowchart TB
   DC --> VC
 ```
 
-No register is reserved, no table is consulted, no pointer is chased. The instruction that reads a global in the kernel proper is the same instruction it would have been in the Design chapter's scheme.
+The distance *delta* is the same in every instance. That is the whole trick.
 
-## Does it actually work?
+It is not a new one. A shared library has had one text and per-process data since the 1980s; `dlmopen` gives several independent instances of one library, with independent data, inside one address space; and thread-local storage and Linux's own per-CPU variables solve the same problem by reserving a register. What is worth stating precisely is the difference: those mechanisms select the instance through a segment register or a table, and cost an extra load or an extra add on every access. Selecting it from the program counter costs nothing at all, because the address computation was going to happen anyway.
+
+## Does it work?
 
 The claim is small enough to test in eight bytes of machine code. Put one page of position-independent text in physical memory, containing a function that loads a value from the page that follows it. Map that one physical page four times, each time followed by a *different* data page. Then call through each mapping and see which value comes back.
 
-It works. Four mappings, one physical text page, four different answers, each the right one. The full transcript is on the [evidence](evidence.md) page:
+It works. Four mappings, one physical text page, four different answers, each the right one. The transcript is on the [evidence](evidence.md) page.
 
-```
-picdemo: one text page, pfn 0x76d
-picdemo: instance 0 image at ffffc9000001d000  data at ffffc9000001e000  text pfn 0x76d
-picdemo: instance 3 image at ffffc9000002d000  data at ffffc9000002e000  text pfn 0x76d
-picdemo: call through instance 0 returned 0xda7a0000 (want 0xda7a0000) ok
-picdemo: call through instance 3 returned 0xda7a0003 (want 0xda7a0003) ok
-picdemo: RESULT PASS
-```
+## What is shareable, and what is not
+
+The toy proves the addressing. It does not prove the thing the scheme actually rests on, which is that **the shared part of a real image carries no relocations**. If the loader had to patch the text for each instance, there could be no shared copy.
+
+So that was measured too, on a Rust image built with the flags a kernelet image would use, containing the shapes a kernel is full of: tables of trait objects, of string slices, of function pointers.
+
+| section | size | relocations inside | can it be shared? |
+|---|---|---|---|
+| `.text` | 274,307 B | **0** | yes |
+| `.rodata` | 64,914 B | **0** | yes |
+| `.data.rel.ro` | 4,192 B | 181 | no |
+| `.got` | 1,200 B | 150 | no |
+
+A C build of the same shapes adds one relocation in `.init_array`.
+
+The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. But it also corrects the first draft of this chapter, which had put `.init_array` in the shared region and had not mentioned `.data.rel.ro` or `.got` at all. Anything holding an address belongs on the private side, and the [build's audit](../design/builds-and-images.md#audit) now checks exactly that rather than checking which page-table entry the image lies under.
+
+One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_x` is not exported. That is hardening, not function, so the hard requirement stays at one exported symbol and the desirable requirement is two.
+
+## Two things the scheme must survive
+
+**Indirect-branch tracking.** Recent x86-64 processors refuse an indirect call whose target is not a designated landing instruction, and Linux enables this for its own code and rewrites module call sites into a stricter, per-signature form. The kernelet design is built on indirect calls: the service table vOSTD calls down through, and the entry table the host calls up through. So a kernelet image must emit the landing instruction at every indirect-branch target, and on a kernel that rewrites them the endovisor must either perform the same rewrite as it relocates or accept the weaker hardware-only check. The toy on the [evidence](evidence.md) page passes only because the test processor predates the feature. Nothing else in this chapter or in the [build audit](../design/builds-and-images.md#audit) addresses it, and it is recorded as an open item (assumption A19). **[unverified]**
+
+**Translation-buffer pressure.** Sharing the text physically does not share it in the translation buffer. On Linux the image is assembled with `vmap()`, which maps at the smallest page size only, so each instance holds its own small-page translations for text it shares with every sibling. The Design chapter's 2 MiB mapping of the image is therefore an Asterinas-mode property, not a property of the scheme. What this does to the density argument's per-instance overhead is not re-derived here. **[unverified]**
 
 ## Addressing physical memory
 
-The image is only part of a kernelet. The larger part is the memory it has been granted, and vOSTD must turn a physical address into something it can dereference. On the tree that is one addition, `paddr_to_vaddr(pa) = pa + LINEAR_MAPPING_BASE_VADDR`, and the Design chapter preserves the shape by giving each kernelet a private window at a fixed address.
+The image is only part of a kernelet. The larger part is the memory it has been granted, and vOSTD must turn a physical address into something it can dereference. In OSTD today that is one addition, `paddr_to_vaddr(pa) = pa + LINEAR_MAPPING_BASE_VADDR`, and the Design chapter preserves the shape by giving each kernelet a private window at a fixed address.
 
-Under one shared address space the private window is gone, and the answer is simpler than what it replaces: **use the host's own linear map**. Linux's direct map already holds every byte of physical memory, in order, and Linux's own `__va()` is the same single addition. The base is not a compile-time constant, so the loader writes it into the instance's data at load time, and `paddr_to_vaddr` reads it from there — one load from a line that is always hot, then one add.
+Under one shared address space the base can no longer be a compile-time constant, so the host supplies it at creation and the instance holds it in its own data. `paddr_to_vaddr` becomes a load from a line that is always hot, then an add. **The kernelet's code is the same either way**, which is what lets the two hosts differ underneath it.
 
-This gives a kernelet the ability to address every physical frame on the machine. It is worth being precise that **this is not a change**. The Design chapter already shares the host's linear map into every kernelet's page table and says so plainly: *"sharing the linear map into a kernelet's page tables means vOSTD can address every physical frame: invariant I2's write confinement rests on that code's discipline, and the page tables back only the host-to-kernelet direction of privacy."* The window was never a wall between kernelets. It was a convenient base constant.
+What the base points at is the interesting question, and the two hosts answer it differently.
 
-## Frame metadata, which does change
+## The fail-stop property, and what it costs to keep
 
-OSTD keeps a 64-byte record for every frame, found by arithmetic on the frame's physical address. The Design chapter gives each kernelet a private metadata window holding records only for its own frames, so that a miscomputed address lands on an unmapped page and stops the kernelet, rather than corrupting somebody's records.
+In the Design chapter the base points at a **private window that maps only this kernelet's grains**. That buys something beyond convenience: a physical address vOSTD miscomputes lands on an unmapped page and stops the kernelet, instead of quietly writing another tenant's memory. The same page keeps that property for frame metadata and says it is worth keeping.
 
-That property is worth keeping, and it survives: the loader gives each instance its own metadata region at a base of the loader's choosing, written into the instance's data beside the linear-map base. The formula stays the tree's, with a per-instance base instead of a constant.
+The first draft of this chapter gave it up for grains without doing the arithmetic. Here it is.
 
-What it costs is address space. The region must span the physical range the kernelet can be granted, divided by 64. The arithmetic:
+A private window must span the physical range the kernelet can be granted. If the host confines a kernelet's grains to a bounded slice of physical memory, the window reserves that slice's size in address space:
 
-| the kernelet's physical span | address space per kernelet | kernelets in 32 TB (4-level) | in 12.5 PB (5-level) |
+| the kernelet's physical slice | address space per kernelet | kernelets in 32 TB (4-level vmalloc) | in 12.5 PB (5-level) |
 |---|---|---|---|
-| a whole 1 TiB machine | 16 GiB | about 2,000 | far more than wanted |
-| a 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
+| a 2 GiB slice | 2 GiB | about 16,000 | far more than wanted |
+| a whole 1 TiB machine | 1 TiB | 32 | unusable |
+| metadata window only, 2 GiB slice | 32 MiB | about 1,000,000 | no limit in practice |
 
-Reading this table the right way: on a machine using five-level paging, nothing constrains us. On four-level paging, either the host confines each kernelet's grains to a bounded slice of physical memory — which it has every reason to do anyway — or density is capped in the low thousands. The chapter states this rather than hiding it, and the [what differs](what-differs.md) page records it as the one place where the host's paging configuration reaches the design.
+So the property is affordable — at 2 GiB per kernelet, sixteen thousand of them fit in four-level paging's vmalloc area — **provided the host can confine each kernelet's grains to a bounded physical slice**. That is the condition, and it is where the two hosts part company.
+
+- **Asterinas mode keeps the window.** The host owns its own frame allocator and can hand a kernelet grains out of a reserved slice, so it does, and the fail-stop property survives. The base in `BootArgs` points at the private window.
+- **Linux mode uses the direct map.** Linux's page allocator offers no supported way to confine allocations to a physical slice, short of reserving memory at boot with the contiguous allocator and managing it ourselves, which is a larger design than this chapter wants to propose. So on Linux the base is `page_offset_base`, every frame on the machine is addressable, and **the fail-stop property is lost**.
+
+This is a real difference between the hosts, it is the only one that touches a security property, and it is a row in the [what differs](what-differs.md) table rather than a footnote.
+
+## Frame metadata
+
+OSTD keeps a 64-byte record for every frame, found by arithmetic on the frame's physical address. Each kernelet gets its own metadata region at a base the loader chooses and writes into `BootArgs`, holding records only for its own frames. The formula stays OSTD's, with a per-instance base instead of a constant, and the region is sparse, so a miscomputed metadata address still meets an unmapped page and stops the kernelet. This holds on **both** hosts: the region is small enough (one byte per sixty-four of physical span) that even a machine-wide span costs 16 GiB of address space per kernelet, and a bounded slice costs 32 MiB.
 
 ## What it costs, honestly
 
 **A relocation processor in the trusted base.** The loader must walk the image's relocation entries and patch each one. For a position-independent image these are all of one kind, a base-plus-offset fixup, and the loop is a few dozen lines. It is new trusted code, and the Design chapter's rejection of position-independence named exactly this cost. It was right to name it; what has changed is that we now get something for it.
 
-**Text must carry no relocations.** The whole scheme depends on one physical copy of the code serving every instance, so nothing in the code may be patched per instance. Only the data segment may have relocations. The build must check this, and the [evidence](evidence.md) page lists it among the audit's obligations.
+**Kernelets become mutually addressable.** In the Design chapter a stray kernel pointer in kernelet A that happened to name kernelet B's image would fault, because B's image is not in A's page table. Under one address space it would not.
 
-**Kernelets become mutually addressable.** In the Design chapter, a stray kernel pointer in kernelet A that happened to name kernelet B's window would fault, because B's window is not in A's page table. Under one address space it would not. As the section above showed, A could already reach B through the shared linear map, so this removes a backstop that only ever caught a narrow class of accident. But it does remove it, and the security argument now rests, with nothing behind it, on the kernel proper being safe Rust and vOSTD being correct — which is what [Boundaries and trust](../design/principles.md) already says it rests on.
+How much that matters depends on which host. A kernelet could always reach any frame *through the linear map*, so on Linux, where the base is the direct map, the change adds little to a reach that was already total. In Asterinas mode, where the window stays private, the shared image is now the one part of another kernelet that a stray pointer can name. Either way the security argument rests, as [Boundaries and trust](../design/principles.md) now says explicitly, on the kernel proper being safe Rust and vOSTD being correct.
 
-**Randomized offsets are not a defense.** The loader may scatter instances, and should. It buys nothing against a kernelet that can read its own linear-map base, which every kernelet can. It is hygiene, not a boundary.
+**One physical copy of the text is one physical copy to corrupt.** This is the cost the first draft missed. The text of a kind is now a single set of frames that every instance of that kind is executing. On Linux, where every kernelet can address every frame, a sufficiently wrong write from one tenant's kernel rewrites the code all of its neighbors are running. The mitigation is to keep the text out of any writable alias — it is mapped read-only in the instances' ranges, and on Asterinas the host can map it read-only in the linear map as well; on Linux that needs `set_memory_ro`, the second unexported symbol. Until then it is a real and stated exposure, and it is strictly worse than mutual addressability, which is why it is listed second.
+
+**The per-instance footprint has to be re-derived.** Assumption A4 puts a kernelet's fixed cost at about 128 KiB, and that figure was taken under the old scheme, where the image was one shared read-only mapping per kind and the per-instance cost was page tables and metadata. Under this scheme the per-instance cost is the writable segment plus the few kilobytes of relocated read-only data plus, on Linux, one small-page translation per page of image. The direction is favorable — no per-kernelet top-level page-table entries at all — but the number is not recomputed here, and A4 is marked as resting on the superseded scheme. **[unverified]**
+
+**Randomized offsets are not a defense.** The loader may scatter instances, and should. It buys nothing against a kernelet that can read its own base, which every kernelet can. It is hygiene, not a boundary.
 
 ## What this replaces in the Design chapter
 
-This scheme is better in Asterinas mode too. It removes two top-level page-table entries per kernelet and everything beneath them, removes the rule that the window cannot use global page-table entries and the translation refill that rule costs on every address-space switch, and removes the assumption that the machine's physical memory fits in a 512 GiB window. The Design chapter is changed accordingly, in this branch:
+This scheme is better in Asterinas mode too. It removes two top-level page-table entries per kernelet and everything beneath them, removes the rule that the image's mappings cannot use global page-table entries and the translation refill that rule costs after every address-space switch, and removes the assumption that the machine's physical memory fits in a 512 GiB window. The Design chapter is changed accordingly, in this branch:
 
-- **Register D3** becomes: the kernelet image is position-independent, and the loader places each instance at an offset of its choosing in the shared kernel address space. The former text, which linked every kind at the same fixed addresses, is superseded.
-- **Register D58** becomes: `paddr_to_vaddr` uses the host's linear map, whose base each instance holds; frame metadata keeps its per-instance region at a loader-chosen base. The two-entry kernelet window is superseded.
-- **Assumption A13**, that the machine's physical range fits the window's 512 GiB, is withdrawn: there is no window to outgrow.
-- [Builds and images](../design/builds-and-images.md) and [Memory](../design/virtualizing-ostd/memory.md) are edited to match, and [Boundaries and trust](../design/principles.md) gains the sentence about kernelets being mutually addressable.
+- **D3** becomes: the image is position-independent, and the loader places each instance at an offset of its choosing in the shared kernel address space; the shared regions carry no relocations, which the audit checks.
+- **D58** becomes: `paddr_to_vaddr` adds a base the host supplies — a private window on Asterinas, the direct map on Linux — and frame metadata keeps a per-instance region on both.
+- **A13**, that the machine's physical range fits the window's 512 GiB, is withdrawn.
+- **A2**, about the refill cost of non-global window translations, is withdrawn in the form it was asked; the image's own mappings are still per-instance and still not global, so the question returns in a smaller shape and is recorded as such.
+- [Builds and images](../design/builds-and-images.md), [Memory](../design/virtualizing-ostd/memory.md) and [Boundaries and trust](../design/principles.md) are edited to match, and invariant I3 drops from *checked by the page tables* to *trusted*.
 
 A reader who wants the old scheme will find it in the register, marked superseded, with the reason.

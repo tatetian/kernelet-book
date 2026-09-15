@@ -1,6 +1,6 @@
 # The tenant: user mode and system calls
 
-*The hardest part of Linux mode. A kernelet must run its tenant's programs and answer their system calls, and Linux gives an out-of-tree component no way to do either directly. This page works through what Linux does offer, measures the candidates, and picks two: one that needs no patch and one that is 7.9× faster and needs twenty lines.*
+*The hardest part of Linux mode. A kernelet must run its tenant's programs and answer their system calls, and Linux gives an out-of-tree component no way to do either directly. This page works through what Linux does offer, measures the candidates, and reaches a conclusion the first draft of this chapter got wrong: the optional patch is not a performance option. It is what decides whether the kernelet is the tenant's boundary at all.*
 
 ## Why this is hard
 
@@ -8,81 +8,96 @@ In Asterinas mode the answer is short. vOSTD calls `user_run`, the host switches
 
 On Linux neither half of that is available.
 
-**A kernel thread cannot return to user mode.** Linux's return path restores the registers of the *current task* and runs on whatever page table Linux installed for that task's address space. A kernel thread has no user-mode side at all. There is no hook to substitute a page table on the way out, and the only in-tree machinery that runs code under a page table of someone else's choosing is the hypervisor.
+**A kernel thread cannot return to user mode.** A kernel thread is dispatched at creation to a function that never leaves the kernel, and it has no saved user register state to return to. Borrowing a process's address space with `kthread_use_mm()` deliberately does not change that: it lets the thread read and write that process's memory, not become it.
 
-**No module can intercept a task's system calls.** Linux diverts a call in exactly three places, and all three are driven from user space. There is no callback a module can register. The system-call table is read-only after boot and unexported.
+**No module can intercept a task's system calls.** Linux diverts a call in three places — syscall user dispatch, ptrace, seccomp — and all three are driven from user space. A tracing probe can watch a call, or change its number, but nothing in the kernel can *answer* one on a module's behalf. On x86-64 there is not even a table to patch: the dispatch is a `switch` compiled into the entry path, and the old system-call table survives only for tracing.
 
 ## The shape of the answer
 
-Since the kernelet cannot create a user-mode context, it borrows one: **the tenant's processes are Linux processes**. Linux schedules them, enters and leaves them, and handles their traps, exactly as for any program. What changes is who answers their system calls and who supplies their memory.
+Since the kernelet cannot create a user-mode context, it borrows one: **the tenant's processes are Linux processes**. Linux schedules them, enters and leaves them, and handles their traps. What changes is who answers their system calls and who supplies their memory.
 
-```mermaid
-sequenceDiagram
-  participant T as tenant process<br/>(a Linux task)
-  participant L as Linux entry path
-  participant K as kernelet<br/>(in kernel mode)
-  T->>L: syscall instruction
-  L->>K: per-task hook, or SIGSYS then one ioctl
-  K->>K: the kernel proper services the call
-  K-->>T: result in the return register
-```
+Memory is the easier half and needs no patch. The endovisor gives the tenant's address space a **virtual memory area whose fault handler is the kernelet's**, so when the tenant touches an address, Linux calls that handler and the kernelet supplies a frame from its own grant.
 
-Memory is the easier half and needs no patch at all. The endovisor gives the tenant's address space a **virtual memory area whose fault handler is the kernelet's**. When the tenant touches an address, Linux calls that handler, and the kernelet supplies a frame out of its own grant. This is the ordinary mechanism a device driver uses to hand memory to a program, and it makes the kernelet the owner of its tenant's memory without fighting Linux for it.
+Two cautions, because "the kernelet owns its tenant's memory" is too strong for what this buys. Linux still owns the address-space *structure* — the list of areas, and therefore `mmap`, `mprotect`, `mremap`, reclaim and copy-on-write — so the kernel proper's memory management must be re-expressed over Linux's interfaces rather than carried across unchanged. And pages handed out this way carry no memory-cgroup charge unless the endovisor adds one, so a tenant's memory escapes the host's accounting by default.
 
-System calls are the hard half, and there are four candidates.
+System calls are the hard half.
 
 ## The four candidates, measured
 
-All four were measured. Three need no kernel change; the fourth is the patch. Two machines were used, and the tables below are kept apart so that nothing is compared across them.
+Two machines were used, and the tables are kept apart so that nothing is compared across them. Guest figures are medians of five runs.
 
-Measured in the **guest**, where a call Linux services itself costs 46 ns:
+Measured in the **guest**, where a call Linux services itself costs 44 ns:
 
-| mechanism | per call | needs a patch | what happens |
+| mechanism | median | overhead | needs a patch |
 |---|---|---|---|
-| a call Linux services itself | 46 ns | — | the floor |
-| **Syscall User Dispatch** | **936 ns** | no | `SIGSYS` to a stub in the tenant, one call into the endovisor |
-| **per-task hook** | **118 ns** | 20 lines | the entry path calls the kernelet directly |
+| a call Linux services itself | 44 ns | — | — |
+| **Syscall User Dispatch** | 929 ns | **+885 ns** | no |
+| **per-task hook** | 39 ns | below the noise | yes |
 
-Measured on the **build host**, where the floor is 485 ns, for the two candidates this chapter rejects:
+Measured on the **build host**, where the floor is 485 ns:
 
-| mechanism | per call | against Syscall User Dispatch on the same machine |
+| mechanism | per call | overhead |
 |---|---|---|
-| Syscall User Dispatch | 1,887 ns | — |
-| seccomp user notification | 5,721 ns | 3.0× more |
-| `ptrace(PTRACE_SYSEMU)` | 8,221 ns | 4.4× more |
+| Syscall User Dispatch | 1,887 ns | +1,405 ns |
+| seccomp user notification | 5,721 ns | +5,231 ns |
+| `ptrace(PTRACE_SYSEMU)` | 8,221 ns | +7,736 ns |
 
-The two machines are never compared against each other; each table stands on its own. What carries across both is the shape: **not patching costs about twenty bare system calls per tenant call; patching costs about two and a half.**
+The hook measures *faster* than a bare `getppid` because the servicer used for the measurement returns a constant while `getppid` does real work. So the number does not say a kernelet is free. It says that **the hook adds nothing measurable to Linux's entry path**: reaching a kernelet costs about what reaching Linux's own handler costs, and the kernelet's actual work is the kernel proper's code, identical on both hosts.
 
-Two candidates fall away immediately. Both seccomp user notification and ptrace put the answer in a *different process*, so each tenant call becomes a pair of context switches to a supervisor and back. On the same machine they cost three to four times what Syscall User Dispatch costs, and they are structurally worse, since a supervisor process is one more thing to schedule, account and keep alive.
+**Read the overheads, not the ratios.** The guest is a minimal kernel with no speculative-execution mitigations, no page-table isolation and no indirect-branch thunks, so its floor is ten times lower than a production host's and any ratio taken against it flatters. Syscall User Dispatch costs +885 ns in the guest and +1,405 ns on the mitigated host: the same order, and that is as much as this supports. On a production kernel both paths grow — dispatch pays two more ring transitions, which page-table isolation makes worse, and the hook's indirect call becomes a thunk — and which grows faster was **not measured**. **[unverified]**
 
-## The no-patch path: Syscall User Dispatch
+Two candidates fall away on measurement. Both seccomp user notification and ptrace put the answer in a *different process*, so each tenant call becomes a pair of context switches to a supervisor and back. On the same machine they cost three to four times what Syscall User Dispatch costs.
 
-Syscall User Dispatch lets a process ask Linux to stop executing its system calls and raise a signal instead, with a single byte in the process's own memory deciding whether the diversion is on. Its intended users are Windows emulators, which must run a foreign program's calls themselves — which is very nearly what a kernelet does.
+One clarification, since it is easy to get wrong: **gVisor does not use seccomp user notification.** Its current platform, systrap, uses a seccomp filter that *traps*, raising `SIGSYS` in the calling thread, with a stub handler that reaches gVisor's kernel through shared memory. That is the same shape as Syscall User Dispatch, not the shape rejected here. gVisor has spent years optimizing that path; none of its techniques was tried here, and they are the obvious thing to aim at the +885 ns.
 
-In Linux mode the sandbox is set up like this. The kernelet runtime starts the tenant's first process with a small **stub** mapped into it, outside the dispatch region so the stub's own calls run normally. The stub arms dispatch and sets the selector byte to *block*. From then on:
+## The no-patch path, and the hole in it
 
-1. the tenant executes a system call; Linux raises `SIGSYS` instead of running it;
-2. the stub's handler makes one call into the endovisor, carrying the register set;
-3. the endovisor hands it to the kernelet, which services it and returns a result;
-4. the stub writes the result into the signal frame and returns; the tenant resumes.
+Syscall User Dispatch lets a process ask Linux to stop executing its system calls and raise a signal instead, with one byte in the process's own memory deciding whether the diversion is on.
 
-The cost is the 936 ns in the table, which is 890 ns more than a call Linux services itself: a signal delivered and returned from, plus one call into the module. The tenant's own kernel code — the kernel proper, doing the actual work of the system call — costs whatever it costs, on both sides of the comparison.
+The sandbox is set up like this. The kernelet runtime starts the tenant's first process with a small **stub** mapped into it. The range handed to Linux is the range that is *exempt*, so the stub goes **inside** it and the stub's own calls run normally while everything outside traps. The stub arms dispatch and sets the selector byte to *block*. From then on: the tenant executes a system call; Linux raises `SIGSYS` instead of running it; the stub's handler makes one call into the endovisor carrying the register set; the kernelet services it; the stub writes the result into the signal frame and returns; the tenant resumes.
 
-**What this path cannot do.** A signal is delivered on the tenant's own stack, so the stub needs a guaranteed stack, and a tenant that deliberately corrupts its own signal state breaks only itself. More seriously, the tenant can see the stub and the selector byte, because they are in its address space. That is acceptable: the tenant is *inside* the sandbox and is assumed hostile to its own kernelet only in the sense that any program is hostile to its own kernel. It cannot use the selector to escape, because turning dispatch off means its calls go to *Linux*, with the tenant's own unprivileged credentials, which is exactly the confinement the runtime set up with Linux's own facilities.
+Two honest notes about the 929 ns. The program that produced it ran with **no** exempt range and a handler that filled in a result directly, so it measures the signal delivery and return — steps one and four — and not the call into the endovisor in between. A real stub adds at least one more kernel entry, so 929 ns is a floor.
 
-## The patched path: a per-task hook
+Now the part the first draft of this page got wrong.
 
-The patch adds one field to the task structure and one check at the top of the system-call path: if this task has a kernelet, call it and skip Linux's dispatch. With the module's setter it is twenty lines across four files, given in full on the [evidence](evidence.md) page.
+**On this path the tenant can reach Linux's own system calls.** Two ways, neither exotic. The selector byte lives in the tenant's memory, so the tenant can store *allow* and make an ordinary call. Or it can jump to the `syscall` instruction inside the stub, which is in the exempt range by construction, with registers of its own choosing.
 
-Measured at **118 ns** against 46 ns for a call Linux services itself, so reaching the kernelet and returning costs about 72 ns end to end. That covers the load and the branch on Linux's entry path, the indirect call, the toy servicer's own work and the return; the measurement does not separate them. Against the 936 ns of the no-patch path it is **7.9× cheaper**.
+So on the no-patch path the kernelet is **not** the tenant's boundary. What confines the tenant is Linux's own machinery: an unprivileged user id, a set of namespaces, and a seccomp filter — which is the container boundary this work exists to improve on. The Paper opens by observing that a tenant which finds a global the namespaces do not partition has found its neighbors; on this path that sentence applies to a kernelet's tenant too.
 
-**Would it be accepted upstream?** Honestly, probably not as written. It adds a per-task function pointer that lets out-of-tree code take over a task's system calls, and that is close to what Linux's maintainers have historically pushed back on. A version with a better chance would be framed as a generalization of Syscall User Dispatch — an in-kernel dispatch target rather than a signal — and would come with an in-tree user. The chapter's position is that the patch is *small, measurable and optional*: an operator who will not patch gets the 936 ns path and everything else in this chapter unchanged.
+Two things narrow the hole without closing it. Mapping the selector page read-only to the tenant stops the store but not the jump. A seccomp filter over the tenant turns "the whole Linux system-call interface" into "whatever the filter allows", which is what gVisor does and is worth doing. Neither makes the kernelet the boundary.
 
-## What the tenant's kernel actually does
+## The patched path, and why it is the real one
 
-Worth saying plainly, because it is easy to lose: in both paths the kernelet is doing the real work. The number above is only the cost of *reaching* it. The system call itself — resolving a path, reading from the page cache, extending a mapping — is the kernel proper's code, the same safe Rust that runs in Asterinas mode, operating on the kernelet's own memory. Linux's role ends at delivery.
+The patch adds one field to the task structure and one branch at the top of the system-call path: if this task has a kernelet, call it instead of dispatching. There is no selector for the tenant to flip and no exempt range to jump into. **The kernelet becomes the tenant's only system-call surface**, which is what the design claims everywhere else and what the no-patch path cannot deliver.
+
+That is the argument for the patch. The twenty-four-fold difference is real but secondary, and the first draft led with it, which was a mistake: it made a security mechanism look like an optimization.
+
+**The patch as first measured had two defects, both found in review.** It returned a value meaning *leave through the slow exit path*, which sent every serviced call out the expensive way and skipped the checks that would have allowed the fast one; that, and not the hook, was most of the cost first reported. And it did not test for the marker meaning *an earlier stage already answered this call*, so attaching a kernelet would have overridden that task's seccomp verdict. Both are fixed and the numbers above are from the fixed version.
+
+**What is still wrong with it** is recorded rather than repaired, because it changes the size of the ask:
+
+- **Only one of four entry points is hooked.** A 64-bit process on a kernel built with 32-bit compatibility — which production kernels usually are — can enter through the legacy interrupt or the fast 32-bit path, neither of which passes the hook. Its call is then serviced by Linux, with the tenant's own credentials, invisibly to the kernelet. That is a complete escape, and the guest used here had compatibility compiled out, so it could not appear in the measurement.
+- **No lifetime management.** `fork` copies the two fields into the child, nothing clears them when a task exits, and nothing takes a reference on the module, so unloading it can leave a task pointing into freed memory.
+- **The return-value convention is unstated.** Several negative values mean *restart this call* to Linux's signal machinery; a kernelet returning one would have its call silently re-executed.
+
+**Would it be accepted upstream?** No, not as posted. A version with a chance would be framed as a generalization of Syscall User Dispatch — an in-kernel dispatch target instead of a signal — gated behind a configuration option, with an in-tree user and the lifetime rules worked out.
+
+## What is missing entirely
+
+Two gaps larger than anything above, stated because the chapter would be dishonest without them.
+
+**Process lifecycle.** The hook's shape — take a register set, return a value — cannot express `fork`, which returns twice; `execve`, which replaces the address space and the register file; or the return from a signal handler, which restores a saved frame. Only Linux can create a Linux task, and the functions that do so are not available to a module. How a kernelet's processes map onto Linux tasks, and who owns the tenant's signals, is **not designed here**, and it is the largest open item in this chapter.
+
+**The virtual system-call page.** Some calls — reading the clock, asking which processor you are on — are served from a page Linux maps into every process, without entering the kernel at all. Neither dispatch nor the hook sees them, so a tenant would read the *host's* clock rather than its kernelet's. The endovisor must unmap that page from its tenants or supply its own.
+
+## Two things Linux will not do, which the design assumed
+
+**A runaway kernelet cannot be stopped.** [Faults, termination and reclamation](../design/faults-and-reclamation.md) requires that a kernelet task be terminable and its stack discarded, and that a kernelet be destroyed without running any of its code. Linux cannot: a task in kernel mode runs until it returns to user mode of its own accord, stopping a kernel thread is cooperative, and on the patched path the kernel proper's code runs *on the tenant's own task, in kernel mode*, where a kill signal cannot reach it. A kernelet that loops inside the hook is an unkillable task and a destroy that never completes. **Invariant I7, fault containment, does not hold in Linux mode.** The substitute is cooperative — a check of the dying flag at every service-call boundary, a deadline, a watchdog — and it is weaker, because it needs the kernelet to keep working well enough to notice.
+
+**The kernel stack is a fraction of what the design assumes.** The [control half](../design/kernelet-api-control.md) gives a kernelet task a 512 KiB stack, and assumption A3 reserves 64 KiB of headroom for the deepest host path a service call takes. On Linux a kernel stack is 16 KiB, for kernel threads and for the tenant's task alike, and on the patched path a full Linux-compatible kernel's system-call path runs on that stack on top of Linux's own entry frame, with a guard page that turns overflow into a crash. That is a thirty-two-fold mismatch against the design's own assumption, and this chapter does not resolve it.
 
 ## What this page decides
 
-- **The tenant's processes are Linux processes, and the kernelet owns their memory through a fault handler on their virtual memory areas** (register D78). The alternative, a kernelet-built address space entered from a kernel thread, is not possible on Linux.
-- **The tenant's system calls reach the kernelet through Syscall User Dispatch where Linux is unmodified, and through a per-task hook where the twenty-line patch is accepted** (register D79). Seccomp user notification and ptrace are rejected on measurement: both put the answer in another process and, on the same machine, cost three to four times what Syscall User Dispatch costs.
+- **The tenant's processes are Linux processes, and the kernelet supplies their memory through a fault handler on their virtual memory areas** (register D78). A kernelet-built address space entered from a kernel thread is not possible on Linux. Linux keeps ownership of the address-space structure, so the kernel proper's memory management must be re-expressed over Linux's interfaces.
+- **The tenant's system calls reach the kernelet through a per-task hook where the patch is accepted, and through Syscall User Dispatch where it is not** (register D79). The patch is a security mechanism, not an optimization: without it the tenant can reach Linux's system calls and the effective boundary is the container's. Seccomp user notification and ptrace are rejected on measurement.
+- **Invariant I7 does not hold in Linux mode, and the tenant's process lifecycle is not designed** (register D81). Both are recorded, not solved.

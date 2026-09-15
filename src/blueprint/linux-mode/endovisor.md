@@ -12,20 +12,22 @@ Creating an **instance** is then four steps:
 
 1. **Take pages for the data.** One allocation from Linux's page allocator, sized by the image's writable segment plus one replica of the per-CPU section for each virtual CPU. Copy the template in, zero the rest.
 2. **Build the image's address range.** Call `vmap()` with the kind's text pages followed by this instance's data pages. Linux returns one contiguous kernel address for the lot: this instance's image base.
-3. **Make the text executable.** `vmap()` refuses to, so the endovisor calls `set_memory_x()` on the text pages of *this mapping only*, leaving the data pages non-executable. This is the one exported symbol Linux mode needs.
+3. **Make the text read-execute.** `vmap()` returns a read-write, non-executable mapping, so the endovisor calls `set_memory_rox()` on the text pages of *this mapping only*, which clears both the write and the no-execute bits and leaves the data pages writable and non-executable. Clearing only the no-execute bit, as the first draft of this chapter said, would leave the text writable *and* executable. `set_memory_rox` is not exported; this is the change Linux mode needs.
 4. **Relocate the data.** Walk the image's relocation entries, adding the instance's base to each. The text has none, by construction and by audit.
 
 Then write the two bases the instance needs — the host's direct-map base and this instance's metadata base — into its boot arguments, and call its entry point.
 
-Destroying an instance reverses it: stop its tasks, `vunmap()` the image, free the data pages, return the grains.
+Destroying an instance reverses it: stop its tasks, unmap the image, free the data pages, return the grains. "Stop its tasks" is doing more work in that sentence than Linux will allow, which [the tenant page](tenant.md) explains.
+
+Two costs of this sequence belong here rather than in a footnote. `vmap()` maps at the smallest page size only, so each instance's image occupies its own set of small-page translations even though the underlying text is shared — sharing the physical text saves memory, not translation-buffer entries, and the Design chapter's 2 MiB mapping of the image is lost on Linux. And the call that fixes the text's permissions forces a machine-wide translation-buffer flush, so creating an instance interrupts every processor once.
 
 **Why not let Linux's module loader do this?** Because it would give each instance its own copy of the text. Linux's loader exists to load distinct modules, not many instances of one, and the memory it loads them into is a 1520 MB region shared by every module on the machine. Ten thousand kernelets of a four-megabyte kind would want forty gigabytes of it. Loading the image ourselves costs a relocation loop and buys one physical copy of the text per kind, which is the whole point of the [previous page](one-address-space.md).
 
 ## Memory
 
-A **grain** is 2 MiB of physically contiguous memory, and Linux's page allocator hands out physically contiguous blocks directly. The endovisor allocates a grain as a compound allocation from the allocator and, for larger runs, through the contiguous allocator Linux already uses for huge pages.
+A **grain** is 2 MiB of physically contiguous memory, and Linux's page allocator hands out physically contiguous blocks directly, up to a maximum of 4 MiB. A grain is one such allocation. Runs larger than that need the contiguous allocator Linux uses for huge pages, which is **not exported to modules**, so either the endovisor is limited to runs of two grains or a second symbol must be exported. The allocation may also sleep while it reclaims, so it cannot be made from a context holding a spin lock, and it fails under fragmentation where the host's own allocator would not.
 
-Addressing is the [previous page](one-address-space.md)'s answer: the host's direct map, whose base the instance holds. There is nothing to map per grain and no page-table entry for the endovisor to write, which removes a whole class of work the Asterinas-mode design has to do at each grant.
+Addressing is the [previous page](one-address-space.md)'s answer. On Linux the base is the direct map's, so there is nothing to map per grain and no page-table entry for the endovisor to write — at the price of the fail-stop property that page describes, since every frame on the machine is then addressable from every kernelet.
 
 What the endovisor must still do at each grant is the accounting: zero the grain before publishing it (register D55), write the owner array, extend the instance's metadata region to cover the new frames, append the run descriptor, and publish the new length. The metadata region is the one thing still mapped per instance, with `vmap()` over pages the endovisor allocates for it.
 
