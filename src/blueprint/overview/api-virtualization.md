@@ -20,7 +20,7 @@ Which of the three an item is can be read from OSTD's own source, so the virtual
 | Access checked by | hardware | permissions | handle and owner |
 | A crossing is | a VM exit | a system call | a function call |
 | Kernels per tenant | one each | shared | one instance each, one boot image |
-| The kernel's globals | duplicated | partitioned | per-kernelet windows |
+| The kernel's globals | duplicated | partitioned | one text, per-instance data |
 | The host's globals | hidden | shared | unnameable |
 | Schedulers | two | one | one |
 | Kill and reclaim | destroy the VM | tear down the views | unmap and release |

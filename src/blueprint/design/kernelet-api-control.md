@@ -10,7 +10,7 @@ The control half and the service half share the [window](builds-and-images.md#wi
 
 | region | mapped by | frames from | when |
 |---|---|---|---|
-| the two level-3 tables and every page-table frame beneath them | control half | host memory, charged to the kernelet's host-overhead account | `create`, and `grant` or `grains_request` when a grain lands in a range not yet covered |
+| the metadata window's page-table frames | control half | host memory, charged to the kernelet's host-overhead account | `create`, and `grant` or `grains_request` when a grain lands in a range not yet covered |
 | `KW_TEXT` | control half | the kind's shared frames, 2 MiB-aligned so that they map as 2 MiB pages | `create` |
 | `KW_DATA` (template and replicas) | control half | host memory, charged to the kernelet, one 2 MiB page | `create` |
 | `KW_SHARED` | control half | host memory, charged to the kernelet | `create` |
@@ -249,11 +249,11 @@ pub struct Kernelet { /* host-side state; see below */ }
 
 impl Kernelet {
     /// Builds a kernelet: its slot and identifier; its kernel page table (the host's
-    /// with entries 500 and 501 replaced by two fresh level-3 tables); the window's
+    /// mapped at a base of the host's choosing); the image's
     /// host-mapped regions (`KW_TEXT` from the kind's shared frames, `KW_DATA` from the
     /// template with the per-virtual-CPU replicas, `KW_SHARED` with `BootArgs`, the info
     /// page and the task records); the initial grant of `initial_grains` grains, zeroed,
-    /// mapped into `KW_PHYS` with their metadata frames mapped into `KW_META`, recorded in
+    /// addressable through the host's linear map, with their metadata frames mapped into `KW_META`, recorded in
     /// the grant table and the owner array ([Memory](virtualizing-ostd/memory.md)); the
     /// device table; and, through the `spawn_task` hook, one worker thread per virtual CPU
     /// (`run_task(1, vcpu)`, suspended) and the boot thread (`_kernelet_entry`), all
@@ -375,7 +375,7 @@ The fields of `Kernelet`, listed so that the destroy sequence can be checked aga
 |---|---|---|
 | `id`, `state`, `ops_in_progress` | identity; the state word; the operation count | control half |
 | `image`, `config`, `hooks` | the kind, the configuration, the endovisor's hooks | creation |
-| `kernel_pt`, `window_l3: [Paddr; 2]` | the kernelet's kernel page table root and its private level-3 tables for entries 500 and 501; every page-table frame beneath them, which the host allocates as grains land in new ranges | creation, `grant`, `grains_request` |
+| `image_base: Vaddr`, `meta_base: Vaddr` | where this instance's image and metadata window were placed, and the page-table frames beneath the metadata window, which the host allocates as grains land in new ranges | creation, `grant`, `grains_request` |
 | `grant` | the grant table: each run's physical base and length, mirrored read-only into `KW_SHARED`, plus each run's pin count, its host `Segment`, and the metadata frames dedicated to it; append-only, chunked | `create`, `grant`, `grains_request`; pins by `guest_memory` |
 | `roots` | the user page-table roots the kernelet has registered, each with its active set of CPUs | the service half |
 | `budget`, `throttle` | the `nice` applied to the kernelet's threads; the quota's period accounting and the `throttled` flag every task's quiescent points read | `create`, `set_budget`, the host tick |
@@ -394,7 +394,7 @@ The second version of devices widens each owner-array entry into an owner-and-le
 
 ## Costs
 
-Per kernelet, `create` costs, in host memory charged to the kernelet's host-overhead account: two level-3 tables; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); the level-2 tables of `KW_PHYS` and the level-2 and level-1 tables of `KW_META` that the initial grant touches; one level-2 and one or two level-1 tables for `KW_SHARED`; the data template copy padded to 2 MiB, of which under 128 KiB is used (*estimated*, [Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; the shared pages, including the grant table; eight metadata frames per grain; and one kernel thread per virtual CPU plus the boot thread, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item and the reason `max_tasks` exists. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per run: one `alloc_segment_aligned`, the zeroing, the window and metadata mappings, one grant-table append, the owner-array writes, and, after boot, one `JOB_GRANT` wakeup. `raise_irq` is one atomic or and one wakeup. `kill` is a compare-and-swap, one store and a signal; the per-task work is the reaper's. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
+Per kernelet, `create` costs, in host memory charged to the kernelet's host-overhead account: the page-table frames that map the image; one level-2 table for `KW_TEXT`, whose 2 MiB pages need no level-1 tables (about seven entries for the tree's 14 MiB debug image, measured with `size -A`); the level-2 and level-1 tables of `KW_META` that the initial grant touches; one level-2 and one or two level-1 tables for `KW_SHARED`; the data template copy padded to 2 MiB, of which under 128 KiB is used (*estimated*, [Builds and images](builds-and-images.md)); the per-virtual-CPU replicas at about 2 KiB each, measured on the tree; the shared pages, including the grant table; eight metadata frames per grain; and one kernel thread per virtual CPU plus the boot thread, each with a 512 KiB kernel stack and four guard pages of vmalloc (measured on the tree: `DEFAULT_STACK_SIZE_IN_PAGES = 128`, `ostd/src/task/kernel_stack.rs`), which is the largest fixed item and the reason `max_tasks` exists. The host-side `Kernelet` object is a few kilobytes (*estimated*). Per run: one `alloc_segment_aligned`, the zeroing, the window and metadata mappings, one grant-table append, the owner-array writes, and, after boot, one `JOB_GRANT` wakeup. `raise_irq` is one atomic or and one wakeup. `kill` is a compare-and-swap, one store and a signal; the per-task work is the reaper's. `destroy` is linear in grains, tasks, roots and devices; its cost is the drain list of [Faults, termination, and reclamation](faults-and-reclamation.md).
 
 Per hook call, the endovisor pays whatever its device model does; the control half adds, in `guest_memory`, one owner-array read and one pin increment and decrement per grain touched.
 
