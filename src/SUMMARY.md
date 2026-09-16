@@ -62,4 +62,5 @@
 - [OSTD API inventory](notes/ostd-api-inventory.md)
 - [I/O microbenchmarks](notes/io-microbenchmarks.md)
 - [Linux-mode experiments](notes/linux-mode-experiments.md)
+- [What the alternatives exploration corrected](notes/alternatives-corrections.md)
 - [Design register](notes/design-register.md)

@@ -12,7 +12,7 @@ This chapter assumes the opposite posture. In systems work every design is a tra
 
 ## What the exploration found first
 
-The first result was not a design. It was that the chapter being attacked is wrong in eleven places, and that several of its limitations are smaller than it claims or already answered by interfaces Linux has had for thirty years.
+The first result was not a design. It was that the chapter being attacked is wrong, in twenty-one specific places that are [enumerated with their citations](../../notes/alternatives-corrections.md) in The Notes, and that several of its limitations are smaller than it claims or already answered by interfaces Linux has had for thirty years.
 
 Two examples set the tone. The chapter requires the operator to boot with the legacy virtual system-call page disabled, because that page reaches three system calls below every interception point. It does not: it calls seccomp first, and seccomp's filter input carries the instruction pointer, so a short filter closes it per sandbox with no patch and no boot setting. And the chapter calls the tenant's process lifecycle its largest open item, on the grounds that only Linux can give a task a user context. Linux has exported the machinery for out-of-tree code to do exactly that since binary-format handlers became loadable modules.
 

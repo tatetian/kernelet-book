@@ -12,8 +12,8 @@
 
 That does not make Linux mode the better design. Of the three properties the boundary owes a tenant, Linux weakens all three, and each is argued where it arises later:
 
-- **Safety.** Even patched, the kernelet is not quite the tenant's only system-call surface: three of the four entry points are unhooked, the legacy virtual system-call page needs an operator to turn it off at boot, and Linux's own trusted base is now inside the boundary ([the tenant](tenant.md)).
-- **Fault containment.** A fault in kernelet code is a Linux oops rather than a contained kill, and nothing a module can do turns it into "end this kernelet and reclaim" ([five places](not-as-assumed.md)).
+- **Safety.** Even patched, the kernelet is not quite the tenant's only system-call surface: three of the four entry points are unhooked, and Linux's own trusted base is now inside the boundary ([the tenant](tenant.md)). Both of those have answers in [Alternative designs](../alternatives/index.md), where one hook in the generic entry layer covers every entry.
+- **Fault containment.** A fault in kernelet code is a Linux oops rather than a contained kill, unless a module catches it — which one can, and [Alternative designs](../alternatives/index.md) shows how ([five places](not-as-assumed.md)).
 - **Fairness.** A runaway kernelet cannot be stopped, because Linux will not stop a task in kernel mode, and a tenant's pages are charged to nobody by default.
 
 So the two modes are a real choice and not a ladder. Linux mode is what an operator can deploy on the kernel they already run; Asterinas mode is what the design is specified against, and the difference between them is a list of named properties rather than a feeling about maturity.

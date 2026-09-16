@@ -14,7 +14,7 @@ The obvious answer is wrong, and it is wrong in the same way in every first-wave
 
 *Gives up nothing. Helps Linux; two of its parts help both hosts.*
 
-The smallest coherent mode that restores all three properties, assembled from the first wave's best parts: one gate in the generic entry layer, the kernelet as a program loader with `clone` declined to Linux, the model page table for tenant memory, the die notifier and revoke for containment, the seat for per-processor soundness, section-indexed metadata for density, and control-group membership for accounting.
+The smallest coherent mode that restores safety and brings the other two to parity with the host we wrote, assembled from the first wave's best parts: one gate in the generic entry layer, the kernelet as a program loader with `clone` declined to Linux, the model page table for tenant memory, the die notifier and revoke for containment, the seat for per-processor soundness, section-indexed metadata for density, and control-group membership for accounting.
 
 What makes it interesting is not the mechanism but the ledger, because it asks Linux for **less** than the chapter asks today and delivers more.
 

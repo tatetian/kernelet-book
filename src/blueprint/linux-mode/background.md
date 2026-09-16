@@ -12,7 +12,7 @@ Four regions of that upper half matter here. Their addresses come from [Document
 |---|---|---|---|
 | the **direct map** | every byte of physical memory, once, in order | 64 TB | 32 PB |
 | the **vmalloc area** | ranges the kernel assembles out of scattered pages | 32 TB | 12.5 PB |
-| the **module area** | code loaded after boot | 1520 MB | 1520 MB |
+| the **module area** | code loaded after boot | 1520 MB, or 1008 MiB with address randomization | the same |
 | kernel text | the kernel's own code | 512 MB | 512 MB |
 
 Two of these deserve a closer look.
@@ -31,7 +31,7 @@ Three facts about modules shape this chapter.
 
 **Linux refuses a second copy only by name.** The check is a string comparison against the list of loaded modules ([`kernel/module/main.c`](https://elixir.bootlin.com/linux/v6.12/source/kernel/module/main.c#L2674)); rename the module and a second copy loads — after also renaming any symbol it exports, since a duplicate exported symbol is refused separately. That is a fact about the loader, not a design we build on, but it tells us the obstacle is bookkeeping rather than anything deeper.
 
-**Module code must live in the module area, and that area is small.** Kernel code is compiled so that any reference to another piece of kernel code or data must fit in a signed 32-bit offset, which confines it to a 2 GB span. Linux therefore reserves 1520 MB for all modules together. In v6.12 the allocator behind this is [`execmem`](https://elixir.bootlin.com/linux/v6.12/source/mm/execmem.c), which replaced the older `module_alloc`, and on x86-64 it has no fallback into the roomier vmalloc area ([`arch/x86/mm/init.c`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/init.c#L1056)).
+**Module code must live in the module area, and that area is small.** Kernel code is compiled so that any reference to another piece of kernel code or data must fit in a signed 32-bit offset, which confines it to a 2 GB span. Linux therefore reserves 1520 MB for all modules together — and less than that in practice, because the region is what is left after the kernel image, which reserves twice as much when address randomization is on. On a kernel anyone ships, it is **1008 MiB**. In v6.12 the allocator behind this is [`execmem`](https://elixir.bootlin.com/linux/v6.12/source/mm/execmem.c), which replaced the older `module_alloc`, and on x86-64 it has no fallback into the roomier vmalloc area ([`arch/x86/mm/init.c`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/init.c#L1056)).
 
 ## Getting memory, and the executable-memory problem
 

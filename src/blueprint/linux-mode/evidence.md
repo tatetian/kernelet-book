@@ -234,4 +234,4 @@ The chapter names more open items than a reader can hold in order, and they are 
 
 **5. The tenant.** The system-call hook, the stack switch, the migration hold on the tenant's task, and the alias rule for tenant memory with the invalidation callback that keeps its map true. This stage is where the first system call that passes a buffer works, and where the miss rate Experiment 6 left open gets its number. Gated on everything above.
 
-Process lifecycle, which the chapter calls its largest open item, is deliberately last: it blocks a tenant's *second* process, not its first, and a single-process tenant is enough to measure everything in stage 5.
+Process lifecycle is deliberately last: it blocks a tenant's *second* process, not its first, and a single-process tenant is enough to measure everything in stage 5. It was this chapter's largest open item, and [Alternative designs](../alternatives/index.md) answers it with an extension point Linux already exports.

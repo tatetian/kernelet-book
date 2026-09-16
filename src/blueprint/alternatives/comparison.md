@@ -1,6 +1,6 @@
 # The comparison, and the choice
 
-*Twenty designs, five of them whole modes. This page puts them side by side against the four things Linux mode was failing, says which one to build, and says plainly what the exploration did not achieve.*
+*Twenty designs were explored, fifteen against one cluster of limitations each and five as whole modes; one of the fifteen is recorded as a paragraph rather than a section, because the corrections overtook it. This page puts the rest side by side against the four things Linux mode was failing, says which one to build, and says plainly what the exploration did not achieve.*
 
 ## The scoreboard
 
@@ -13,7 +13,7 @@ The four rows are the three properties the boundary owes a tenant, plus the inva
 | **Supervisor alias** | as conservative | as conservative | as conservative | as conservative |
 | **Per-instance module** | as conservative | restored | as conservative | as conservative |
 | **Self-hosted carriers** | as conservative | parity | weaker per thread | bounded and targetable |
-| **Guest ring 0** | deleted, not closed | **restored** | restored | **restored outright** |
+| **Guest ring 0** | restored, by deletion | **restored** | restored | **restored outright** |
 
 And what each asks for:
 
@@ -44,13 +44,17 @@ It is the mode to adopt because it asks Linux for less than chapter 13 asks toda
 
 The two components to take from elsewhere are **section-indexed frame metadata**, because it retires the worst number in the previous chapter on both hosts for one cache-resident load, and **self-relative exception tables**, because the Design chapter is inconsistent without them and because they are the precondition for everything Linux might later do with a kernelet's own fixups.
 
-Two more are next rather than now. The **supervisor alias** is measured and nearly free, and its value to Asterinas is larger than its value to Linux, but it takes the branch of a conflict that costs the tenant direct input and output, and its second-translation cost is unmeasured. The **carriers** design has the highest ceiling of anything here, because it is the only one that makes Linux mode and Asterinas mode the same design rather than two implementations of one interface; but it is a layer on top of the conservative mode, its switch costs 291 nanoseconds, and two cheap tests should come before any of it.
+The **supervisor alias** goes in the same increment, gated on one measurement. The rule that promoted the other two was that a fix helping both hosts beats one helping Linux, and by that rule the alias selects itself: it is the only thing in the exploration that would let Asterinas enable a hardware protection it leaves off today, at 0.92 cycles per access against 38 for the alternative. The gate is its translation-buffer cost, which is unmeasured and which the same harness that measured the second-level translation cost of guest ring 0 can produce in a day. Its other debit is real and should be stated as its own argument rather than borrowed from a neighbor: the alias is a translation and not an access, so a page the kernelet has not already supplied does not fault in through it, which is why it is correct only while the kernelet owns every one of its tenant's pages.
+
+The **carriers** design is next rather than now. It has the highest ceiling of anything here, because it is the only one that makes Linux mode and Asterinas mode the same design rather than two implementations of one interface; but it is a layer on top of the conservative mode, a switch costs 291 nanoseconds, and two cheap tests should come before any of it.
 
 ## What this does not achieve, stated plainly
 
 **No design restores all three properties at a cost this chapter can defend.** Exactly one restores all three — guest ring 0 — and it does so by giving up kernel-mode execution, adding a hypervisor, and taxing every memory access of every tenant by twenty percent at a realistic working set. That is a real answer to "what would all three cost", and the answer is "a different book".
 
 So the exit condition this exploration set itself was not met, and that is the finding rather than a failure of it. Fault containment and termination on Linux are **parity with Asterinas, not restoration**, because both hosts bound containment at service-call depth zero. The residue is a kernelet that misbehaves *inside* a service call, which neither host can stop, and which only a hardware timer or a kill point inside Linux would fix.
+
+That cuts the other way too, and the previous chapter should own it. If containment is bounded at depth zero on **both** hosts, then what that chapter recorded as a Linux deficiency was in part the design's own bound, attributed to the host. Decision D81's "fault containment does not hold in Linux mode" was not merely overtaken by the die notifier; it was wrong in its framing when it was written, because the property it says Linux loses was never held at depth one anywhere.
 
 **And one thing could still kill the mode that won.** Its model page table and its seat put locks on the same hot path, and they multiply. No first-wave agent could see it, because each saw one cluster. It is measurable on the prototype that already exists, and it has not been measured.
 
