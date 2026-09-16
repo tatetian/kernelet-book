@@ -22,7 +22,7 @@ A kernelet has as many seats as it has virtual CPUs. Entering kernelet code acqu
 
 **What it costs.** An acquire and a release per crossing into kernelet code, and the honest answer to a question worth asking: the seat and the stack cannot be the same object. A seat must be released when the code sleeps, and a stack must not be.
 
-**Verdict.** Promising, and the one to build. It is also the only design here that improves the host we wrote, because a lease is a better abstraction than a virtual CPU on either host.
+**Verdict.** Promising, and the one to build in this cluster. It is also the only design here that improves the host we wrote, because a lease is a better abstraction than a virtual CPU on either host.
 
 ## Be a process {#be-a-process}
 
@@ -31,6 +31,8 @@ A kernelet has as many seats as it has virtual CPUs. Entering kernelet code acqu
 A kernelet's threads become threads of a per-sandbox carrier process, so that they inherit the sandbox's control groups. Accounting then becomes membership rather than bookkeeping: the memory a kernelet allocates and the processor time it burns are charged where they should be, by machinery that already exists, and the kernelet's work on a tenant's own task is charged to the same group.
 
 That last part matters because it is the only correct answer available. Linux's processor-time accounting takes the group from the task, and nothing in the tree redirects it — not even its own virtual-machine monitor.
+
+**What it costs.** A kernelet's threads become visible in a tenant's process tree and inherit that tenant's limits, which is a leak of the host's structure into the sandbox and a constraint the design did not have.
 
 **Verdict.** Needs work, and worth it for the accounting alone. Fairness is one of the three properties the boundary owes, and this is the only design that gives it back.
 

@@ -28,7 +28,7 @@ That reversal is the point. `munmap`, `mprotect` and exit are calls the kernelet
 
 **What it asks Linux for.** Nothing new.
 
-**Verdict.** Promising, and the one to build first. It is the only design in the cluster that asks Linux for nothing, it closes both of D82's open halves rather than deferring them, and most of its code is already written.
+**Verdict.** Promising, and the one to build first in this cluster. It is the only design in the cluster that asks Linux for nothing, it closes both of D82's open halves rather than deferring them, and most of its code is already written.
 
 ## The spliced model {#splice}
 

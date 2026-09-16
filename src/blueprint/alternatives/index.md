@@ -8,7 +8,7 @@ A design document that ends in a list of admitted failures has done half its job
 
 The previous chapter's list is long: a runaway kernelet cannot be stopped, a fault in kernelet code is a Linux oops, kernelet code may not dereference a tenant's address, the per-CPU model is unsound, the kernel stack is a thirty-second of what the design assumes, three of four system-call entry points are unhooked, the tenant's process lifecycle is not designed, and a class of kernel may refuse to run a kernelet at all. Against that, the chapter's conclusion is narrow: nothing found rules out a patched Linux built without type-checked indirect branches.
 
-This chapter assumes the opposite posture. In systems work every design is a trade, and a design that loses on one axis may be bought back on another for less than it appears to cost. So each limitation here is attacked, by agents told to be researchers rather than clerks, with one rule: anything below the kernel proper may change, including the framework's own interface, if the argument is strong enough. The Asterinas kernel above that interface still may not, because that is the claim the whole design rests on.
+This chapter assumes the opposite posture. In systems work every design is a trade, and a design that loses on one axis may be bought back on another for less than it appears to cost. So each limitation here is attacked rather than recorded, with one rule: anything below the kernel proper may change, including the framework's own interface, if the argument is strong enough. The Asterinas kernel above that interface still may not, because that is the claim the whole design rests on.
 
 ## What the exploration found first
 
@@ -22,7 +22,11 @@ Both corrections are already folded into the previous chapter. They are mentione
 
 Two waves. In the first, one agent per cluster of limitations, each asked for several distinct fixes and for an honest verdict on each. A coordinator then ranked what came back, found the pairs that cannot both be adopted, and specified the second wave. In the second, whole-mode designs: coherent answers to every limitation at once, with their trades made deliberately, including designs that deliberately give up one of the book's headline properties to buy the rest.
 
-Every design carries the same headings, so that they can be compared rather than admired: what it attacks, the mechanism, why it works, what it costs, what it breaks, whether it helps both hosts or only Linux, how it could fail, and a verdict. Linux claims are checked against the v6.12 tree with file and line, as the previous chapter does. Designs that failed are here too, with the reason, because the reason is what stops the next reader retrying them.
+Every design carries the same three labels, so that they can be compared rather than admired: what it attacks, which hosts it helps, and a verdict, with its mechanism, its cost and its failure modes in between. Designs that failed are here too, with the reason, because the reason is what stops the next reader retrying them.
+
+The bar was **restoration, not mitigation**: a design counted as a success only if it brought a property back to where the host we wrote holds it. The [comparison](comparison.md) says plainly which designs met it.
+
+The transcripts of the three designs that were built and run, and a table of every symbol and fact the rest turn on with its file and line, are in [Alternative designs: what was measured](../../notes/alternative-designs.md) in The Notes.
 
 ## In this chapter
 

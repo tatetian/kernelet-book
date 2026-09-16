@@ -57,7 +57,7 @@ Three facts in the source explain it and close every alternative:
 
 - `vmap()` wraps the caller's permissions in `pgprot_nx()`, which clears the execute bit ([`mm/vmalloc.c`](https://elixir.bootlin.com/linux/v6.12/source/mm/vmalloc.c#L3453)).
 - [`arch/x86/mm/pat/set_memory.c`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c) exports helpers that change caching and **none** that change permissions.
-- `execmem_alloc()`, which replaced `module_alloc()` in v6.12, has no export at all, and on x86-64 it is confined to the 1520 MB module region with no fallback.
+- `execmem_alloc()`, which replaced `module_alloc()` in v6.12, has no export at all, and on x86-64 it is confined to the module region, 1008 MiB on a kernel with address randomization, with no fallback.
 
 So a symbol must be exported — two, as it turns out — and it is easy to name the wrong one. `set_memory_x` clears only the no-execute bit, and `vmap()` returns a **read-write** mapping, so the result is memory that is writable *and* executable: a W^X violation rather than the read-execute the design wants. The right primitive clears both bits at once:
 

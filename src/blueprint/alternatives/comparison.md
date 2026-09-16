@@ -8,18 +8,20 @@ The four rows are the three properties the boundary owes a tenant, plus the inva
 
 | | safety | fault containment | fairness | termination (I7) |
 |---|---|---|---|---|
-| **Linux mode as chapter 13 has it** | short: three entries unhooked | absent | absent by default | absent |
+| **Linux mode, before this chapter's corrections** | short: three entries unhooked | absent | absent by default | absent |
 | **Conservative restoration** | restored | parity | narrowed | parity, by revoke |
 | **Supervisor alias** | as conservative | as conservative | as conservative | as conservative |
 | **Per-instance module** | as conservative | restored | as conservative | as conservative |
 | **Self-hosted carriers** | as conservative | parity | weaker per thread | bounded and targetable |
 | **Guest ring 0** | restored, by deletion | **restored** | restored | **restored outright** |
 
+The first row of each table is the mode as it stood when the exploration began. Its corrections are already folded into that chapter, which is why it no longer reads that way.
+
 And what each asks for:
 
 | | patch | exports | boot setting | build option | density |
 |---|---|---|---|---|---|
-| chapter 13 today | ~25 lines, one architecture, one entry of four | 5 | yes | yes | thousands |
+| [Linux as the host](../linux-mode/index.md), before these corrections | ~25 lines, one architecture, one entry of four | 5 | yes | yes | thousands |
 | conservative | ~15 lines, generic layer, every entry, four architectures | 3 | none | none | thousands |
 | supervisor alias | + ~15 lines | 3 | none | none | thousands |
 | per-instance module | none | 0 | none | none | **56 per machine** |
@@ -30,9 +32,9 @@ And what each asks for:
 
 **Four of the chapter's limitations were not limitations.** A fault in kernelet code is recoverable with an exported interface; the legacy virtual system-call page is closed by a seccomp filter rather than a boot setting; the modern one is closed by not mapping it; and a kernelet's pinned threads can join a processor set after all. A fifth, the tenant's process lifecycle, has a supported extension point that Linux has exported since binary-format handlers became loadable.
 
-**Two of the chapter's numbers were wrong in the direction that matters.** The module region is 1008 MiB rather than 1520 MB on a kernel anyone ships. And the framework's own exception table holds absolute addresses, so the Design chapter's region table put a section full of addresses in the shared, address-free region, where the build audit would have rejected it.
+**Two of the chapter's numbers were wrong in the direction that matters.** The module region is 1008 MiB rather than 1520 MB on a kernel anyone ships, because the region is what is left after a kernel image that reserves twice as much when address randomization is on. And the framework's own exception table holds absolute addresses, so the Design chapter's region table put a section full of addresses in the shared, address-free region, where the build audit would have rejected it.
 
-**Two designs improve the host the book actually specifies.** Indexing frame metadata by section rather than by raw physical address moves the density cap from about two thousand kernelets per terabyte to about sixty thousand, and stops it growing with the machine, on both hosts. And the supervisor alias would let Asterinas enable a hardware protection it currently leaves off entirely, at a measured 0.92 cycles per access against 38 for the alternative.
+**Two designs improve the host the book actually specifies.** Indexing frame metadata by section rather than by raw physical address moves the density cap from about two thousand kernelets per TiB of physical span to about sixty thousand (*estimated*, from the region sizes), and stops it growing with the machine, on both hosts. And the supervisor alias would let Asterinas enable a hardware protection it currently leaves off entirely, at a measured 0.92 cycles per access against 38 for the alternative.
 
 **One limitation got worse under inspection.** A tenant enters its kernelet by a signal and by a synchronous exception as well as by a system call, and the chapter counts neither. The answer costs no patch, but it had to be found: blocking those signals does not work, because Linux unblocks a forced signal before delivering it, which turns a trap into a kill.
 

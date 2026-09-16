@@ -14,9 +14,11 @@
 
 One flag has to come with it. Linux copies a raw-frame-number area's page tables into a forked child, so without the flag that says *duplicate the area and copy no pages*, a tenant that forks shares its frames with its child, writably. That is a data leak in the design as specified, and it is fixed by setting one flag.
 
-**Verdict.** Promising, and the one to build first. It is the smallest change that closes the entry-point escape and the lifecycle at once, and it needs no new exported symbol.
+**What it costs.** A patch to code every architecture shares rather than to one architecture's entry path, which is a harder thing to defend upstream even though it is smaller; and a program loader in the trusted base, which is new trusted code doing a job Linux normally does.
 
-## Carriers: the host owns address spaces, not threads {#carriers}
+**Verdict.** Promising, and the one to build first in this cluster. It is the smallest change that closes the entry-point escape and the lifecycle at once, and it needs no new exported symbol.
+
+## Carriers: the host owns address spaces, not threads {#carriers-sketch}
 
 *Attacks:* the assumption that a tenant thread must be a Linux task. *Helps:* Linux, and it makes the two hosts converge.
 

@@ -63,4 +63,5 @@
 - [I/O microbenchmarks](notes/io-microbenchmarks.md)
 - [Linux-mode experiments](notes/linux-mode-experiments.md)
 - [What the alternatives exploration corrected](notes/alternatives-corrections.md)
+- [Alternative designs: what was measured](notes/alternative-designs.md)
 - [Design register](notes/design-register.md)
