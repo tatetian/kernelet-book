@@ -54,7 +54,7 @@
   - [The execution environment](blueprint/alternatives/execution.md)
   - [Loading, and the hardware underneath](blueprint/alternatives/loading.md)
   - [Whole modes](blueprint/alternatives/whole-mode.md)
-  - [The comparison](blueprint/alternatives/comparison.md)
+  - [The comparison, and the choice](blueprint/alternatives/comparison.md)
 
 # The Notes
 

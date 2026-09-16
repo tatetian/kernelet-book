@@ -34,4 +34,4 @@ Five pages of first-wave designs, one per cluster of limitations, then the whole
 - [The execution environment](execution.md) — the per-processor soundness bug, the kernel stack, accounting, and a limitation that turned out not to exist.
 - [Loading, and the hardware underneath](loading.md) — the density cap, the assumption that could exclude a class of host, and writing page-table entries directly.
 - [Whole modes](whole-mode.md) — coherent alternatives that answer every limitation at once, including two that give up something the book treats as settled.
-- [The comparison](comparison.md) — the designs side by side, and the choice.
+- [The comparison, and the choice](comparison.md) — the designs side by side, what to build, and what the exploration did not achieve.
