@@ -53,6 +53,8 @@
   - [System calls and the tenant's processes](blueprint/alternatives/syscalls-and-lifecycle.md)
   - [The execution environment](blueprint/alternatives/execution.md)
   - [Loading, and the hardware underneath](blueprint/alternatives/loading.md)
+  - [Whole modes](blueprint/alternatives/whole-mode.md)
+  - [The comparison](blueprint/alternatives/comparison.md)
 
 # The Notes
 

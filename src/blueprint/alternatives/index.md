@@ -26,4 +26,12 @@ Every design carries the same headings, so that they can be compared rather than
 
 ## In this chapter
 
-> **To be written.** The design sections and the comparison, once the exploration has run. This page is written first because the previous chapter links to it.
+Five pages of first-wave designs, one per cluster of limitations, then the whole modes, then the comparison.
+
+- [Containment: stopping a kernelet, and surviving its faults](containment.md) — the two limitations that cost the boundary most, and the correction that a kernel-mode fault need not be fatal.
+- [Tenant memory: deleting the map instead of keeping it](tenant-memory.md) — three answers to the chapter's newest decision, including one that would improve the host we wrote.
+- [System calls and the tenant's processes](syscalls-and-lifecycle.md) — one gate instead of four hooks, the kernelet as a program loader, and what a tenant thread ought to be.
+- [The execution environment](execution.md) — the per-processor soundness bug, the kernel stack, accounting, and a limitation that turned out not to exist.
+- [Loading, and the hardware underneath](loading.md) — the density cap, the assumption that could exclude a class of host, and writing page-table entries directly.
+- [Whole modes](whole-mode.md) — coherent alternatives that answer every limitation at once, including two that give up something the book treats as settled.
+- [The comparison](comparison.md) — the designs side by side, and the choice.
