@@ -82,7 +82,7 @@ It also **deletes** the entry-point problem rather than closing it, because the 
 
 ## Self-hosted: the kernelet runs its own threads {#carriers}
 
-*Gives up the measured 39-nanosecond crossing as the headline, and reverses two Design-chapter decisions. Helps Linux, and it is the only design that makes the two hosts converge.*
+*Gives up per-thread termination and per-thread accounting by the host, and reverses two Design-chapter decisions. Helps Linux, and it is the only design that makes the two hosts converge.*
 
 A tenant thread stops being a Linux task. It becomes a register frame, a floating-point buffer and a stack owned by the kernelet — which is exactly the framework's own task type. What the host owns is one address space per tenant and a small pool of **carriers**: Linux tasks, one per virtual CPU, that enter user mode carrying one tenant thread at a time.
 
@@ -90,6 +90,12 @@ This is the only design in either wave that changes what the Paper can *claim* r
 
 **The two things expected to kill it were measured, and they work.** Swapping the floating-point state and handing Linux a register frame it did not write both survived, on a guest that does not even carry the symbol the first wave thought was required. A tenant thread whose frame was built from nothing, with the registers that force Linux to refuse its fast return, came back correctly through the slow one.
 
-**What it costs, measured.** A switch costs **+291 nanoseconds**, seven times the bare hook, and the decomposition says most of that is not the floating-point state but the microarchitectural price of alternating two user contexts on one processor. Per-thread termination by the host is gone, and so is per-thread accounting. Three Linux structures are reached into with no interface behind them.
+**What it costs, measured.** The 39-nanosecond crossing is not given up: that is still what a serviced call costs when the carrier stays on the same tenant thread. What is new is **+291 nanoseconds on a switch**, decomposed by measurement as 39 to 169 for the register file, 239 with the thread pointer, and 330 with the floating-point state. Against that it *removes* a Linux context switch of one and a half to three microseconds, which is the comparison that matters.
 
-**Verdict.** Promising, with one precondition: it is a layer on top of the conservative mode's gate, program loader and declined `clone`, not an alternative to them. Building it first would be building the roof first. Two cheap tests should come before any of it: a tenant whose standard library registers a per-thread sequence area that cannot be refused, and a tenant using the widest floating-point state, whose buffer may be reallocated under the switch.
+What it really costs is elsewhere. Per-thread termination by the host is gone, so a kill signal ends a virtual CPU rather than a thread. Per-thread accounting is gone. Three Linux structures are reached into with no interface behind them. And its own author's highest-odds killer is neither of the two the brief predicted: it is that **asynchronous** signals land on whichever carrier happens to be running, where a forced trap at least finds the carrier holding the right thread.
+
+Its answer to the fourth entry point is the best in the exploration, and it was measured: a trap notifier caught a tenant's division error and resumed it, closing eight of eleven trap classes with no patch, and the remaining three are closed by giving the kernelet its *own* handlers so that Linux delivers the trap into the kernelet with the fault's registers intact.
+
+**Verdict.** Promising, with one precondition: it is a layer on top of the conservative mode's gate, program loader and declined `clone`, not an alternative to them. Building it first would be building the roof first. Two cheap tests should come before any of it: a tenant whose standard library registers a per-thread sequence area that cannot be refused, and a tenant using the widest floating-point state, whose buffer may be reallocated under the switch. Either would make the verdict dead.
+
+One thing it fixes that belongs to the mode that won: the number of page-table cursors held at once falls from every tenant task Linux is running to exactly the number of virtual CPUs. So the unmeasured risk that could kill the conservative restoration is *reduced* by the design ranked after it, which is an argument for measuring them together.
