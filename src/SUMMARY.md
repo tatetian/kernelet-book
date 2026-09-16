@@ -48,6 +48,11 @@
   - [What differs between the two hosts](blueprint/linux-mode/what-differs.md)
   - [Evidence](blueprint/linux-mode/evidence.md)
 - [Alternative designs](blueprint/alternatives/index.md)
+  - [Containment: stopping a kernelet, and surviving its faults](blueprint/alternatives/containment.md)
+  - [Tenant memory: deleting the map instead of keeping it](blueprint/alternatives/tenant-memory.md)
+  - [System calls and the tenant's processes](blueprint/alternatives/syscalls-and-lifecycle.md)
+  - [The execution environment](blueprint/alternatives/execution.md)
+  - [Loading, and the hardware underneath](blueprint/alternatives/loading.md)
 
 # The Notes
 
