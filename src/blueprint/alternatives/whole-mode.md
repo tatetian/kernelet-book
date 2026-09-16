@@ -26,11 +26,14 @@ What makes it interesting is not the mechanism but the ledger, because it asks L
 | `get_vm_area` with `init_mm` | wanted | **withdrawn**: section-indexed metadata and a reserved pool make the region dense |
 | notifier machinery as a build option | required | **withdrawn**: there is no sequence protocol to run |
 | a boot setting | required | **withdrawn**: a seccomp filter replaces it |
+| an operator posture | — | **added**: the machine must not be configured to capture a crash dump on an oops, or the first kernelet fault reboots it before any notifier runs |
 | everything else | — | already exported |
+
+That last row is the honest correction to a ledger that was otherwise all withdrawals: swapping a build option for an operator requirement is a swap, not a removal.
 
 And the properties: safety **restored**, with the residue being Linux's own trusted base; fault containment **narrowed to depth zero**, which is the same standing it has on the host we wrote; termination **restored at depth zero** by revoking a kernelet's text rather than by asking it to cooperate; fairness **narrowed**, with an irreducible residue of host work that a tenant induces and Linux will not charge to it.
 
-**What it costs, and the thing that could kill it.** The model page table's cursor lock and the seat's replica lock sit on the same hot path and multiply, which is assumption A24 and is unmeasured. The [comparison](comparison.md) says why that risk is smaller than it looks.
+**What it costs, and the thing that could kill it.** A page-table walk on every system call that carries a buffer, where the design has an instruction, and two locks on the same hot path — assumption A24, unmeasured. The [comparison](comparison.md) argues that the walk is the certain cost and the locks are the tail, and that the supervisor alias is what removes the walk.
 
 **Verdict.** Promising, and boring on purpose. Strictly less asked, strictly more delivered. This is the design to beat.
 
@@ -42,7 +45,7 @@ Every tenant access becomes `tenant address + alias base`, through a kernel-half
 
 **This was built and run, and it works.** In the guest, with the check enabled, a bare kernel-mode read through the alias returned the tenant's value, while the same read of the same frame through the tenant's own address, on the same task in the same run, took a fault and killed the child. The walk printed the spliced entry as supervisor-only with every level below it unchanged, which is the rule observed rather than inferred.
 
-The cost was measured too, and it is the number that makes the design: **0.92 cycles per access through the alias**, against 1.08 for an ordinary kernel address and **38 cycles** for the host's own bracketed user access ([transcript](../../notes/alternative-designs.md)). The alias is free; bracketing is not.
+The cost was measured too, and it is the number that makes the design: an access through the alias is **indistinguishable from an ordinary kernel access** — 0.92 cycles against 1.08, which is measurement noise around the same number — against **38 cycles** for the host's own bracketed user access ([transcript](../../notes/alternative-designs.md)). The alias is free; bracketing is not.
 
 **What it costs.** A second translation-buffer entry per touched page, unmeasured. Two invalidations per address-space change, because the exported form of a kernel-range flush is missing. A hardening trade that has to be said plainly: a supervisor-readable window onto a tenant's pages is the confused deputy the hardware check exists to prevent, here defeated deliberately and in one place. And a cost nobody had priced, found by running it: the alias is a *translation*, not an access, so demand paging and copy-on-write do not happen through it, which is correct only while the kernelet owns every one of its tenant's pages.
 
@@ -72,11 +75,15 @@ Each kernelet runs deprivileged, in the guest's own most-privileged mode, over a
 
 It also **deletes** the entry-point problem rather than closing it, because the guest and host interrupt-descriptor tables are separate fields: a division error or a protection fault in the tenant never reaches Linux's handlers at all. Fourteen other items of the previous chapter go the same way. The tenant's address space is the kernelet's, so the ownership decision reverses and the tenant-memory decision, the boot setting and the stack decision are all withdrawn — the supervisor-access check can simply be left off for the guest and on for the host, which is a bit the host's own hypervisor already manipulates. The one ask that survives is the export pair.
 
-**And service calls do not exit.** With an identity second-level translation, guest-physical is host-physical and the crossing is an ordinary function call, exactly as the design specifies. What exits is an interrupt, at about 0.8 percent of a core at ten thousand a second, and the timer bound, at 0.08 percent at a millisecond. So the exits are **preemption points**, not crossings — which is a thing the book has no word for.
+**And service calls that stay in the kernelet's own context do not exit.** With an identity second-level translation, guest-physical is host-physical and such a crossing is an ordinary function call, exactly as the design specifies. A service that reaches into Linux — a grain from the page allocator, a block submission, a log write, a timer — is Linux code running in the host's context, and that *is* an exit. So the design's own figure of merit, about 0.8 percent of a core at ten thousand interrupts a second plus 0.08 percent for the timer bound, counts interrupts and the bound and not device or allocation traffic, and it wants recomputing with them in it.
+
+What is true, and is the useful part, is that exits become **preemption points** rather than crossings — which is a thing the book has no word for.
 
 **The costs, measured on the book's own build host.** An exit and resume with an in-kernel handler: **3,002 cycles, 792 nanoseconds**. Four different exit causes landed within three percent of each other, which is what shows the number is the round trip rather than the handler. And the cost nobody had priced, which the book's own summary figure denies exists: the second level of translation costs about 0.1 cycles per load while translations are resident and **1.20×** at a working set of 256 MiB, paid by every access of every tenant, forever.
 
 **Extension or replacement: replacement.** It cannot be an extension of Linux's own hypervisor, for the reason the brief suspected. Tenant memory as host kernel addresses is not expressible there: memory slots are validated as user addresses, every guest frame is resolved by pinning against a user address space, and there is no identity second-level translation and no in-kernel way to run a virtual processor. Linux also takes an exclusive token on the virtualization feature at load. Coexistence is buyable with two small patches, but the endovisor becomes a hypervisor of its own.
+
+One more thing the measurement means. With an *identity* second-level translation the second level enforces nothing, so the 1.20× is paid for no isolation at all: it is the toll for running deprivileged, not a protection the design gains. A scheme that switched translation roots per kernelet would make it a real boundary, and the machine measured here advertises no such support.
 
 **Verdict.** Promising, and a different book. The mechanism is real and the arithmetic works. But the Executive Summary's figure says "no hypervisor, no second-level translation, no exit", and this design makes all three false, while the crossing sentence in [Boundaries and trust](../design/principles.md) survives intact. Keep it as the honest answer to "what would all three properties actually cost?", and note that it is the only answer that gets all three.
 

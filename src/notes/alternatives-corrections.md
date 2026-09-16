@@ -4,6 +4,8 @@
 
 All of these are applied except the last, which is flagged in the register and left for the pass that resolves it.
 
+Three more were found when the alternatives chapter was itself reviewed, and are recorded there rather than here: that a machine configured to capture a crash dump reboots before any notifier runs, so fault recovery carries an operator requirement of its own; that unmapping a kernel range does not invalidate it on other processors, so revocation must force the flush with the cruder exported call; and that the flag which stops a forked child inheriting its parent's frames gives the child an *empty* area, so it is a fix only for a design that repopulates from a model.
+
 1. **D82's proposed sequence protocol has a sleeping point, and the chapter presents it
    as the answer.** `mmu_interval_read_begin()` ends in `wait_event(subscriptions->wq,
    ...)` at `mm/mmu_notifier.c:249` when an invalidation is in flight. So read-begin can
