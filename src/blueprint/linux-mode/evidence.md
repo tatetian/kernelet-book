@@ -81,11 +81,12 @@ And the honest total: **this is not the only export Linux mode needs.** Four sym
 | `set_memory_rox` | **no** | making a kernelet's text read-execute; nothing works without it |
 | `set_memory_rw` | **no** | giving those frames back. The call above makes them read-only in the host's direct map too, so releasing a kind without restoring the permission hands the next user a read-only page. The mandatory partner of the first |
 | `set_memory_ro` | **no** | making the relocated read-only data read-only again after the loader has patched it. Hardening, not function |
-| `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)). Populating it needs `apply_to_page_range`, which **is** exported; nothing else that would do the job is |
+| `get_vm_area` | **no** | reserving a kernel range to populate sparsely, which is what keeps the frame-metadata check ([one address space](one-address-space.md)) |
+| `init_mm` | **no** | populating that range. `apply_to_page_range` is exported and is the only thing that would do the job, but it takes the address space to work on, and the one it must be given is not exported |
 
 Two things this page once asked for do not belong on the list. `alloc_contig_range` **is** exported, so long runs of physical memory are available to a module after all; only the wrapper that searches for a range is not, so the endovisor does that search itself. And writing a tenant thread's thread-pointer register needs no export: on the patched path the kernelet runs on the tenant's own task, so the module can set the field and write the register itself, which is ten lines of duplicated logic rather than a missing capability.
 
-So the hard requirement is a pair of symbols, and a complete Linux mode wants four.
+So the hard requirement is a pair of symbols, and a complete Linux mode wants five.
 
 ## Experiment 3: the cost of reaching the kernelet
 

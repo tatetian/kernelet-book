@@ -70,7 +70,7 @@ All 300 are of one type, the base-relative fixup, so the host's relocation loop 
 
 The result is better than the scheme needs: 98 percent of the read-only material is address-free and therefore shareable, and the part that must be copied and patched per instance is a few kilobytes. The rule it establishes is simple and is what the [build's audit](../design/builds-and-images.md#audit) now checks: anything holding an address belongs on the private side, whatever section it is in. `.init_array` and `.got` are easy to overlook, and they hold addresses.
 
-One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is one of the [four exports](evidence.md) a complete Linux mode wants, rather than one of the pair it cannot start without.
+One consequence for Linux. `.data.rel.ro` is meant to be made read-only once its relocations are applied, which is a hardening measure Linux performs for its own modules. Doing it here needs `set_memory_ro`, which like `set_memory_rox` is not exported. Nothing breaks without it, so it is one of the [exports](evidence.md) a complete Linux mode wants, rather than one of the pair it cannot start without.
 
 ## Two things the scheme must survive
 
