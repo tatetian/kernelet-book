@@ -47,6 +47,7 @@
   - [Five places where the host does not behave as the design assumed](blueprint/linux-mode/not-as-assumed.md)
   - [What differs between the two hosts](blueprint/linux-mode/what-differs.md)
   - [Evidence](blueprint/linux-mode/evidence.md)
+- [Alternative designs](blueprint/alternatives/index.md)
 
 # The Notes
 

@@ -37,7 +37,7 @@ The rows are split into three tables by **what the difference reaches**:
 |---|---|---|
 | the image's mapping | one shared read-only mapping per kind, 2 MiB pages | `vmap()` per instance, smallest pages only: sharing the physical text saves memory, not translation-buffer entries |
 | making the text read-execute, and undoing it | the host maps it so | `set_memory_rox()` and `set_memory_rw()`, **neither exported**, the second needed before a kind's frames can go back to Linux; and the first interrupts every processor once per instance |
-| scheduler injection, `nice`, affinity | the host's scheduler under the kernelet's quota | Linux's scheduler under a control group |
+| scheduler injection, `nice`, affinity | the host's scheduler under the kernelet's quota | Linux's scheduler under a control group, which may be a cpuset |
 
 ## Ten rows that reach the kernelet or its tenant
 
