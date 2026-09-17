@@ -1,4 +1,4 @@
-# Linux as the host
+# Linux as the host (WIP)
 
 *A second host for the same kernelets. The Design chapter assumes the host kernel is Asterinas; this chapter asks whether Linux can host kernelets instead, finds nothing that rules it out, and says exactly what it costs. **No kernelet has been built or run, on either host.** What was built and measured here is the mechanism each claim turns on; every other Linux fact is cited to Linux's own source with a link. The chapter also revises two decisions in the Design chapter and withdraws two assumptions, because the mechanism that makes Linux mode possible is better in both modes.*
 

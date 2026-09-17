@@ -1,4 +1,4 @@
-# Alternative designs
+# Alternative designs for Linux as the host (WIP)
 
 *[Linux as the host](../linux-mode/index.md) ends with a list of things it cannot do. This chapter attacks that list. Every design here was produced by treating one limitation as a problem to be solved rather than a cost to be recorded, and every design states what it gives up, because a design that gives up nothing has usually not understood the problem. The chapter closes by comparing them and choosing.*
 
