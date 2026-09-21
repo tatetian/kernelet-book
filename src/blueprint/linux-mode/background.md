@@ -70,6 +70,10 @@ A **control group** (cgroup) is a set of tasks with shared resource limits: proc
 
 A fault in kernel mode with no exception-table entry is an **oops**. Linux prints a report, then calls a chain of **die notifiers**, and then kills the current task. A notifier can call the kill off ([`__die_body()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/dumpstack.c#L424)), and a module can register one ([`register_die_notifier()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/notifier.c#L600)). Operators may configure Linux to panic, and optionally to boot a crash-dump kernel, on any oops.
 
+## Preemption models
+
+A Linux kernel is built, or on recent kernels booted, with one of three **preemption models**. *Full*: a task running kernel code can be rescheduled at almost any instruction, on return from an interrupt. *Voluntary* and *none*, common on servers: a task in kernel mode keeps its processor until it sleeps, returns to user mode, or reaches one of the many places where Linux's own code calls `cond_resched()`, the **voluntary preemption point**, which reschedules if Linux has marked the task as due. *Why it matters:* code that Linux did not write contains no such calls.
+
 ## Timers and cross-processor work
 
-An [`hrtimer`](https://elixir.bootlin.com/linux/v6.12/source/kernel/time/hrtimer.c) is a high-resolution timer whose callback runs in interrupt context on the processor that armed it. The timer interrupt records the registers of whatever it interrupted, and a callback can read them with `get_irq_regs()`; Linux's profiler samples programs this way.
+An [`hrtimer`](https://elixir.bootlin.com/linux/v6.12/source/kernel/time/hrtimer.c) is a high-resolution timer whose callback runs in interrupt context on the processor that armed it; it never follows a task to another processor. (On a real-time kernel most timer callbacks are moved into threads; a timer created in the *hard* mode still runs in the interrupt itself.) To make another processor do something, such as arm a timer of its own, kernel code sends it a cross-processor call with `smp_call_function_single()`. The timer interrupt records the registers of whatever it interrupted, and a callback can read them with `get_irq_regs()`; Linux's profiler samples programs this way.
