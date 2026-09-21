@@ -14,9 +14,9 @@ What a kernelet has instead are **virtual interrupts**. Each [virtual CPU](tasks
 | KICK | another virtual CPU wants this one to look at its run queue | the service `vcpu_kick` |
 | LINES | at least one device line is pending; which ones is in the record's `pending_lines` words, one bit for each of lines 32 to 255 | a device model, through `raise_irq`, which sets the line's bit first and LINES second |
 
-Every test for "is anything pending" in this chapter is a test of the one `pending` word, which is why device lines have a summary bit in it.
+Every test for "is anything pending" in this chapter is a test of the one `pending` word, which is why device lines have a summary bit in it. The reader's order is the writer's reversed: vOSTD swaps `pending` to zero first and then swaps out each `pending_lines` word, so a line set after the summary was taken is found by the next summary.
 
-The kernel proper's interrupt handlers, bottom halves and timer callbacks keep their code. `IrqLine` is OSTD's type with its callback lists; what is gone is everything beneath it: the mapping to a hardware vector and the acknowledgment. A handler runs inside the upcall with the virtual CPU's `in_upcall` flag set, so it is not interrupted by another on the same virtual CPU, which is the assumption such handlers make on a machine. Work that a machine would defer to a bottom half is deferred the same way, to OSTD's own mechanism, which runs when the handler returns.
+The kernel proper's interrupt handlers, bottom halves and timer callbacks keep their code. `IrqLine` is OSTD's type with its callback lists; what is gone is everything beneath it: the mapping to a hardware vector and the acknowledgment. A handler runs inside the upcall with the virtual CPU's `irq_off` set, so it is not interrupted by another on the same virtual CPU, which is the assumption such handlers make on a machine. Work that a machine would defer to a bottom half is deferred the same way, to OSTD's own mechanism, which runs when the handler returns.
 
 **Raising a line.** A device model in the endovisor calls `raise_irq(line)`. Each device line is bound for the kernelet's life to one virtual CPU. Raising it is two atomic bit-sets in that virtual CPU's record (the line's bit, then LINES) and a kick, all legal from any Linux context, including a hardware interrupt handler. Delivery is edge-triggered: a line raised twice before its handler runs is handled once, as with a real interrupt line.
 
@@ -36,7 +36,7 @@ A *running* virtual CPU has the tick's resolution for its timers, 1 ms, which is
 
 ## What a tenant sees
 
-Timers and sleeps behave as on the other host, at the resolution of Linux's high-resolution timers. Interrupt latency for a virtual device is the latency of waking or flagging a Linux task, a few microseconds (*estimated*), plus, when the virtual CPU is in kernel code with a guard held, the length of that critical section. `/proc/interrupts` inside the sandbox shows only virtual lines.
+Timers and sleeps behave as on the other host, at the resolution of Linux's high-resolution timers. Interrupt latency for a virtual device is the latency of waking or flagging a Linux task, a few microseconds (*estimated*), plus, when the virtual CPU has its virtual interrupts off, the length of that section. `/proc/interrupts` inside the sandbox shows only virtual lines.
 
 ## Costs
 

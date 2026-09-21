@@ -83,8 +83,8 @@ The list matters because destroy must account for every entry, and because a str
 - the kind, the configuration, the instance's base address and its private pages;
 - the grant: each run's physical base, length and Linux page handle; the metadata region;
 - the registered models (tenant page-table roots), each with its file object, its Linux address space and its reader-writer lock;
-- the carriers, one per virtual CPU: for each, the Linux task, the lifeline, the service-call depth, the saved stack pointers, Linux's preemption count as it was on entry, the activated model, the pending exception, the strike count of the [grace](virtualizing-ostd/scheduling.md#cooperative);
-- the virtual CPUs' shared records and their timers;
+- the carriers, one per virtual CPU: for each, the Linux task, the lifeline, the service-call depth, the saved stack pointers, Linux's preemption count as it was on entry, the activated model, the pending exception, the time at which its current critical section was first seen, for the [grace](virtualizing-ostd/scheduling.md#cooperative); the preemption notifier, registered on the carrier and unregistered as it leaves for good; the floating-point staging buffer;
+- the virtual CPUs' shared records;
 - the pool of kernelet stacks, boot stacks included, and which of them are out;
 - the devices: model state, inbox, device thread, the Linux file behind it;
 - the channel connections that name this kernelet;

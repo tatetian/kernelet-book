@@ -42,17 +42,22 @@ struct klet_user_ctx {                   /* vOSTD's own layout, which it fills f
 struct klet_vcpu_rec {                   /* one per virtual CPU, on a shared page; see "The shared pages" */
         _Atomic uint64_t pending;        /* endovisor sets bits; vOSTD swaps to zero */
         _Atomic uint64_t pending_lines[4];
-        uint32_t guards;                 /* vOSTD: OSTD's own count of preemption guards and spin locks held */
+        uint32_t guards;                 /* vOSTD: the count of preemption guards and spin locks held (the count only) */
         uint32_t irq_off;                /* the virtual interrupt flag, inverted. vOSTD sets and restores it for OSTD's
                                             interrupts-off guards; the endovisor sets it when it redirects to virq_entry,
                                             as a processor turns interrupts off when it takes one; vOSTD clears it when
-                                            the upcall ends */
+                                            the upcall ends. Linux's preemption count is changed only by vOSTD, never at a redirect */
         uint32_t vcpu;                   /* this virtual CPU's number, behind OSTD's CpuId */
         uint32_t reserved;
         uint64_t upcall_ip;              /* endovisor: the interrupted ip, stored just before it redirects to virq_entry */
         uint64_t stack_limit;            /* vOSTD: the current task's kernelet-stack limit, for the entry check */
         uint64_t cpu_local_base;         /* endovisor, once: this virtual CPU's copy of the per-CPU section */
-        uint64_t stolen_ns;              /* endovisor: total time the carrier was runnable in kernelet code but off a processor */
+        uint64_t stolen_ns;              /* endovisor: total time the carrier was runnable but off a processor */
+        uint32_t mirrored;               /* vOSTD: 1 while vOSTD's increment of Linux's count is outstanding */
+        uint32_t reserved2;
+        /* Only pending and pending_lines are written from other processors. Every other field is
+           written and read by this virtual CPU's own carrier, and by the endovisor on the same
+           processor in the watch timer's callback. */
 };
 
 #define KLET_KSTACK_BYTES (256 * 1024)   /* every kernelet stack; the kernelet build sets OSTD's stack size to match */
@@ -71,7 +76,7 @@ struct klet_service_table {
         int64_t  (*pt_root_unregister)(uint64_t root_paddr);
         int64_t  (*pt_activate)(uint64_t root_paddr);            /* 0 means "no tenant address space" */
         int64_t  (*tlb_shootdown)(uint64_t root_paddr, uint64_t start, uint64_t len);   /* len == UINT64_MAX: everything */
-        int64_t  (*kstack_alloc)(void);                          /* > 0: the lowest address of a stack of KLET_KSTACK_BYTES */
+        uint64_t (*kstack_alloc)(void);                          /* the lowest address of a stack of KLET_KSTACK_BYTES; 0: none (ceiling, or no memory) */
         int64_t  (*kstack_free)(uint64_t vaddr);
         /* virtual CPUs */
         int64_t  (*vcpu_boot)(uint32_t vcpu);                    /* let that carrier enter the image */
@@ -111,7 +116,7 @@ No service takes a "which kernelet" argument, because a kernelet must not be abl
 
 Every service function is wrapped in the same prologue and epilogue.
 
-**On the way in**: find the carrier record; if the kernelet is marked dying, do not return to it at all but [leave the kernelet for good](faults-and-reclamation.md#leaving) (`stop` is exempt); take out of Linux's preemption count whatever the kernelet's guards have added to it ([why they add to it](virtualizing-ostd/scheduling.md#cooperative)), and remember how much; switch to the carrier's Linux stack; set the depth to 1; count the call for the sandbox's statistics.
+**On the way in**: find the carrier record; if the kernelet is marked dying, do not return to it at all but [leave the kernelet for good](faults-and-reclamation.md#leaving) (`stop` is exempt); for a service that may sleep, take out of Linux's preemption count whatever the kernelet's guards have added to it ([why they add to it](virtualizing-ostd/scheduling.md#cooperative)), and remember how much; switch to the carrier's Linux stack; set the depth to 1; count the call for the sandbox's statistics.
 
 **On the way out**: set the depth to 0; if the kernelet was marked dying meanwhile, leave for good instead of returning; re-arm the [watch timer](virtualizing-ostd/tasks.md#watch) if needed; switch back to the kernelet stack; put the remembered amount back into Linux's count.
 
@@ -119,9 +124,9 @@ How much the guards have added is not something the endovisor asks the kernelet.
 
 The depth is 1 exactly while the carrier, having come from kernelet code, is inside endovisor or Linux code and may hold their locks. It is one of the two tests that make [eviction](faults-and-reclamation.md#eviction) safe.
 
-**Which calls give up the processor.** `vcpu_idle`, `vcpu_yield`, `vcpu_on_spin` and `user_run` exist to let something else run: in the first three Linux may run another task on this processor, and in the last the tenant runs. Two of them are for long absences, and OSTD makes them with its guards in a known state (`execute` takes one guard on purpose, and idling holds none): a `vcpu_idle` or a `user_run` that arrives with more guards held than that is refused with `-KLET_STATE`. That check reads the record's `guards`, which the kernelet writes, so it protects the kernelet from its own bugs and not the host from the kernelet. The other two are brief and are legal in any state: `vcpu_yield` is called as the outermost guard drops, and `vcpu_on_spin` from the slow path of a spin lock, which OSTD enters with a guard already held. `user_run` can also block in Linux before it leaves, when it has to create the [memory area](virtualizing-ostd/memory.md#cache) of an address space it is the first to run in.
+**Which calls give up the processor.** `vcpu_idle`, `vcpu_yield`, `vcpu_on_spin` and `user_run` exist to let something else run: in the first three Linux may run another task on this processor, and in the last the tenant runs. Two of them are for long absences, and OSTD makes them with its guards in a known state: `execute` turns interrupts off on purpose and holds no preemption guard, and `halt_cpu` holds nothing (its bare-metal body turns interrupts off and back on around the halt; vOSTD's body does not). A `vcpu_idle` or a `user_run` that arrives with a preemption guard held is refused with `-KLET_STATE`. That check reads the record's `guards`, which the kernelet writes, so it protects the kernelet from its own bugs and not the host from the kernelet. The other two are brief and are legal in any state: `vcpu_yield` is called as the outermost guard drops, and `vcpu_on_spin` from the slow path of a spin lock, which OSTD enters with a guard already held. `user_run` can also block in Linux before it leaves, when it has to create the [memory area](virtualizing-ostd/memory.md#cache) of an address space it is the first to run in.
 
-**Which calls can block inside Linux.** `grains_request` and `kstack_alloc` while Linux allocates memory, and `tlb_shootdown` while it waits for fault handlers to finish. The virtual CPU simply does not run meanwhile, as a processor that waits for a TLB flush does not. `tlb_shootdown` cannot be allowed to fail, so it is never refused.
+**Which calls can block inside Linux.** `grains_request`, `kstack_alloc`, `pt_root_register` and `pt_root_unregister` while Linux allocates or frees memory, and `tlb_shootdown` while it waits for fault handlers to finish; with the four that give up the processor, those are the services whose prologue removes the kernelet's increment. The others (`pt_activate`, `kstack_free`, `vcpu_boot`, `vcpu_kick`, `fpu_save`, `fpu_load`, `mmio_read`, `mmio_write`, `log_write`, `oops`) never sleep and run with the increment in place, which is what lets an [upcall handler](virtualizing-ostd/scheduling.md#upcall) call them while the interrupted task holds a lock; an upcall handler must call no other, as an interrupt handler on a machine must not sleep. The virtual CPU simply does not run meanwhile, as a processor that waits for a TLB flush does not. `tlb_shootdown` cannot be allowed to fail, so it is never refused.
 
 A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#eviction), so the endovisor owes a bound on every one of them. The rule is that **every sleep inside a service is killable**: the waits use Linux's killable forms, and the sweep's `SIGKILL` ends them. The remaining services do bounded work without sleeping.
 
@@ -136,12 +141,12 @@ A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#ev
 | `pt_root_unregister` | refused while a virtual CPU has the model activated; otherwise empty its cache and release its Linux address space. vOSTD calls it only when the last task has let go of the address space, and must not reuse the root frame until it has returned |
 | `pt_activate` | look the root up among *this kernelet's* registered models, and refuse (`-KLET_INVALID`) one that is not there; record the model as this virtual CPU's current tenant address space; the carrier adopts the corresponding Linux address space at the next `user_run` |
 | `tlb_shootdown` | wait out fault handlers on this model, then `unmap_mapping_range()` on the model's file ([Memory](virtualizing-ostd/memory.md#interlock)) |
-| `kstack_alloc`, `kstack_free` | take a stack from, or return it to, the sandbox's [pool of kernelet stacks](virtualizing-ostd/tasks.md#stacks); the pool grows by `vmalloc`, charged to the sandbox, up to the configured maximum of tasks (`-KLET_LIMIT` beyond), and gives nothing back to Linux before destroy. `kstack_free` of an address that is not a stack in use is `-KLET_INVALID` |
+| `kstack_alloc`, `kstack_free` | take a stack from, or return it to, the sandbox's [pool of kernelet stacks](virtualizing-ostd/tasks.md#stacks); the pool grows by `__vmalloc` with the accounting flag, charged to the sandbox, up to the configured maximum of tasks (`-KLET_LIMIT` beyond), and gives nothing back to Linux before destroy. `kstack_free` of an address that is not a stack in use is `-KLET_INVALID`. The kernelet build sets OSTD's stack size to match (`OSTD_TASK_STACK_SIZE_IN_PAGES=64`) |
 | `vcpu_boot` | wake the carrier of that virtual CPU, which enters the image at `vcpu_entry`; `-KLET_INVALID` for a number out of range, for virtual CPU 0, and for one already started |
 | `vcpu_idle` | killable, freezable sleep until a bit is pending, the deadline (rounded up to 50 µs from now) passes, or the kernelet is dying ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)); returns 0 |
 | `vcpu_kick` | set KICK in the target's record and do the least that will get it seen ([Scheduling](virtualizing-ostd/scheduling.md#upcall)); nothing at all if KICK was already set, so a storm of kicks costs one delivery; `-KLET_INVALID` for a number out of range; kicking oneself only sets the bit |
-| `vcpu_yield` | `cond_resched()`, then `schedule()` if Linux still wants the processor |
-| `vcpu_on_spin` | at most once per tick per virtual CPU: [`yield_to()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/sched/syscalls.c#L1468), without the option that preempts the target's processor, a carrier *of the same sandbox* that is runnable and not running, if there is one; otherwise as `vcpu_yield` |
+| `vcpu_yield` | `schedule()` if Linux wants the processor (`need_resched()`); nothing otherwise |
+| `vcpu_on_spin` | at most once per millisecond per virtual CPU: [`yield_to()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/sched/syscalls.c#L1468), without the option that preempts the target's processor, a carrier *of the same sandbox* that is runnable and not running, if there is one; otherwise as `vcpu_yield` |
 | `user_run` | adopt the address space, switch to the Linux stack and return to user mode through the gate ([User mode](virtualizing-ostd/user-mode.md#user-run)) |
 | `fpu_save`, `fpu_load` | under Linux's `fpregs_lock()`, make the user floating-point registers live if they are not, then save them to, or load them from, a staging buffer in the carrier record; the kernelet's buffer is copied to or from the staging buffer outside the lock, and what is loaded is validated in the staging copy ([User mode](virtualizing-ostd/user-mode.md#fpu)) |
 | `mmio_read`, `mmio_write` | check device, offset and width (1, 2, 4 or 8); call the device model ([Devices](virtualizing-ostd/devices.md)) |
@@ -157,7 +162,7 @@ Some information is cheaper to read than to ask for. The endovisor maps five kin
 
 | page | contents | written |
 |---|---|---|
-| **boot arguments** | identity, number of virtual CPUs, direct-map base, metadata base, where the other pages are, device list, command line; and four numbers by which vOSTD finds its way from Linux's per-processor data: the `%gs`-relative offsets of Linux's current-task pointer and of its preemption count, the offset of the gate pointer in a task, and the offset of the record pointer in a carrier record | once, before entry |
+| **boot arguments** | identity, number of virtual CPUs, direct-map base, metadata base, where the other pages are, device list, command line; and four numbers by which vOSTD finds its way from Linux's per-processor data: the `%gs`-relative offsets of Linux's current-task pointer and of its preemption count, the offset of the gate pointer in a task, and the offset of the record pointer in a carrier record; on a Linux built without a preemption count the count's offset is given as −1, and vOSTD leaves the mirror out | once, before entry |
 | **grant table** | the base and length of each run | appended by the endovisor when it grants |
 | **info page** | the number of runs in the grant table, the grant's ceiling | by the endovisor |
 | **clock page** | coarse ticks and monotonic nanoseconds; one page for the whole machine | by one machine-wide timer |
@@ -165,7 +170,7 @@ Some information is cheaper to read than to ask for. The endovisor maps five kin
 
 vOSTD always reaches Linux's two per-processor words by a single `%gs`-relative instruction and never through a computed address, because a carrier may be on a different processor the next time it looks.
 
-What the endovisor believes from a virtual CPU's record is limited and deliberate. It believes `irq_off`, `guards` and `stack_limit` for two purposes: whether to redirect to the upcall now or leave the bit pending, and, on a Linux that does not preempt kernel code, whether this is a polite moment for the [yield stub](virtualizing-ostd/tasks.md#yield). Both affect only the kernelet, and the second is overruled after [two strikes](virtualizing-ostd/scheduling.md#cooperative). For nothing that protects the host does it read the record. `upcall_ip` flows the other way, and vOSTD's stub checks that it lies in the image's text before it returns to it. The service-call depth, the dying mark, Linux's preemption count and everything else that protects the host are in endovisor memory or in Linux's. The header above gives the tables and the record in full; the byte layouts of the other pages are fixed by the same generated header and are not reproduced here.
+What the endovisor believes from a virtual CPU's record is limited and deliberate. It believes `irq_off` and `guards` for two purposes: whether to redirect to the upcall now or leave the bit pending, and, on a Linux that does not preempt kernel code, whether this is a polite moment for the [yield stub](virtualizing-ostd/tasks.md#yield). Both affect only the kernelet, and the second is overruled after [two strikes](virtualizing-ostd/scheduling.md#cooperative). For nothing that protects the host does it read the record; in particular it decides how much stack an upcall has from its own pool records, not from `stack_limit`, which only vOSTD's entry check reads. `upcall_ip` flows the other way, and vOSTD's stub checks that it lies in the image's text before it returns to it. The service-call depth, the dying mark, Linux's preemption count and everything else that protects the host are in endovisor memory or in Linux's. The header above gives the tables and the record in full; the byte layouts of the other pages are fixed by the same generated header and are not reproduced here.
 
 ## What is not offered
 

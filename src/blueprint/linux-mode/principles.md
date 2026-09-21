@@ -62,7 +62,7 @@ Kernelets are not separated from each other or from Linux by hardware. They run 
 
 ## Threat model
 
-The tenant runs arbitrary code in user mode, drives its kernelet down every path a system call reaches, and tries to read, corrupt or starve other tenants and the host. It may find and exploit any *logic* bug in the kernel proper. Denial of service is in scope. Speculative-execution side channels are out of scope, as they are for containers. A bug in Linux, the endovisor or vOSTD is a bug in the trusted base.
+The tenant runs arbitrary code in user mode, drives its kernelet down every path a system call reaches, and tries to read, corrupt or starve other tenants and the host. It may find and exploit any *logic* bug in the kernel proper. Denial of service is in scope. Speculative-execution side channels are out of scope, as they are for containers; so is what a tenant can infer about its neighbors' activity from timing, which two-level scheduling makes a little easier to read (a virtual CPU learns how much time Linux took from it), as a virtual machine's guest can. A bug in Linux, the endovisor or vOSTD is a bug in the trusted base.
 
 ## What the boundary owes a tenant
 
