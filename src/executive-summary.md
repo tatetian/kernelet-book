@@ -119,24 +119,12 @@ Asterinas Kernelets are a third point in that space, and this book calls the ide
 
 > **The host is a replaceable part, so we do not have to win the hardest argument first.**
 
-**The hardest argument is "replace your kernel".** An operator asked to put Asterinas underneath a fleet is being asked to bet the machine on a young code base, and no amount of safe Rust makes that an easy signature. It is the right argument to win eventually. It is the wrong one to need first.
-
-We do not need it first, and that is a property of the design rather than a concession in it. A kernelet is not built on a machine; it is built on an interface. It calls a table of functions and never touches hardware, and nothing in that arrangement says who implements the table. If the answer can be Linux, then the host underneath is a replaceable part, which is what [Linux as the host](blueprint/linux-mode/index.md) sets out to test. That chapter and the one after it are still working: nothing has been built on either host, and the design is being argued rather than concluded.
-
-For an operator that changes the question being asked of them. The host stays the kernel they already run, already patch and already trust. What changes is that selected workloads stop sharing it with their neighbors and get a kernel of their own, in safe Rust, inside the same machine. Nothing is replaced; something is added, for the tenants that want it. The decision is reversible, which is what makes it takeable: a workload that does not suit a kernelet keeps running the way it runs today, beside one that does, and the cost of being wrong is one workload rather than one fleet.
-
-For the project it is somewhere real to grow. The same source, the same framework and the same kernel proper compile against a second implementation of one table, so the work is not done twice and the maturity is not earned twice. Real tenants, real workloads and real bugs, while the host role stays Linux's — and when the code has earned that role, the host underneath can change without anything above it noticing.
-
-A second implementation also pays a dividend that a single one cannot. Porting the interface to a host we do not control exposed a requirement our own API had never stated: it assumed a hardware protection that Asterinas leaves off and Linux turns on, which no amount of reading our own kernel would have revealed. That is the kind of defect a second host finds and a second reviewer does not.
-
-So there are two targets, and they are the same design. The near one is a foothold: real tenants on a kernel they can already deploy, earning the maturity that the far one will be judged on. The far one is the host role itself. The point of building on an interface rather than on a machine is that arriving at the second does not mean starting the first again — the kernel above the table never learns which host is underneath it.
-
 <figure class="fwd-fig">
 <div class="head">
 <div class="tag">The near-term target</div>
 <div class="title">Kernelets in Linux: nothing replaced, something added</div>
 </div>
-<svg viewBox="0 0 900 318" role="img" aria-label="One machine running one Linux kernel. Above it, on the left, today's workloads continue unchanged on Linux's own subsystems. On the right, selected tenants each get a kernelet, a safe-Rust kernel of their own, which lives inside the same Linux kernel alongside its subsystems and is managed by the endovisor, a loadable module. Both halves sit on the same hardware.">
+<svg viewBox="0 0 900 318" role="img" aria-label="One machine running one Linux kernel. Above it, on the left, today's workloads continue unchanged on Linux's own subsystems. On the right, selected tenants each get a kernelet, a safe-Rust kernel of their own, which lives inside the same Linux kernel alongside its subsystems and is managed by the endovisor, a loadable module, with a small patch to the kernel it runs in. Both halves sit on the same hardware.">
 <defs>
 <linearGradient id="fwd-lg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -165,7 +153,7 @@ So there are two targets, and they are the same design. The near one is a footho
 <text x="450" y="240" fill="#9A9DB0" text-anchor="middle" font-size="10.5">the Linux kernel the operator already runs, already patches, already trusts</text>
 <rect x="36" y="104" width="380" height="106" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
 <text x="226" y="152" fill="#9AA0BE" text-anchor="middle">Linux's own subsystems</text>
-<text x="226" y="172" fill="#6A6F8C" text-anchor="middle" font-size="8.5">untouched</text>
+<text x="226" y="172" fill="#6A6F8C" text-anchor="middle" font-size="8.5">patched, about fifteen lines</text>
 <rect x="484" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
 <rect x="620" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
 <rect x="756" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
@@ -176,13 +164,19 @@ So there are two targets, and they are the same design. The near one is a footho
 <text x="680" y="148" fill="#5C93A8" text-anchor="middle" font-size="8.5">safe Rust</text>
 <text x="816" y="148" fill="#5C93A8" text-anchor="middle" font-size="8.5">safe Rust</text>
 <rect x="484" y="182" width="392" height="28" rx="5" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
-<text x="680" y="200" fill="#00F7FF" text-anchor="middle" font-size="10">endovisor: one loadable module, one small patch</text>
+<text x="680" y="200" fill="#00F7FF" text-anchor="middle" font-size="10">endovisor: one loadable module</text>
 <rect x="16" y="266" width="868" height="28" rx="5" fill="rgba(255,255,255,.03)" stroke="rgba(255,255,255,.12)"/>
 <text x="450" y="284" fill="#6A6F8C" text-anchor="middle" font-size="9.5">hardware</text>
 <text x="450" y="310" fill="#4C5170" text-anchor="middle" font-size="9">same machine &#183; same kernel &#183; no hypervisor &#183; adopt one workload at a time</text>
 </g>
 </svg>
 </figure>
+
+**The hardest argument is "replace your kernel".** An operator asked to put Asterinas underneath a fleet is being asked to bet the machine on a young code base, and no amount of safe Rust makes that an easy signature. It is the right argument to win eventually and the wrong one to need first — and we do not need it first, because of a property of the design rather than a concession in it. A kernelet is not built on a machine; it is built on an interface. It calls a table of functions and never touches hardware, and nothing in that arrangement says who implements the table. If the answer can be Linux, the host underneath is a replaceable part, which is what [Linux as the host](blueprint/linux-mode/index.md) sets out to test. That chapter and the one after it are still working: the design is being argued rather than concluded.
+
+That changes the question an operator is asked. The host stays the kernel they already run, with one small patch to the path a system call takes; what changes is that selected workloads stop sharing it with their neighbors and get a kernel of their own, in safe Rust, inside the same machine. Nothing is replaced, and the decision is reversible — a workload that does not suit a kernelet keeps running the way it runs today, beside one that does, so the cost of being wrong is one workload rather than one fleet. It also gives the project somewhere real to grow, because the same source, the same framework and the same kernel proper compile against a second implementation of one table: the work is not done twice and the maturity is not earned twice.
+
+A second implementation pays a dividend a single one cannot. Porting the interface to a host we do not control exposed a requirement our own API had never stated, which no amount of reading our own kernel would have revealed. So there are two targets and they are the same design. The near one is a foothold, with real tenants on a kernel they can already deploy. The far one is the host role itself, and the point of building on an interface rather than on a machine is that arriving at the second does not mean starting the first again.
 
 ## How to read this book {#how-to-read}
 
