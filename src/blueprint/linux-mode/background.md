@@ -42,7 +42,7 @@ The upper half of every address space belongs to the kernel and is the same in e
 
 ## Modules and exported symbols
 
-A **module** is kernel code loaded at run time. It may call only those kernel functions that the kernel's source marks as **exported** (`EXPORT_SYMBOL`). Much of the kernel is exported because drivers need it; some of it, deliberately, is not. *Why it matters:* the design's requests of Linux are a list of four functions that are not exported today.
+A **module** is kernel code loaded at run time. It may call only those kernel functions that the kernel's source marks as **exported** (`EXPORT_SYMBOL`). Much of the kernel is exported because drivers need it; some of it, deliberately, is not. *Why it matters:* the design's requests of Linux are a short list of functions that are not exported today, and one that does not exist.
 
 Executable kernel memory is one such case. `vmap()` always produces non-executable memory, and the functions that change a range's permissions ([`set_memory_rox()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c#L2118) and its siblings) are not exported.
 

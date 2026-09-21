@@ -4,7 +4,7 @@
 
 ## A kernelet is entered, not booted
 
-There is no firmware, no boot loader and no processor bring-up. The endovisor [loads the image](../builds-and-images.md), prepares the shared pages, and the root carrier clones the carriers ([Tasks](tasks.md#root)). The carrier of virtual CPU 0 calls the image's entry point, `_kernelet_entry(services, boot_args)`, on a **boot stack**: a kernelet stack the endovisor allocates for each virtual CPU, which plays the part a processor's boot stack plays on a machine.
+There is no firmware, no boot loader and no processor bring-up. The endovisor [loads the image](../builds-and-images.md), prepares the shared pages, and the root carrier clones the carriers ([Tasks](tasks.md#root)). The carrier of virtual CPU 0 calls the image's entry point, `_kernelet_entry(services, boot_args)`, on a **boot stack**: a kernelet stack the endovisor takes from the sandbox's [stack pool](tasks.md#stacks) for each virtual CPU, which plays the part a processor's boot stack plays on a machine.
 
 vOSTD's initialization is OSTD's with everything a machine needs removed. In order, it:
 
@@ -12,7 +12,7 @@ vOSTD's initialization is OSTD's with everything a machine needs removed. In ord
 2. parses the command line and initializes logging;
 3. reads the grant table and hands the initial runs to its frame allocator;
 4. sets up the per-virtual-CPU copies of its per-CPU data;
-5. lowers virtual CPU 0's `masked` depth, which the endovisor set to 1 before entry so that no [virtual interrupt](interrupts-and-time.md) could be delivered before step 4;
+5. turns virtual interrupts on (clears the record's `irq_off`, which the endovisor set before entry) so that no [virtual interrupt](interrupts-and-time.md) could be delivered before step 4;
 6. runs the image's initializers, which is how the kernel proper's components register themselves;
 7. calls the kernel proper's `main`.
 
@@ -20,7 +20,7 @@ vOSTD's initialization is OSTD's with everything a machine needs removed. In ord
 
 **Secondary processors.** On a machine, OSTD starts the other processors and runs a registered entry function on each. vOSTD does the same with the service `vcpu_boot(i)` in place of the processor's start-up sequence: the waiting carrier of virtual CPU *i* enters the image at the entry table's `vcpu_entry`, on its own boot stack, runs the entry function, and joins the scheduler. The virtual CPUs run concurrently with `main`, as processors do.
 
-**When `main` returns.** OSTD's start-up code calls `Task::yield_now()` after `main`, from a context that is not itself a task, and on a machine that call never returns: the scheduler switches to the first task and the boot context is left behind for good. It is the same code here, and the boot stack is simply not used again. A virtual CPU with nothing to run is idled as the kernel proper idles a processor, by a task of its own that calls OSTD's `halt_cpu()`; in vOSTD that function is the service `vcpu_idle` ([Interrupts and time](interrupts-and-time.md)).
+**When `main` returns.** OSTD's start-up code calls `Task::yield_now()` after `main`, from a context that is not itself a task, and on a machine that call never returns: the scheduler switches to the first task and the boot context is left behind for good. It is the same code here, and the boot stack is simply not used again. (The call returns only if the run queue is empty; the kernel proper avoids that by spawning an idle task per CPU before it gets there, and a kernel that injects a scheduler must do the same.) A virtual CPU with nothing to run is idled as the kernel proper idles a processor, by a task of its own that calls OSTD's `halt_cpu()`; in vOSTD that function is the service `vcpu_idle` ([Interrupts and time](interrupts-and-time.md)).
 
 ## Power
 
@@ -43,10 +43,11 @@ A kernelet runs in kernel mode, so nothing in hardware stops its code from execu
 | CPU feature queries | identical: the `cpuid` instruction, read directly |
 | timestamp counter | identical: `rdtsc`, read directly |
 | port I/O, the interrupt controller, the IOMMU, PCI, ACPI | absent: a use does not compile |
-| enabling and disabling interrupts | absent; the "interrupts off" guard is the no-preemption counter, which is sufficient because no kernelet code runs in interrupt context |
-| sending inter-processor interrupts | absent; remote TLB flushes go through [`tlb_shootdown`](memory.md#cache) |
-| FS base of a tenant thread | virtualized: set through the endovisor on entry to user mode ([User mode](user-mode.md)) |
-| floating-point and vector state | never used by kernelet code; a tenant's is Linux's to save and restore |
+| enabling and disabling interrupts | virtualized: the interrupts-off guard sets and restores the virtual CPU's `irq_off` ([Scheduling](scheduling.md#upcall)); the hardware flag is never touched |
+| sending inter-processor interrupts | virtualized as `vcpu_kick`; remote TLB flushes go through [`tlb_shootdown`](memory.md#cache) |
+| FS and GS base of a tenant thread | virtualized: OSTD's `FsBase` and `GsBase` write vOSTD's per-task context, which `user_run` applies ([User mode](user-mode.md#fpu)) |
+| floating-point and vector state | never used by kernelet code; a tenant thread's is saved and loaded by the kernel proper through `FpuContext`, which is two services ([User mode](user-mode.md#fpu)) |
+| per-CPU data (`cpu_local!`) | virtualized: the base of this virtual CPU's copy is read from its record, not from a segment register, which is Linux's |
 
 ## What this page decides
 

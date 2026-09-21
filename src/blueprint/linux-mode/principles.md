@@ -24,7 +24,7 @@ The trusted base is therefore Linux, the endovisor, vOSTD and the Rust compiler.
 <div class="tag">Who can reach what</div>
 <div class="title">Four narrow interfaces, and no other way across</div>
 </div>
-<svg viewBox="0 0 900 300" role="img" aria-label="From top to bottom. The tenant reaches its kernel proper only through system calls and faults, which the gate delivers. The kernel proper reaches vOSTD only through OSTD's safe Rust interface, which the compiler enforces. vOSTD reaches the endovisor only through the service table of twenty-one C functions, because the image has no undefined symbols. The kernelet runtime reaches the endovisor only through its character device. The endovisor reaches Linux through exported kernel functions.">
+<svg viewBox="0 0 900 300" role="img" aria-label="From top to bottom. The tenant reaches its kernel proper only through system calls and faults, which the gate delivers. The kernel proper reaches vOSTD only through OSTD's safe Rust interface, which the compiler enforces. vOSTD reaches the endovisor only through the service table of twenty C functions, because the image has no undefined symbols. The kernelet runtime reaches the endovisor only through its character device. The endovisor reaches Linux through exported kernel functions.">
 <defs>
 <linearGradient id="pr-cg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -42,7 +42,7 @@ The trusted base is therefore Linux, the endovisor, vOSTD and the Rust compiler.
 <text x="280" y="142" fill="#00F7FF" text-anchor="middle" font-size="9">2 OSTD's safe API, enforced by the compiler</text>
 <rect x="20" y="152" width="520" height="40" rx="6" fill="url(#pr-cg)" stroke="rgba(0,247,255,.55)"/>
 <text x="280" y="177" fill="#8FF6FC" text-anchor="middle">vOSTD &#183; trusted &#183; one instance per kernelet</text>
-<text x="280" y="210" fill="#00F7FF" text-anchor="middle" font-size="9">3 the service table: 21 C functions; the image has no other symbol</text>
+<text x="280" y="210" fill="#00F7FF" text-anchor="middle" font-size="9">3 the service table: 20 C functions; the image has no other symbol</text>
 <text x="740" y="142" fill="#00F7FF" text-anchor="middle" font-size="9">4 /dev/kernelet</text>
 <path d="M740 56 V220" stroke="rgba(0,247,255,.5)" stroke-width="1.2" stroke-dasharray="4 3"/>
 <rect x="20" y="220" width="860" height="30" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
@@ -72,7 +72,7 @@ Three properties, and how they stand on Linux:
 |---|---|---|
 | **safety** | no state is read or written across the boundary except through a mediated channel | held. The tenant's only kernel surface is its kernelet; every frame that enters a tenant's page table is checked against its kernelet's grant by the endovisor; the residue is Linux's own trusted base |
 | **fault containment** | one kernelet's failure ends that kernelet only, and everything it held is returned | held for a kernelet's own code (service-call depth 0), at the price of one printed oops when the failure is a fault. Not held for a failure inside a service call, which is a host bug; the design has the same bound on either host |
-| **fairness** | every resource a kernelet consumes is charged to it and bounded | held for processor time, memory and task count, by Linux's control groups, because every task and every allocation of a kernelet belongs to the sandbox's group. Not held for interrupt-time work that a tenant's I/O and timers induce, which Linux charges to whatever it interrupts; the design bounds that work (ring depths, a floor on timer deadlines) but does not charge it. Global memory pressure is the operator's to prevent, by keeping the sum of sandbox limits within the machine |
+| **fairness** | every resource a kernelet consumes is charged to it and bounded | held for processor time, memory and task count, by Linux's control groups, because every task and every allocation of a kernelet belongs to the sandbox's group. Not held for interrupt-time work that a tenant's I/O and timers induce, which Linux charges to whatever it interrupts; the design bounds that work (ring depths, a floor on timer deadlines) but does not charge it. And not held for *latency*: a kernelet in a critical section may hold a processor against Linux for up to 2 ms ([Scheduling](virtualizing-ostd/scheduling.md#cooperative)), charged but not preventable, which is a tax a container does not levy. Global memory pressure is the operator's to prevent, by keeping the sum of sandbox limits within the machine |
 
 ## Invariants
 
@@ -84,7 +84,7 @@ The table after the list says which page carries the mechanism behind each. Each
 - **I4, no retained reference.** *Checked by types; the drain list is argued.* The endovisor holds no pointer into a kernelet across the return of a service call, except the records [destroy](faults-and-reclamation.md#destroy) enumerates.
 - **I5, no closure crosses.** *Checked by types.* The endovisor stores no function pointer into a kernelet beyond the entry table, and a kernelet none into the host beyond the service table. The endovisor never sees a task or a closure of a kernelet at all; it enters an image at three addresses the entry table fixes (the entry point, the entry of a secondary virtual CPU, and the upcall stub), and checks at registration that they lie in the image's text.
 - **I6, charged work.** *Checked by membership.* Every carrier and device thread of a kernelet is in the sandbox's control group, and every grain is allocated there. Linux sees a sandbox as a fixed number of tasks in one group, whatever the kernelet's own scheduler does with its tasks, and no service changes a carrier's priority, class or affinity; the one way a kernelet can hold a processor against Linux's wishes is [bounded at two ticks and charged](virtualizing-ostd/scheduling.md#fair).
-- **I7, termination.** *Eviction is shown on the prototype for one spinning kernelet; the rest is argued.* A carrier whose instruction pointer is in kernelet text holds nothing of Linux's and can be removed at any instruction; every sleep inside a service call is killable; and a kernelet can be destroyed without running any of its code ([Faults](faults-and-reclamation.md)).
+- **I7, termination.** *Eviction is shown on the prototype for one spinning kernelet; the rest is argued.* A carrier whose instruction pointer is in kernelet text holds nothing of Linux's beyond an increment of its preemption count, which the exit stub gives back, and can be removed at any instruction; every sleep inside a service call is killable; and a kernelet can be destroyed without running any of its code ([Faults](faults-and-reclamation.md)).
 - **I8, compatibility.** *Checked by the build.* The kernel proper's source is the same on every host, and its behavior differs only where the [classification](virtualizing-ostd/index.md) says an item is virtualized or absent.
 
 | invariant | where its mechanism is |

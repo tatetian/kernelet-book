@@ -64,7 +64,7 @@
 </g>
 <g fill="#8FF6FC" font-size="9.5" text-anchor="middle">
 <text x="124" y="237">image loader</text><text x="310" y="237">carriers &#183; virtual interrupts</text>
-<text x="124" y="279">service table (21 calls)</text><text x="310" y="279">page-fault handler</text>
+<text x="124" y="279">service table (20 calls)</text><text x="310" y="279">page-fault handler</text>
 <text x="124" y="321">eviction &#183; fault containment</text><text x="310" y="321">device models &#183; channels</text>
 <text x="217" y="363">/dev/kernelet, for the runtime</text>
 </g>
@@ -75,7 +75,7 @@
 <text x="388" y="186" fill="#9AA0BE" font-size="8.5" text-anchor="end">ioctl, exec</text>
 </g>
 </svg>
-<figcaption>Kernelets run in kernel mode, inside Linux, beside each other. What confines one is that everything above vOSTD is safe Rust, and that the only way out of its image is a table of twenty-one functions.</figcaption>
+<figcaption>Kernelets run in kernel mode, inside Linux, beside each other. What confines one is that everything above vOSTD is safe Rust, and that the only way out of its image is a table of twenty functions.</figcaption>
 </figure>
 
 ## The idea in five sentences
@@ -128,7 +128,7 @@ The design, in the order of the book's main [Design](../design/index.md) chapter
 - [Boundaries and trust](principles.md): the parties, the interfaces, the threat model, the invariants.
 - [Builds and images](builds-and-images.md): one source, one shared text, many instances; what the build checks.
 - [The kernelet API: control half](kernelet-api-control.md): identity, configuration, the life cycle, the endovisor's records.
-- [The kernelet API: service half](kernelet-api-service.md): the twenty-one services, and what each becomes on Linux.
+- [The kernelet API: service half](kernelet-api-service.md): the twenty services, and what each becomes on Linux.
 - [Virtualizing OSTD](virtualizing-ostd/index.md): the map, and then the mechanisms.
   - [Memory](virtualizing-ostd/memory.md)
   - [Tasks, virtual CPUs, and carriers](virtualizing-ostd/tasks.md)
