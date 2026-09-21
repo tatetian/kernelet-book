@@ -1,6 +1,6 @@
 # Linux as the host (WIP)
 
-*A second host for the same kernelets. The Design chapter assumes the host kernel is Asterinas; this chapter asks whether Linux can host kernelets instead, finds nothing that rules it out, and says exactly what it costs. **No kernelet has been built or run, on either host.** What was built and measured here is the mechanism each claim turns on; every other Linux fact is cited to Linux's own source with a link. The chapter also revises two decisions in the Design chapter and withdraws two assumptions, because the mechanism that makes Linux mode possible is better in both modes.*
+*A second host for the same kernelets. The Design chapter assumes the host kernel is Asterinas; this chapter asks whether Linux can host kernelets instead, finds nothing that rules out a patched Linux, and says exactly what it costs. **No kernelet has been built or run, on either host.** What was built and measured here is the mechanism each claim turns on; every other Linux fact is cited to Linux's own source with a link. The chapter also revises two decisions in the Design chapter and withdraws two assumptions, because the mechanism that makes Linux mode possible is better in both modes.*
 
 ## Why ask
 
@@ -20,7 +20,9 @@ So the two modes are a real choice and not a ladder. Linux mode is what an opera
 
 ## What this chapter concludes
 
-**Nothing found here rules out a patched Linux built without type-checked indirect branches.** That sentence has three qualifications and each one is earned. *Patched*: an unmodified Linux is ruled out, for reasons of function rather than speed. *Without type-checked indirect branches*: on a kernel built with them, whether a kernelet can be entered at all is open. *Nothing found*: no kernelet has run.
+**Nothing found here rules out a patched Linux.** Both qualifications are earned. *Patched*: an unmodified Linux is ruled out, for reasons of function rather than speed — without the patch a kernelet cannot intercept a tenant past its first process. *Nothing found*: no kernelet has run, on either host.
+
+One configuration is not yet settled and is deliberately not in that sentence. A kernel built with **type-checked indirect branches** rewrites its own call sites and function preambles to compare a hash of each function's type, and a kernelet image arrives without what that rewrite needs. It is a hardening option rather than a property of Linux: it requires the kernel to be built with a compiler that x86-64 distributions do not use for it, it can be turned off at boot, and the kernelet side may well be able to satisfy it — the compiler half is [measured](evidence.md) to work, and Linux already requires its two compilers to agree on the hash for a given prototype. It is recorded as assumption A19, and it belongs there rather than in a conclusion.
 
 Three things had to be true. Two were tested on a kernel built and booted for the purpose; the third is an argument from Linux's own interfaces, cited page by page:
 
@@ -53,7 +55,7 @@ So the contribution is not "kernel code can be virtualized" and not "one text ca
 Linux mode is not free, and this chapter does not pretend otherwise:
 
 - **Exports, a patch, and a build option.** A pair of exported symbols before anything runs and three more for a complete module; a kernel built with the notifier machinery the alias rule needs, which any kernel with virtualization support already has; and the system-call hook, which is required rather than optional. The boot setting this list used to carry is withdrawn, because a seccomp filter closes what it was for. [Alternative designs](../alternatives/index.md) withdraws the build option too, and two of the exports, by keeping the kernelet's own page table as a model rather than maintaining a second map.
-- **A class of kernel that may be excluded outright.** Where the host's own build enforces type-checked indirect branches, a kernelet's entry functions must carry preambles the host's compiler would accept, and nothing in this design produces them. The first call into a kernelet would trap. This is assumption A19 and it should be tested before anything else is built.
+- **One hardening option, not yet settled.** Where the host's own build enforces type-checked indirect branches, a kernelet's entry functions must carry preambles the host's compiler would accept, and nothing in this design produces them yet; the first call into a kernelet would trap. The option needs a compiler x86-64 distributions do not use for the kernel and can be turned off at boot, so this excludes a configuration rather than a class of machine. Assumption A19.
 - **Linux's own maturity is now in the trusted base.** The operator keeps their kernel, and keeps its bugs. Kernelets stop the tenant's *kernel* from being the attack surface; they do not make Linux smaller.
 - **The three weakened properties above**, which are the reason the two modes are a choice rather than a ladder.
 - **An addressing rule the design did not have.** The kernel proper may not dereference a tenant's virtual address at all, because the hardware refuses it; it must reach its tenant's memory through its own alias of the frames it granted. Measured, and cheaper than it first looked, but it is a rule the Design chapter never stated because Asterinas does not enforce the check.
