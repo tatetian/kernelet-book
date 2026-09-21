@@ -20,7 +20,7 @@
 
 **The supervisor alias.** Map the model's upper-level entries a second time in the kernel half of the carrier's address space, with the user bit cleared, so that a tenant address plus a constant is a kernel address and a copy needs no software walk. It was adopted on paper with one gate: its cost in TLB entries had to be measured. *Measured in a model*: for a 16-byte copy it saves about 7 ns over the walk when the working set is small and nothing when it is large, where its extra TLB misses cost as much as the walk does ([the table](virtualizing-ostd/memory.md#copies)). Against a saving that small stand real costs: it writes page-table entries Linux believes it owns, in a slot of the address-space layout that nothing reserves; it must be reinstalled in every new address space; and it opens a kernel-mode window onto user pages, which is what SMAP exists to prevent. Rejected.
 
-**Ordinary pages instead of raw frame numbers.** Inserting tenant pages as normal, reference-counted pages would let Linux subsystems pin them. No tenant operation needs that, since a tenant never calls Linux, and the endovisor would lose `zap_vma_ptes()`, its only exported way to remove a range of translations.
+**Ordinary pages instead of raw frame numbers.** Inserting tenant pages as normal, reference-counted pages would let Linux subsystems pin them, and a pin is a reference that can outlive the kernelet's own idea of who owns the frame, up to and past the day the grant is returned. No tenant operation needs pinning, since a tenant never calls Linux. Raw frame numbers give the right contract: Linux maps what it is told and keeps no claim of its own.
 
 ## For tasks
 

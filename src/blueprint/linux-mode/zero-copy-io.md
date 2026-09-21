@@ -29,7 +29,9 @@ On the Asterinas host the block layer has to be given a way to accept a request 
 
 ## What is open
 
-All of it is **[unverified]**. The two assumptions with the most weight are that `REQ_NOWAIT` submission fails cleanly, rather than sleeping, on every block driver an operator would put under a sandbox, and that a per-sandbox receive queue can be had on the network hardware that matters. ## The rings, for completeness
+All of it is **[unverified]**. The two assumptions with the most weight are that `REQ_NOWAIT` submission fails cleanly, rather than sleeping, on every block driver an operator would put under a sandbox, and that a per-sandbox receive queue can be had on the network hardware that matters.
+
+## The rings, for completeness
 
 The ring layout does not depend on the host. It is given here so that this page can be implemented alone; the [Asterinas host's version](../design/zero-copy-io.md) argues each choice.
 

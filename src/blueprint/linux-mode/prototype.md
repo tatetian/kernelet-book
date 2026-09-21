@@ -7,9 +7,10 @@
 | what | shows | standing |
 |---|---|---|
 | **Hello World on the design's real path**: the Asterinas tree's 100-line kernel, source unchanged, as a kernelet in a patched Linux 6.12 | the gate, carriers and the root carrier, kernelet stacks, `user_run`, the model and the cache, tenant copies by walking the model, entry and exit | *measured on the booted prototype*, [below](#hello) |
+| **A probe kernel on the same prototype**: demand paging, an illegal instruction, and a kernel that spins forever | a real miss in the model and the kernel proper's fix; an exception taken from Linux's signal queue by the resume hook; **eviction** of a carrier that will not leave kernelet code; the lifeline; the fill/flush machinery over one file per model; service calls on the Linux stack | *measured on the booted prototype*, [below](#probe) |
 | **The software walk, in a model** | the cost the design adds to every tenant copy, and that the supervisor alias does not earn its risks | *measured in a model*, [below](#walk) |
 | **Earlier mechanism experiments** (in a Linux 6.12 guest) | shared text for many instances; the cost of a gate; Linux's refusal of executable `vmap` memory; SMAP's refusal of direct tenant access; recovery from a kernel-mode fault by die notifier | *measured on the booted prototype of each mechanism*, [below](#earlier) |
-| eviction, the function-entry stack check, exceptions through the resume hook, multi-instance loading of a real image, the device models, channels, the runtime, more than one seat | nothing | **[unverified]**: designed, not built |
+| the function-entry stack check, the die notifier on a kernelet's own fault, the user-mode tick, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one seat, more than one kernelet | nothing | **[unverified]**: designed, not built |
 
 No full kernelet, meaning the Linux-compatible kernel proper with its file systems and network stack, has run on Linux. What has run is a small kernel written against the same OSTD interface, which uses the interface's hardest parts.
 
@@ -24,9 +25,9 @@ No full kernelet, meaning the Linux-compatible kernel proper with its file syste
 | layer | what it is | size |
 |---|---|---|
 | kernel proper | the 100-line kernel, unchanged, `deny(unsafe_code)` | 136 lines of Rust, 18 of assembly for the user program |
-| vOSTD | a Rust crate whose library name is `ostd`, offering the items that kernel uses with their real signatures. It calls no Linux symbol: the linked image has zero undefined symbols | 2,307 lines |
+| vOSTD | a Rust crate whose library name is `ostd`, offering the items that kernel uses with their real signatures. It calls no Linux symbol: the linked image has zero undefined symbols | 2,408 lines |
 | image ABI | a service table and an entry table of C function pointers, and boot arguments | in both of the above |
-| endovisor | one Linux module in C: the program loader and root carrier, carriers by `kernel_clone()`, the stack switch, the gate's two hooks, the memory area and its fault handler with the model walk and the grant check, nine services | 1,487 lines |
+| endovisor | one Linux module in C: the program loader and root carrier, carriers by `kernel_clone()`, the stack switch, the gate's two hooks, the memory areas and their fault handler with the model walk and the grant check, lifelines, eviction, the services | 2,335 lines |
 | the gate | a patch to Linux v6.12 | 103 added lines in 8 files, none removed |
 | runtime | a static test program that forks, sets *no new privileges* and executes the sandbox file | 154 lines |
 
@@ -34,26 +35,30 @@ No full kernelet, meaning the Linux-compatible kernel proper with its file syste
 
 ```
 INIT: loading kernelet.ko
-kernelet: endovisor loaded: grant 4096 KiB at 0x800000, linear map 0xffff907640000000, 1 seat
+kernelet: kernelet image text [0xffffffffc028e1e7, 0xffffffffc02929a5), 18366 bytes
+kernelet: endovisor loaded: grant 4096 KiB at 0x800000, linear map 0xffff894c80000000, 1 seat
 INIT: running /tests/10-hello
 RUN-HELLO: creating a sandbox from /hello.klet
 kernelet: root carrier exec (pid 32), address space emptied
 kernelet: boot carrier starting (pid 33)
-kernelet: vOSTD up: grant 0x800000..0xc00000, linear map 0xffff907640000000, 1 seat(s)
+kernelet: service stub: 10 cycles direct, 18 through the stack switch (n=2000, rdtsc)
+kernelet: vOSTD up: grant 0x800000..0xc00000, linear map 0xffff894c80000000, 1 seat(s)
+kernelet: model 0x803000 registered, one file object for its windows
 kernelet: boot carrier (pid 33) activated the model at 0x803000
-kernelet: user carrier starting (pid 34)
-kernelet: user carrier (pid 34) user window [0x10000, 0x7fffffffe000)
+kernelet: task carrier starting (pid 34)
+kernelet: task carrier (pid 34) user window [0x10000, 0x7fffffffe000) of model 0x803000
 kernelet: cache fill pid 34: va 0x401000 <- pa 0x801000 (rwx)
 kernelet: syscall 1 serviced by the kernelet (pid 34)
 kernelet: Hello, world
 kernelet: 
 kernelet: syscall 60 serviced by the kernelet (pid 34)
 kernelet: stopped, exit code 0
-kernelet: boot carrier (pid 33) dying
+kernelet: task carrier (pid 34) dying
 kernelet: root carrier (pid 32) dying
-kernelet: user carrier (pid 34) dying
-RUN-HELLO: root carrier (pid 32) killed by signal 9
-kernelet: user window of pid 34 closed by Linux
+kernelet: task carrier (pid 34) lifeline closed
+kernelet: root carrier (pid 32) lifeline closed
+kernelet: boot carrier (pid 33) dying
+kernelet: boot carrier (pid 33) lifeline closed, the last one
 RUN-HELLO: no carrier left (module references: 0)
 RUN-HELLO: done
 INIT: unloading kernelet
@@ -64,18 +69,60 @@ INIT: done
 Read against the design, line by line:
 
 - *root carrier exec*: the runtime's child executed a file beginning with the magic `KLET`; the endovisor's [binary-format handler](virtualizing-ostd/tasks.md#root) claimed it and emptied the address space.
-- *boot carrier*, *user carrier*: two `kernel_clone()`s by the root carrier, one per OSTD task. Each is a separate Linux process (pids 33 and 34).
+- *boot carrier*, *task carrier*: two `kernel_clone()`s by the root carrier, one per OSTD task. Each is a separate Linux process (pids 33 and 34).
 - *activated the model at 0x803000*: `VmSpace::activate` became `pt_activate`; the root of the kernel proper's page table is a frame of the grant (which starts at 0x800000), and nothing was written to the processor's page-table register.
 - *user window*: on the user task's first `user_run`, one memory area covering the user range, created with `vm_mmap()`.
 - *cache fill*: the tenant's first instruction fetch faulted in Linux; the endovisor's handler walked the model, checked the frame against the grant, and installed the translation. There is exactly one fill, although the program's message is on another page: the kernel proper read the message [by walking the model](virtualizing-ostd/memory.md#copies), which involves no Linux page table at all.
 - *syscall 1 serviced by the kernelet*, *Hello, world*: the [gate](virtualizing-ostd/user-mode.md)'s syscall hook switched to the kernelet stack, `UserMode::execute` returned `UserSyscall`, and the kernel proper's own handler printed the buffer with `println!`, which is the `log_write` service. Linux's `write` was never called.
-- *stopped, exit code 0*: `power::poweroff` became the `stop` service; every carrier was killed, the area's `close` callback fired, the module's reference count reached zero, and the module unloaded.
+- *stopped, exit code 0*: `power::poweroff` became the `stop` service; every carrier was killed, each carrier's lifeline closed as Linux tore the task down, the module's reference count reached zero, and the module unloaded.
 
 The checks (`Hello, world`; exit code 0; clean unload; no `BUG:`, `Oops`, `WARNING:` or `Call Trace` in the log) passed on three consecutive runs of the final tree.
 
 **Two paths not on the hello kernel's route were forced, once each, with temporary instrumentation that was then removed.** A forced *model miss* on the first fault made the handler record the fault and return; the resume hook resumed the kernelet with `user_run` returning *exception* (trap 14); the kernel proper ignored it and called `execute` again; the second fault was filled and the program ran to completion. A forced `tlb_shootdown` between the two system calls removed the cached translation, and the log shows it being filled again on the next instruction fetch.
 
-**What the prototype does not have**, and therefore does not show: more than one kernelet, more than one seat, the position-independent loader (the image is linked into the module), eviction, the die notifier, the function-entry stack check, exceptions other than page faults, the FS base and floating-point paths, devices, channels, a real runtime, control-group accounting of the grant, and any synchronization between the fault handler's walk of the model and a concurrent change to it. Its Rust heap is Linux's `kmalloc`, where the design puts the heap in the grant. Implemented but never executed: the write-protection callback, the "present but not permitted" flavor of a model miss, and the refusal of non-64-bit entries.
+**What the prototype does not have**, and therefore does not show: more than one kernelet, more than one seat, the position-independent loader (the image is linked into the module), the die notifier, the function-entry stack check, the user-mode tick, the FS base and floating-point paths, devices, channels, a real runtime, and control-group accounting of the grant. Its Rust heap is Linux's `kmalloc`, where the design puts the heap in the grant. Implemented but never executed: the write-protection callback, the "present but not permitted" flavor of a model miss, and the refusal of non-64-bit entries. The sizes in the table are of the final tree, which includes the [probe kernel](#probe)'s additions.
+
+## A probe kernel: demand paging, an exception, and eviction {#probe}
+
+Hello World never misses in the model, never faults, and exits politely. A second small kernel, written for the purpose in safe Rust against the same vOSTD (190 lines, `deny(unsafe_code)`), does the three things it does not. It was run after the prototype had been brought in line with what review changed in the design: the rule that the kernel proper hears only of faults taken in user mode, protections built by the handler, one file per model with `unmap_mapping_range()` as the flush behind a per-model lock, service calls on the Linux stack, and a lifeline per carrier.
+
+```
+kernelet: kernelet image text [0xffffffffc003e1e7, 0xffffffffc0042f45), 19806 bytes
+kernelet: probe: mapped 2 text page(s) at 0x400000; no data page and no stack
+kernelet: model 0x802000 registered, one file object for its windows
+kernelet: task carrier (pid 34) user window [0x10000, 0x7fffffffe000) of model 0x802000
+kernelet: cache fill pid 34: va 0x401000 <- pa 0x801000 (r-x)
+kernelet: model miss pid 34: va 0x900000 (w, absent) -> exception
+kernelet: probe: page fault at 0x900000 (error code 0x6), mapping a fresh frame
+kernelet: cache fill pid 34: va 0x900000 <- pa 0x806000 (rw-)
+kernelet: syscall 1 serviced by the kernelet (pid 34)
+kernelet: probe: demand paging: read back "PROBE-OK" from 0x900008
+kernelet: signal 4 (si_code 2) from pid 34 is trap 6 -> exception
+kernelet: probe: illegal instruction at 0x401036 (trap 6), stepping over two bytes
+kernelet: syscall 1000 serviced by the kernelet (pid 34)
+kernelet: probe: spinning inside the kernelet at depth 0; only eviction can stop me
+RUN-PROBE: destroying the sandbox: SIGKILL to the root carrier (pid 32)
+kernelet: root carrier (pid 32) lifeline closed
+kernelet: root carrier gone, the sandbox is dying; 2 carrier(s) left
+kernelet: arming the eviction sweep every 1000 us on 2 cpu(s)
+kernelet: evicting task carrier (pid 34) on cpu 1: ip 0xffffffffc003e6d0 (+0x4e9 in the kernelet image, ...probe..create_user_task..user_task...), sweep 2
+kernelet: task carrier (pid 34) dying (evicted)
+kernelet: boot carrier (pid 33) lifeline closed, the last one
+RUN-PROBE: no carrier left (module references: 0)
+kernelet: eviction: 11 sweep(s), 1 eviction(s)
+kernelet: endovisor unloaded
+INIT: done
+```
+
+**Demand paging.** The kernel maps only the program's text. The program stores to an unmapped address. The log shows the [six steps of the memory page's figure](virtualizing-ostd/memory.md#cache): a miss in the model, reported to the kernel proper as a page-fault exception with the right address and an error code that says *user, write, not present*; the kernel proper's handler mapping a fresh frame with the ordinary cursor; the translation installed; and the program reading its own data back.
+
+**An exception that is not a page fault.** The program executes `ud2`. Linux forces `SIGILL`; the gate's resume hook takes it off the signal queue before Linux can deliver it, recognizes it as kernel-generated, and `user_run` returns *exception* with trap 6 from the task's thread structure. The kernel proper logs it and steps over the instruction. One thing the design had not said was found here: for an exception that arrives as a signal, the hook must first copy the saved user registers into the context, as the syscall hook does, because the context still holds the registers of the previous trip.
+
+**Eviction.** The kernel proper's handler for system call 1000 is `loop {}`. The test then kills the root carrier from outside. The root's lifeline closes, the endovisor marks the kernelet dying and kills the other carriers, and the spinning carrier, which no signal can reach, is [evicted](faults-and-reclamation.md#eviction): a timer callback on its processor finds the interrupted instruction pointer inside the kernelet image, at depth 0, in a dying kernelet, and points it at the exit stub. The carrier leaves through the ordinary stack switch, gives up its seat, and dies by the pending `SIGKILL`; the module's reference count reaches zero and it unloads. Eight runs evicted eight times, in one or two sweeps each, on either processor, with no complaint from Linux. The interrupted instruction was always one of the loop's two instructions, as Linux's own symbol lookup confirms in the log. The stub realigns the stack pointer, because an interrupt can land between any two instructions.
+
+Three smaller results came with it. Linux's own kernel-mode read of a carrier's user memory (`get_user`, forced from the endovisor for the test) filled the cache on a hit and returned `-EFAULT` on a miss, without the kernel proper hearing of either. `unmap_mapping_range()` on a model's file did remove raw-frame-number translations, and the next access refilled them. And a service call through the stack-switching stub cost 18 cycles against 10 for a direct call in one boot and 26 against 26 in another (*measured on the booted prototype*, 2,000 calls, interrupts off): the pair of stack switches costs under ten cycles.
+
+What this still does not show: eviction under load, with many carriers, or of code that is in the middle of something subtler than a spin; and none of the items in the last row of the table at the top.
 
 ## The walk, measured {#walk}
 
@@ -157,7 +204,7 @@ The programs and unedited transcripts of these experiments were in the book's no
 
 ## Findings {#findings}
 
-Building the prototype changed the design in eight places. Each finding below has been folded into the page named, so the design and the prototype agree; the last column of the table after it records where the *prototype* still differs from the design, which are its shortcuts and not open questions.
+Building the prototype changed the design in ten places. Each finding below has been folded into the page named, so the design and the prototype agree; the last column of the table after it records where the *prototype* still differs from the design, which are its shortcuts and not open questions.
 
 1. **OSTD's address-space activation is per CPU, and the 100-line kernel relies on it.** Its `main` activates the address space, and a *different* task enters user mode. With activation recorded per task, which is what both hosts need, that task would have no address space. A new task therefore inherits its creator's activation, weakly, until it activates one of its own ([Memory](virtualizing-ostd/memory.md#cache)). The finding applies to the Asterinas host too.
 2. **`Task::yield_now()` from the boot context must not return while tasks exist.** On a machine it never does. The first prototype returned at once, and the start-up code that follows `main` powered the kernelet off before its task had run ([The rest](virtualizing-ostd/the-rest.md)).
@@ -167,6 +214,9 @@ Building the prototype changed the design in eight places. Each finding below ha
 6. **Module lifetime is not quite automatic.** Linux's per-address-space reference on the program loader's module is dropped before the last reference to the area's file is, and the file's release ran in unloaded code, once. The file operations must name the module as their owner ([Tasks](virtualizing-ostd/tasks.md#root)).
 7. **Every carrier inherits the root carrier's saved registers**, including its segment selectors and flags, because a clone that starts in a kernel function copies its parent's register file. The root carrier must therefore initialize its own as a 64-bit user task even though it never reaches user mode ([Tasks](virtualizing-ostd/tasks.md#root)).
 8. **A Rust image for Linux's module loader needs `-Z plt=yes`.** Without it the compiler reaches its own helper functions through a global offset table, 1,593 relocations of a kind the loader rejects. This affects the prototype's build only; the design's [position-independent image](builds-and-images.md) is loaded by the endovisor, not by Linux's module loader.
+
+9. **An exception that arrives as a signal finds a stale context.** On a model miss the fault handler runs with the user registers already saved by Linux, and so does the resume hook; but the *context* the kernelet sees was last written on the previous trip. The hook must copy the saved registers into it before resuming the kernelet, exactly as the syscall hook does ([User mode](virtualizing-ostd/user-mode.md#exceptions)).
+10. **A cloned carrier inherits its parent's lifeline.** A clone without shared descriptors gets a *copy* of the root carrier's table, so the root's lifeline would stay open until the last carrier died. Each new carrier closes the inherited copy first ([Tasks](virtualizing-ostd/tasks.md#death)).
 
 | OSTD item the kernel uses | service | Linux facility | prototype differs from the design in |
 |---|---|---|---|
@@ -182,6 +232,8 @@ Building the prototype changed the design in eight places. Each finding below ha
 | `TaskOptions`, `Task::run` | `task_spawn` | a request to the root carrier; `kernel_clone()` with a start function | no priority or affinity |
 | `Task::yield_now` (boot context) | an idle wait | give up the seat; sleep until no task is left | — |
 | `UserMode::execute`, `UserContext` | `user_run` | the stack switch, `pt_regs`, the gate's two hooks | no FS base, no floating-point state |
-| (the cache) | `tlb_shootdown` | one raw-frame-number area per carrier; `fault` walks the model; `zap_vma_ptes()` | no interlock with concurrent model changes; one list of carriers instead of a file per model |
+| (the cache) | `tlb_shootdown` | one file per model; one shared, fixed raw-frame-number area per carrier; `fault` and `pfn_mkwrite` walk the model under the model's lock; `unmap_mapping_range()` | vOSTD does not yet hold page-table nodes until the flush returns (it never frees one) |
+| (a carrier's death) | — | a lifeline file in each carrier's descriptor table | — |
+| (forced termination) | — | per-processor `hrtimer` sweep, `get_irq_regs()`, an exit stub | one kernelet, so no per-instance text ranges |
 
-**Reproducing it.** In the worktree, `cd kernelet-linux && make hello`. The first run downloads nothing: it expects the Linux 6.12 tree unpacked under `.build/`, which `make linux` prepares. `REPORT.md` there lists every deviation and surprise met during the build, 27 in all, most of them engineering.
+**Reproducing it.** In the worktree, `cd kernelet-linux`, then `make hello` and `make probe`. From a clean checkout the first run downloads the Linux 6.12 release tarball, unpacks it under `.build/`, applies the patch and builds the kernel. `REPORT.md` there lists every deviation and surprise met on the way, 43 in all, most of them engineering.

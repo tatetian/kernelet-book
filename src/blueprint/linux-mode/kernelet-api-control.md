@@ -10,7 +10,7 @@ A **task name** is an index and a generation in the same way, so a late wake-up 
 
 ## Configuration
 
-Fixed when a sandbox is created, except memory, which can grow:
+Given at create, completed by attaching devices before start, and fixed from start on, except memory, which can grow:
 
 | field | meaning |
 |---|---|
@@ -31,9 +31,9 @@ A kernelet moves through six states, each transition a single compare-and-swap s
 <figure class="fwd-fig">
 <div class="head">
 <div class="tag">Life cycle</div>
-<div class="title">Six states; the only way back is a destroy that must be retried</div>
+<div class="title">Six states, one direction</div>
 </div>
-<svg viewBox="0 0 900 170" role="img" aria-label="A kernelet is Created by KERNELET_CREATE, becomes Running when its sandbox file is executed, becomes Dying on a stop, a kill, a fault or a lost carrier, becomes Exited when its last carrier is gone, becomes Destroying on KERNELET_DESTROY, and becomes Destroyed when everything has been returned. A kill before start goes from Created straight to Exited. A destroy that finds a device thread still holding a buffer goes back to Exited and is retried.">
+<svg viewBox="0 0 900 170" role="img" aria-label="A kernelet is Created by KERNELET_CREATE, becomes Running when its sandbox file is executed, becomes Dying on a stop, a kill, a fault or a lost carrier, becomes Exited when every task of the sandbox is gone, the root carrier and the device threads included, becomes Destroying on KERNELET_DESTROY, and becomes Destroyed when everything has been returned. A kill before start goes from Created straight to Exited.">
 <defs>
 <marker id="cl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
 <path d="M0 0 L8 4 L0 8 z" fill="#00F7FF"/>
@@ -55,14 +55,12 @@ A kernelet moves through six states, each transition a single compare-and-swap s
 <path d="M130 80 H170" marker-end="url(#cl-a)"/><path d="M282 80 H322" marker-end="url(#cl-a)"/><path d="M434 80 H474" marker-end="url(#cl-a)"/><path d="M586 80 H626" marker-end="url(#cl-a)"/><path d="M738 80 H778" marker-end="url(#cl-a)"/>
 </g>
 <path d="M75 60 V30 H531 V58" stroke="#9AA0BE" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#cl-g)"/>
-<path d="M683 100 V134 H531 V102" stroke="#9AA0BE" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#cl-g)"/>
 <g fill="#5C93A8" font-size="8.5" text-anchor="middle">
 <text x="150" y="116">exec of the</text><text x="150" y="128">sandbox file</text>
 <text x="303" y="116">stop, kill, fault,</text><text x="303" y="128">carrier lost</text>
-<text x="455" y="116">last carrier</text><text x="455" y="128">gone</text>
+<text x="455" y="116">every task of the</text><text x="455" y="128">sandbox gone</text>
 </g>
 <text x="303" y="24" fill="#9AA0BE" font-size="8.5" text-anchor="middle">kill before start</text>
-<text x="607" y="150" fill="#9AA0BE" font-size="8.5" text-anchor="middle">busy: a device thread still holds a buffer; retry</text>
 <text x="607" y="52" fill="#5C93A8" font-size="8.5" text-anchor="middle">DESTROY</text>
 <text x="759" y="52" fill="#5C93A8" font-size="8.5" text-anchor="middle">all returned</text>
 </g>
@@ -75,7 +73,7 @@ A kernelet moves through six states, each transition a single compare-and-swap s
 - **raise an interrupt** is one atomic operation and a wakeup, legal from any Linux context.
 - **kill** marks the kernelet dying and returns at once; [stopping the carriers](faults-and-reclamation.md) is asynchronous.
 - **wait** reports the **exit status**: exited with a code, panicked with a message, or killed with a reason.
-- **destroy** is the [drain list](faults-and-reclamation.md#destroy).
+- **destroy** releases everything, in the [fixed order](faults-and-reclamation.md#destroy) that the book calls the *drain list*: one step for every record below.
 
 ## What the endovisor keeps per kernelet
 
@@ -84,10 +82,10 @@ The list matters because destroy must account for every entry, and because a str
 - identity, state, and a count of operations in progress (destroy waits for it to reach zero);
 - the kind, the configuration, the instance's base address and its private pages;
 - the grant: each run's physical base, length and Linux page handle; the metadata region;
-- the registered models (tenant page-table roots), each with the list of carriers bound to it;
-- the carriers: for each, the Linux task, the kernelet stack, the depth, the seat held, the pending exception;
-- the seats: holder, job queue, timer, tick count;
-- the devices: model state, inbox, device thread, the Linux file behind it, and the count of kernelet buffers the thread still holds;
+- the registered models (tenant page-table roots), each with its file object and its reader-writer lock;
+- the carriers: for each, the Linux task, the lifeline, the kernelet stack and its limit, the depth, the seat held, the model it is bound to, the pending exception;
+- the seats: holder, waiters, job queue, timer, tick count;
+- the devices: model state, inbox, device thread, the Linux file behind it;
 - the channel connections that name this kernelet;
 - the log ring and the statistics;
 - the exit status and those waiting for it.

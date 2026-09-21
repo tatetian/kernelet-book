@@ -84,7 +84,7 @@ The table after the list says which page carries the mechanism behind each. Each
 - **I4, no retained reference.** *Checked by types; the drain list is argued.* The endovisor holds no pointer into a kernelet across the return of a service call, except the records [destroy](faults-and-reclamation.md#destroy) enumerates.
 - **I5, no closure crosses.** *Checked by types.* The endovisor stores no function pointer into a kernelet beyond the entry table, and a kernelet none into the host beyond the service table. Tasks are started by index.
 - **I6, charged work.** *Checked by membership.* Every carrier and device thread of a kernelet is in the sandbox's control group, and every grain is allocated there.
-- **I7, termination.** *Eviction is argued, not built.* A carrier whose instruction pointer is in kernelet text holds nothing of Linux's and can be removed at any instruction; every sleep inside a service call is killable; and a kernelet can be destroyed without running any of its code ([Faults](faults-and-reclamation.md)).
+- **I7, termination.** *Eviction is shown on the prototype for one spinning kernelet; the rest is argued.* A carrier whose instruction pointer is in kernelet text holds nothing of Linux's and can be removed at any instruction; every sleep inside a service call is killable; and a kernelet can be destroyed without running any of its code ([Faults](faults-and-reclamation.md)).
 - **I8, compatibility.** *Checked by the build.* The kernel proper's source is the same on every host, and its behavior differs only where the [classification](virtualizing-ostd/index.md) says an item is virtualized or absent.
 
 | invariant | where its mechanism is |

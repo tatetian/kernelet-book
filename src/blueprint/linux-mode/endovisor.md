@@ -71,7 +71,7 @@ EXPORT_SYMBOL_GPL(set_memory_ro);
 
 **One build configuration still open.** A Linux built with type-checked indirect branches ([assumption A19](builds-and-images.md#audit)).
 
-**Three interactions with the rest of Linux that an operator should know.** A host security module sees each carrier create a shared, writable, executable mapping of an endovisor file, and its policy must allow that to the sandbox's user. Live patching decides that a task is safe to patch by unwinding its stack; a carrier that is preempted while on its kernelet stack cannot be unwound, so a patch transition waits until that carrier next runs a service or returns to user mode, and waits indefinitely on a runaway kernelet until it is killed. **[unverified]**: neither has been tried. And suspending the machine needs every task to be freezable, so the carriers' sleeps are marked freezable as well as killable.
+**Three interactions with the rest of Linux that an operator should know.** A host security module sees each carrier create a shared, writable, executable mapping of an endovisor file, and its policy must allow that to the sandbox's user. Live patching decides that a task is safe to patch by unwinding its stack; a carrier that is preempted while on its kernelet stack cannot be unwound, so a patch transition waits until that carrier next runs a service or returns to user mode, and waits indefinitely on a runaway kernelet until it is killed. **[unverified]**: neither has been tried. And suspending the machine needs every task to stop at a point Linux considers safe. The carriers' sleeps are marked freezable as well as killable, which covers a carrier that is waiting, and the service prologue and the resume hook give Linux its chance for a carrier that is running; a kernelet that stays in its own code for longer than Linux's freezing timeout, twenty seconds by default, makes that suspend attempt fail.
 
 **Everything a sandbox costs the host is charged to its control group**, by one of two routes, and the list is the same list that [destroy](faults-and-reclamation.md#destroy) walks: the grant, the instance's private pages, its shared pages and metadata region, carrier records, kernelet stacks, log ring, device inboxes and channel queues are allocated by a member of the group with Linux's accounting flag; carriers and device threads are members, so their processor time, their Linux task structures and stacks, their page tables and their number (`pids.max`) are the group's. The queue of spawn requests is bounded by the sandbox's task limit.
 
@@ -95,7 +95,8 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 | `KERNELET_KILL` | mark the kernelet dying, with a reason |
 | `KERNELET_WAIT`, `poll` | learn that it has exited, and why |
 | `KERNELET_STATS` | memory granted, service calls, interrupts raised, log records dropped, caught panics |
-| `KERNELET_DESTROY` | reclaim; may answer "busy, retry" while a device thread still holds a buffer |
+| `KERNELET_DESTROY` | reclaim everything; legal once the kernelet has exited |
+| `KERNELET_UNREGISTER_KIND` | drop a kind with no instances, and return its text frames to Linux |
 
 **Starting is not an `ioctl`.** A sandbox starts when a process executes its **sandbox file**. The file is not on any file system: it is a small in-memory file that the endovisor itself creates (with Linux's exported [`shmem_file_setup()`](https://elixir.bootlin.com/linux/v6.12/source/mm/shmem.c#L5265)), containing a magic number, and the runtime receives it only as the exec descriptor, which it executes with `execveat()`. The endovisor's [program loader](virtualizing-ostd/tasks.md#root) recognizes the magic and identifies the sandbox *by the file object*, which it made, not by a secret that could leak. It then checks that the sandbox is in the *created* state, that the executing process has *no new privileges* set and is not gaining privileges by this `exec`, and that its control group is not the root group; marks the descriptor used; and turns the process into the root carrier. Starting by `exec` is what lets the runtime prepare that process with ordinary Linux tools first, because everything it sets up is inherited by every carrier: the control group that bounds and accounts the sandbox, the user and the namespaces it runs as, and the seccomp filter.
 
@@ -110,7 +111,7 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 
 ## Size
 
-**[unverified]**: the endovisor has not been written. The prototype's module, which implements the gate operations, the program loader and root carrier, carriers, the stack switch, the memory area with the model walk, and nine services for one kernelet, is 1,487 lines of C (*measured on the booted prototype*). The device models are the largest remaining part; their Rust equivalents for the other host are *estimated* at a few thousand lines.
+**[unverified]**: the endovisor has not been written. The prototype's module, which implements the gate operations, the program loader and root carrier, carriers, the stack switch, the memory areas with the model walk, lifelines, eviction, and the services two small kernels need, for one kernelet, is 2,335 lines of C (*measured on the booted prototype*). The device models are the largest remaining part; their Rust equivalents for the other host are *estimated* at a few thousand lines.
 
 ## What this page decides
 

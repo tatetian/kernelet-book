@@ -4,7 +4,7 @@
 
 ## What the service half is
 
-A kernelet image has no undefined symbols, so it cannot call Linux. When the endovisor enters an image it passes a pointer to the **service table**: a C structure of twenty-one function pointers, the same for every kernelet on the machine. vOSTD calls through it whenever a [virtualized item](virtualizing-ostd/index.md) needs something only the host can give. Each such call is a **crossing**: an indirect function call at the same privilege, with no trap and no address-space switch. *Measured on the booted prototype* of the Asterinas host, a crossing cost 35 cycles against 34 for a plain call; on Linux a crossing also changes stacks ([below](#depth)), which was not measured.
+A kernelet image has no undefined symbols, so it cannot call Linux. When the endovisor enters an image it passes a pointer to the **service table**: a C structure of twenty-one function pointers, the same for every kernelet on the machine. vOSTD calls through it whenever a [virtualized item](virtualizing-ostd/index.md) needs something only the host can give. Each such call is a **crossing**: an indirect function call at the same privilege, with no trap and no address-space switch. *Measured on the booted prototype* of the Asterinas host, a crossing cost 35 cycles against 34 for a plain call; on Linux a crossing also changes stacks ([below](#depth)), which *measured on the booted prototype* of this design at under ten cycles for the pair of switches.
 
 The image exports the mirror image, an **entry table**, which is how the endovisor starts a task inside the image. The two tables, the shared pages and the constants are the **image ABI**. It is defined once, in a Rust module that vOSTD compiles, and the C header below is generated from that module; the endovisor's build fails if any size or offset disagrees.
 
@@ -91,7 +91,7 @@ struct klet_entry_table {                /* in the image, 4 KiB from its base; r
 
 ## Who is calling {#depth}
 
-No service takes a "which kernelet" argument, because a kernelet must not be able to claim to be another. The endovisor finds the caller from Linux: the current task's [gate pointer](virtualizing-ostd/user-mode.md) leads to its **carrier record**, which names the kernelet, the kernelet task, the [seat](virtualizing-ostd/tasks.md#seats) the carrier holds, and the **service-call depth**. The record is endovisor memory that no kernelet can address.
+No service takes a "which kernelet" argument, because a kernelet must not be able to claim to be another. The endovisor finds the caller from Linux: the current task's [gate pointer](virtualizing-ostd/user-mode.md) leads to its **carrier record**, which names the kernelet, the kernelet task, the [seat](virtualizing-ostd/tasks.md#seats) the carrier holds, and the **service-call depth**. The record is endovisor memory. The kernel proper cannot name it at all. vOSTD, which is trusted, reads two fields of it (the task's name and its stack limit) and writes none.
 
 Every service function is wrapped in the same prologue and epilogue.
 
@@ -101,7 +101,9 @@ Every service function is wrapped in the same prologue and epilogue.
 
 The depth is 1 exactly while the carrier, having come from kernelet code, is inside endovisor or Linux code and may hold their locks. It is one of the two tests that make [eviction](faults-and-reclamation.md#eviction) safe.
 
-**Two kinds of call, with respect to the seat.** `task_park`, `task_yield` and `job_wait` exist to let others run: they give up the seat, sleep in Linux, and take a seat again before returning. vOSTD must not make them while its no-preemption counter is raised, because the kernel proper's code between raising and lowering it assumes its per-CPU data is not touched by anyone else; the prologue checks the counter, which is on a page the kernelet writes, and answers `-KLET_STATE`. That check protects the kernelet from its own bugs, not the host from the kernelet, so it does not matter that the kernelet could lie. Every other call keeps the seat. Four of those can block inside Linux: `grains_request` and `task_spawn` while Linux allocates memory, `pt_activate` while it creates an area, and `tlb_shootdown` while it waits for fault handlers to finish. The seat stays taken meanwhile, which is correct, since a processor that is waiting for a TLB flush is not available either. `tlb_shootdown` cannot be allowed to fail, so it is never refused for the counter's sake.
+**Two kinds of call, with respect to the seat.** `task_park`, `task_yield` and `job_wait` exist to let others run: they give up the seat, sleep in Linux, and take a seat again before returning. vOSTD must not make them while its no-preemption counter is raised, because the kernel proper's code between raising and lowering it assumes its per-CPU data is not touched by anyone else; the prologue checks the counter, which is on a page the kernelet writes, and answers `-KLET_STATE`. That check protects the kernelet from its own bugs, not the host from the kernelet, so it does not matter that the kernelet could lie. `user_run` gives up the seat too, for as long as the tenant stays in user mode; like a machine's return to user mode it is legal with the counter raised, and `execute` raises it on purpose. It can block in Linux before it leaves, when it has to create or replace the carrier's memory area.
+
+Every other call keeps the seat. Three of those can block inside Linux: `grains_request` and `task_spawn` while Linux allocates memory, and `tlb_shootdown` while it waits for fault handlers to finish. The seat stays taken meanwhile, which is correct, since a processor that is waiting for a TLB flush is not available either. `tlb_shootdown` cannot be allowed to fail, so it is never refused for the counter's sake.
 
 A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#eviction), so the endovisor owes a bound on every one of them. The rule is that **every sleep inside a service is killable**: the waits use Linux's killable forms, and the sweep's `SIGKILL` ends them. The remaining services do bounded work without sleeping.
 
@@ -114,7 +116,7 @@ A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#ev
 | `grains_request` | page allocator or contiguous allocator, charged to the sandbox's control group; zero; record in the owner array, then publish in the grant table ([Memory](virtualizing-ostd/memory.md)) |
 | `pt_root_register` | check that the root frame is in the grant; create the model's record and its file object |
 | `pt_root_unregister` | empty every cache of the model; drop the record |
-| `pt_activate` | bind the calling carrier to the model; if its area was caching another model, replace the area |
+| `pt_activate` | record the model as the calling carrier's; the carrier's memory area is created, or replaced, by the next `user_run` |
 | `tlb_shootdown` | wait out fault handlers on this model, then `unmap_mapping_range()` on the model's file, which empties the range in every carrier's cache ([Memory](virtualizing-ostd/memory.md#interlock)) |
 | `task_spawn` | queue a request to the root carrier, which clones a carrier ([Tasks](virtualizing-ostd/tasks.md#root)); the name is returned at once |
 | `task_exit` | the carrier [leaves for good](faults-and-reclamation.md#leaving) |
@@ -130,7 +132,7 @@ A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#ev
 | `mmio_read`, `mmio_write` | check device, offset and width (1, 2, 4 or 8); call the device model ([Devices](virtualizing-ostd/devices.md)) |
 | `log_write` | copy at most 1 KiB into the sandbox's log ring, rate-limited |
 | `oops` | count a caught panic against the oops budget |
-| `stop` | mark dying with the kind, code and message; never returns |
+| `stop` | mark dying with the kind, code and message; the calling carrier then [leaves for good](faults-and-reclamation.md#leaving) from inside the service, which is why the call never returns |
 
 **Pointers.** Four services take one. `user_run`'s context must lie on the caller's own kernelet stack, which the endovisor allocated and the kernelet cannot unmap, and the endovisor copies it rather than using it in place. The text arguments of `log_write`, `oops` and `stop` are read with Linux's non-faulting kernel copy, [`copy_from_kernel_nofault()`](https://elixir.bootlin.com/linux/v6.12/source/mm/maccess.c#L24), after a check that the range lies in the instance's image, stack or grant, so a bad pointer is `-KLET_INVALID` and never a host fault.
 
@@ -142,12 +144,12 @@ Some information is cheaper to read than to ask for. The endovisor maps six kind
 |---|---|---|
 | **boot arguments** | identity, number of seats, direct-map base, metadata base, where the other pages are, device list, command line, and the two offsets vOSTD needs to find its carrier record from Linux's current-task pointer | once, before entry |
 | **grant table** | the base and length of each run | appended by the endovisor when it grants |
-| **info page** | the dying flag, the number of runs | by the endovisor |
+| **info page** | the number of runs in the grant table, the grant's ceiling | by the endovisor |
 | **clock page** | coarse ticks and monotonic nanoseconds; one page for the whole machine | by one machine-wide timer |
 | **task records** | per task: the no-preemption counter | by vOSTD |
 | **seat records** | per seat: pending tick count, RCU quiescence | by both |
 
-Nothing a kernelet can write on these pages is believed by the endovisor for any decision that protects the host. The depth, the dying mark that the endovisor acts on, and the ownership of seats are all in endovisor memory.
+Nothing a kernelet can write on these pages is believed by the endovisor for any decision that protects the host. The depth, the dying mark, and the ownership of seats are all in endovisor memory. The header above gives the tables and constants in full; the byte layouts of the six pages are fixed by the same generated header and are not reproduced here, since nothing in the design turns on them beyond the contents listed.
 
 ## What is not offered
 

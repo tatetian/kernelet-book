@@ -45,10 +45,10 @@ Every ordinary system call of a carrier passes this filter with *allow* and then
 
 - **`start`** tells the agent to start the container's process.
 - **`kill <signal>`** asks the agent to deliver the signal inside. If the agent does not answer in time, the runtime kills the *sandbox* with `KERNELET_KILL`.
-- **`delete`** destroys the sandbox (`KERNELET_DESTROY`, retried while the endovisor answers "busy"), ends the holder, and removes the control group and the state directory.
+- **`delete`** destroys the sandbox (`KERNELET_KILL` if it is still running, a wait for it to exit, then `KERNELET_DESTROY`), ends the holder, and removes the control group and the state directory.
+- **`state`** reports the container's status from the kernelet's state and the agent's report. The process identifier it reports is the holder's, because the container's process has no identifier the host could use: on the host it is one of many carriers, and inside the sandbox it has a process identifier only the kernelet knows.
 
 One policy belongs to the runtime because only it can enforce it: **creation is rate-limited per tenant.** Creating an instance changes page permissions, which flushes the TLB of every processor on the machine ([Builds and images](builds-and-images.md)), so a tenant that could make its sandbox restart in a tight loop could tax every other workload. The runtime spaces restarts out, and refuses them beyond a budget.
-- **`state`** reports the container's status from the kernelet's state and the agent's report. The process identifier it reports is the holder's, because the container's process has no identifier the host could use: on the host it is one of many carriers, and inside the sandbox it has a process identifier only the kernelet knows.
 
 ## What the operator sees on the host
 

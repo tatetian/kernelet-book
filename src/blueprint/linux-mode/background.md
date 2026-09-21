@@ -50,6 +50,18 @@ Executable kernel memory is one such case. `vmap()` always produces non-executab
 
 When a process calls `execve`, Linux offers the file to each registered **binary-format handler** ([`struct linux_binfmt`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/binfmts.h#L82)) in turn: one for ELF programs, one for scripts, and any that modules have registered with [`__register_binfmt()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L88). The handler that recognizes the file replaces the process's address space ([`begin_new_exec()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L1222)) and sets the registers the process will start with. Anything else the new program finds in its address space, including the **vDSO** (a page of kernel-supplied code for fast clock reads), is there because the ELF handler in particular put it there.
 
+## Sleeping, waking, thread groups, and descriptors
+
+A task that must wait puts itself on a **wait queue** and sleeps; another context wakes it with `wake_up_process()`. A sleep can be *killable*, meaning a fatal signal ends it, and *freezable*, meaning Linux may park the task in place when the machine suspends or when its control group is frozen.
+
+Tasks created with the thread flag form a **thread group**, which is what Linux calls a process: they share signal handling, and a fatal signal to one ends them all. Tasks created without it are separate processes even if they are related. Linux also has a helper, [`vhost_task_create()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/vhost_task.c#L118), that gives a module a worker which runs only kernel code yet is a thread of the calling process, and so belongs to that process's control group.
+
+Every process has a **descriptor table** of open files. A child made without the share-files flag gets a copy of its parent's table. When a task exits, for any reason, Linux closes its descriptors, and a file's `release` function runs when its last reference goes.
+
+A module can ask to be called back on a task's way to user mode by setting the task's `TIF_NOTIFY_RESUME` flag, directly for the current task or with `set_notify_resume()` for another, which also prods the processor that task is running on.
+
+When a driver has mapped a file of its own into processes and wants some of those translations gone, it calls [`unmap_mapping_range()`](https://elixir.bootlin.com/linux/v6.12/source/mm/memory.c#L3858): Linux keeps, per file, the list of areas that map it, and removes the range from every one.
+
 ## Control groups
 
 A **control group** (cgroup) is a set of tasks with shared resource limits: processor time, memory, and more. Membership is inherited by children. Linux charges processor time to the group of the task that runs, and memory to the group of the task that allocates, including kernel memory when the allocation carries the flag [`__GFP_ACCOUNT`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/gfp_types.h#L153). Writing to a group's `cgroup.kill` file kills every member.
