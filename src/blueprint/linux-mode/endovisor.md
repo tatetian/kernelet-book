@@ -111,7 +111,7 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 
 ## Size
 
-**[unverified]**: the endovisor has not been written. The prototype's module, which implements the gate operations, the program loader and root carrier, carriers, the stack switch, the memory areas with the model walk, lifelines, eviction, and the services two small kernels need, for one kernelet, is 2,335 lines of C (*measured on the booted prototype*). The device models are the largest remaining part; their Rust equivalents for the other host are *estimated* at a few thousand lines.
+**[unverified]**: the endovisor has not been written. The prototype's module, which implements the gate operations, the program loader and root carrier, carriers, the stack switch, the memory areas with the model walk, lifelines, eviction, the yield stub, and the services three small kernels need, for one kernelet, is 2,675 lines of C (*measured on the booted prototype*). The device models are the largest remaining part; their Rust equivalents for the other host are *estimated* at a few thousand lines.
 
 ## What this page decides
 

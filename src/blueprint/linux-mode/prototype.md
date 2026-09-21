@@ -8,6 +8,7 @@
 |---|---|---|
 | **Hello World on the design's real path**: the Asterinas tree's 100-line kernel, source unchanged, as a kernelet in a patched Linux 6.12 | the gate, carriers and the root carrier, kernelet stacks, `user_run`, the model and the cache, tenant copies by walking the model, entry and exit | *measured on the booted prototype*, [below](#hello) |
 | **A probe kernel on the same prototype**: demand paging, an illegal instruction, and a kernel that spins forever | a real miss in the model and the kernel proper's fix; an exception taken from Linux's signal queue by the resume hook; **eviction** of a carrier that will not leave kernelet code; the lifeline; the fill/flush machinery over one file per model; service calls on the Linux stack | *measured on the booted prototype*, [below](#probe) |
+| **A busy kernel on a Linux booted with `preempt=none`** | the watch timer and the yield stub: a kernelet that never volunteers is rescheduled anyway, and resumes intact | *measured on the booted prototype*, [below](#yield) |
 | **The software walk, in a model** | the cost the design adds to every tenant copy, and that the supervisor alias does not earn its risks | *measured in a model*, [below](#walk) |
 | **Earlier mechanism experiments** (in a Linux 6.12 guest) | shared text for many instances; the cost of a gate; Linux's refusal of executable `vmap` memory; SMAP's refusal of direct tenant access; recovery from a kernel-mode fault by die notifier | *measured on the booted prototype of each mechanism*, [below](#earlier) |
 | the function-entry stack check, the die notifier on a kernelet's own fault, the user-mode tick, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one seat, more than one kernelet | nothing | **[unverified]**: designed, not built |
@@ -27,7 +28,7 @@ No full kernelet, meaning the Linux-compatible kernel proper with its file syste
 | kernel proper | the 100-line kernel, unchanged, `deny(unsafe_code)` | 136 lines of Rust, 18 of assembly for the user program |
 | vOSTD | a Rust crate whose library name is `ostd`, offering the items that kernel uses with their real signatures. It calls no Linux symbol: the linked image has zero undefined symbols | 2,408 lines |
 | image ABI | a service table and an entry table of C function pointers, and boot arguments | in both of the above |
-| endovisor | one Linux module in C: the program loader and root carrier, carriers by `kernel_clone()`, the stack switch, the gate's two hooks, the memory areas and their fault handler with the model walk and the grant check, lifelines, eviction, the services | 2,335 lines |
+| endovisor | one Linux module in C: the program loader and root carrier, carriers by `kernel_clone()`, the stack switch, the gate's two hooks, the memory areas and their fault handler with the model walk and the grant check, lifelines, eviction, the watch timer and yield stub, the services | 2,675 lines |
 | the gate | a patch to Linux v6.12 | 103 added lines in 8 files, none removed |
 | runtime | a static test program that forks, sets *no new privileges* and executes the sandbox file | 154 lines |
 
@@ -123,6 +124,23 @@ INIT: done
 Three smaller results came with it. Linux's own kernel-mode read of a carrier's user memory (`get_user`, forced from the endovisor for the test) filled the cache on a hit and returned `-EFAULT` on a miss, without the kernel proper hearing of either. `unmap_mapping_range()` on a model's file did remove raw-frame-number translations, and the next access refilled them. And a service call through the stack-switching stub cost 18 cycles against 10 for a direct call in one boot and 26 against 26 in another (*measured on the booted prototype*, 2,000 calls, interrupts off): the pair of stack switches costs under ten cycles.
 
 What this still does not show: eviction under load, with many carriers, or of code that is in the middle of something subtler than a spin; and none of the items in the last row of the table at the top.
+
+## Yielding on a Linux that does not preempt kernel code {#yield}
+
+Review found that on a Linux booted not to preempt kernel code, a busy kernelet would never be rescheduled, and the design answered with the [watch timer and the yield stub](virtualizing-ostd/tasks.md#yield). Both were then built and tested on the same prototype, with the same kernel image booted with `preempt=none` (Linux's log confirms `Dynamic Preempt: none`).
+
+The test kernel's system-call handler, in safe Rust, runs 800 million rounds of a checksum through ten live 64-bit variables, about eight seconds. A competing host process, pinned to the same processor, counts and reports every quarter of a second.
+
+| | watch timer off | watch timer on |
+|---|---|---|
+| longest gap between the competitor's reports | 4,294 to 4,313 ms | 263 to 274 ms |
+| yield-stub invocations | 0 | 807 to 864 |
+| the kernelet's checksum | `0x0a9daca3b668810c` | `0x0a9daca3b668810c` |
+| the same computation in user space | `0x0a9daca3b668810c` | `0x0a9daca3b668810c` |
+
+Five runs with the timer on. The kernelet was interrupted more than 800 times at arbitrary instruction boundaries, moved to the Linux stack, rescheduled, and resumed, and not one bit of its result differs. With the timer on, the competitor ran at exactly half its solo rate: an even split.
+
+Two things were learned on the way. The first design for re-arming the timer, "only while it interrupts kernelet code", collapses, for the reason now given on the [tasks page](virtualizing-ostd/tasks.md#yield). And the review's worry that a busy kernelet would also stall Linux's RCU is not true of Linux 6.12: a process on the other processor completed grace periods at the same rate with the watch timer off as on, through an 8.6-second monopoly, because Linux's tick reports a quiescent state for kernel code that holds no RCU read lock and has preemption enabled. The harm of a missing yield is starvation of one processor, not a machine-wide stall.
 
 ## The walk, measured {#walk}
 
@@ -236,4 +254,4 @@ Building the prototype changed the design in ten places. Each finding below has 
 | (a carrier's death) | — | a lifeline file in each carrier's descriptor table | — |
 | (forced termination) | — | per-processor `hrtimer` sweep, `get_irq_regs()`, an exit stub | one kernelet, so no per-instance text ranges |
 
-**Reproducing it.** In the worktree, `cd kernelet-linux`, then `make hello` and `make probe`. From a clean checkout the first run downloads the Linux 6.12 release tarball, unpacks it under `.build/`, applies the patch and builds the kernel. `REPORT.md` there lists every deviation and surprise met on the way, 43 in all, most of them engineering.
+**Reproducing it.** In the worktree, `cd kernelet-linux`, then `make hello`, `make probe` and `make yield`. From a clean checkout the first run downloads the Linux 6.12 release tarball, unpacks it under `.build/`, applies the patch and builds the kernel. `REPORT.md` there lists every deviation and surprise met on the way, about sixty in all, most of them engineering.
