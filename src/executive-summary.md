@@ -115,7 +115,7 @@ Two ways of multiplexing a machine among mutually distrusting tenants have domin
 
 Asterinas Kernelets are a third point in that space, and this book calls the idea **API virtualization**: rather than virtualizing the hardware beneath a kernel, or multiplexing one kernel above its syscall table, it virtualizes the interface a kernel is written against. The Asterinas kernel is a *framekernel*: all `unsafe` code lives in a small framework, OSTD, and the kernel above it is safe Rust written against OSTD's API. A **kernelet** is that kernel, unmodified, compiled against **vOSTD**, a build of OSTD's own source in which every operation's effect is confined to the kernelet that makes it, and whatever a kernelet must never have does not exist. The boundary is the language, not the hardware: the crate graph decides what a kernelet can name, and a table of C-ABI calls decides what may cross. Each tenant gets a kernel of its own, and the machine underneath stays real; the price is that the boundary rests on the compiler and on OSTD's soundness.
 
-## A growth strategy {#growth}
+## A growth strategy: kernelets in Linux {#growth}
 
 > **Ship in Linux, before replacing Linux.**
 
