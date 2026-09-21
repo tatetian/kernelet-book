@@ -140,7 +140,7 @@ The reserve is for Linux, not for the kernelet. Service calls run on the carrier
 | a carrier killed from outside (the operator, the out-of-memory killer) | the release of the carrier's [lifeline](#stopping) | killed: carrier lost |
 | the sandbox's memory limit, enforced by Linux | the same, since Linux kills a carrier | killed: carrier lost |
 
-The first four are identical on both hosts. One cause on the other host has no counterpart here: there is no "preemption held off too long" kill, because Linux preempts kernelet code regardless of the kernelet's own counter.
+The first four are identical on both hosts. One cause on the other host has no counterpart here: there is no "preemption held off too long" kill, because kernelet code is rescheduled regardless of the kernelet's own counter, by Linux where Linux preempts kernel code and by the endovisor's [yield stub](virtualizing-ostd/tasks.md) where it does not.
 
 ## Destroy {#destroy}
 
@@ -148,7 +148,7 @@ Destroy runs in the endovisor, on the runtime's request, after the kernelet has 
 
 1. **Enter.** Move from *exited* to *destroying*, or refuse. Wait for operations in progress on the sandbox descriptor to finish.
 2. **Carriers.** Assert the carrier count is zero and the root carrier is gone, which is what *exited* means. Every kernelet stack was freed by its carrier as it left for good, or by the cleanup thread for a carrier that Linux killed.
-3. **Caches.** Assert no Linux address space is bound to any model of this kernelet. This holds because every carrier is dead and a carrier's address space dies with it, and it is what makes step 6 safe: no Linux page table anywhere maps a frame of the grant.
+3. **Caches.** Flush every model of this kernelet over its whole range, with the same `unmap_mapping_range()` call as a `tlb_shootdown`, and then retire the models' files. Every carrier is dead, but a Linux address space can outlive its task for as long as something else on the host holds a reference to it (a reader of its `/proc` entries, for instance), and its page table would still hold translations to the grant. After this step no Linux page table anywhere maps a frame of the grant, whoever holds what, which is what makes step 7 safe.
 4. **Timers, jobs, virtual interrupts.** Cancel the kernelet's timers and wait for their callbacks to finish; clear its pending jobs.
 5. **Devices and channels.** Assert that its device threads are gone, which *exited* guarantees; drop its device models and the references to the files behind them. Its channel connections were reset when it was marked dying; assert that the switch holds none.
 6. **The image.** Unmap the instance's range, which removes this instance's mapping of the kind's shared text and leaves the text itself alone, since sibling instances are executing it. Drop the kind's reference. Free the instance's data, shared pages and metadata region ([Builds and images](builds-and-images.md)). The shared text's frames get their write permission back in Linux's direct map, with `set_memory_rw()`, only when the *kind* is unregistered and no instance is left.
@@ -160,7 +160,7 @@ The claim that the list is complete is *argued*, not checked: it is complete if 
 ## What this design does not contain
 
 - **A misbehaving service call.** A carrier at depth 1 that loops or faults is a bug in Linux or in the endovisor, and takes down what such bugs take down. This bound is not specific to Linux; the design has it on either host.
-- **Induced work Linux does not charge.** Interrupt handling for devices that serve a tenant's I/O, and for its timers, is charged to whatever task it interrupts, as for any Linux process. The design bounds it and does not charge it.
+- **Induced work Linux does not charge.** Interrupt-time work is charged to whatever it interrupts, as for any Linux process, and a sandbox induces four kinds: the interrupts of the physical devices behind its I/O; its timers; its user-mode tick, which interrupts each processor where one of its carriers is in user mode; and the cross-processor TLB flushes of its `tlb_shootdown`s, which interrupt every processor that has run the affected carriers. The design bounds each (ring depths, the floor on deadlines, the tick rate, the caller's own charged processor time) and charges none.
 - **Global memory pressure.** A grant is kernel memory, which Linux's machine-wide out-of-memory killer does not attribute to the carriers. If the operator lets the sum of sandbox limits exceed the machine, the victims will be other processes. Within its own limit, a sandbox that runs out is killed whole.
 - **The machine-wide stall of an oops**, once per kernelet that dies of a fault.
 
