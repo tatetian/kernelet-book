@@ -153,7 +153,7 @@ Asterinas Kernelets are a third point in that space, and this book calls the ide
 <text x="450" y="240" fill="#9A9DB0" text-anchor="middle" font-size="10.5">the Linux kernel the operator already runs, already patches, already trusts</text>
 <rect x="36" y="104" width="380" height="106" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
 <text x="226" y="152" fill="#9AA0BE" text-anchor="middle">Linux's own subsystems</text>
-<text x="226" y="172" fill="#6A6F8C" text-anchor="middle" font-size="8.5">patched, about fifteen lines</text>
+<text x="226" y="172" fill="#6A6F8C" text-anchor="middle" font-size="8.5">patched: one small gate</text>
 <rect x="484" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
 <rect x="620" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
 <rect x="756" y="104" width="120" height="62" rx="6" fill="url(#fwd-lg)" stroke="rgba(0,247,255,.55)"/>
@@ -172,7 +172,7 @@ Asterinas Kernelets are a third point in that space, and this book calls the ide
 </svg>
 </figure>
 
-**The hardest argument is "replace your kernel".** An operator asked to put Asterinas underneath a fleet is being asked to bet the machine on a young code base, and no amount of safe Rust makes that an easy signature. It is the right argument to win eventually and the wrong one to need first — and we do not need it first, because of a property of the design rather than a concession in it. A kernelet is not built on a machine; it is built on an interface. It calls a table of functions and never touches hardware, and nothing in that arrangement says who implements the table. If the answer can be Linux, the host underneath is a replaceable part, which is what [Linux as the host](blueprint/linux-mode/index.md) sets out to test. That chapter and the one after it are still working: the design is being argued rather than concluded.
+**The hardest argument is "replace your kernel".** An operator asked to put Asterinas underneath a fleet is being asked to bet the machine on a young code base, and no amount of safe Rust makes that an easy signature. It is the right argument to win eventually and the wrong one to need first — and we do not need it first, because of a property of the design rather than a concession in it. A kernelet is not built on a machine; it is built on an interface. It calls a table of functions and never touches hardware, and nothing in that arrangement says who implements the table. If the answer can be Linux, the host underneath is a replaceable part, which is what [Kernelets in Linux](blueprint/linux-mode/index.md) sets out to test. That chapter gives the design, and a prototype runs a small kernel on it; the full endovisor is not built.
 
 That changes the question an operator is asked. The host stays the kernel they already run, with one small patch to the path a system call takes; what changes is that selected workloads stop sharing it with their neighbors and get a kernel of their own, in safe Rust, inside the same machine. Nothing is replaced, and the decision is reversible — a workload that does not suit a kernelet keeps running the way it runs today, beside one that does, so the cost of being wrong is one workload rather than one fleet. It also gives the project somewhere real to grow, because the same source, the same framework and the same kernel proper compile against a second implementation of one table: the work is not done twice and the maturity is not earned twice.
 

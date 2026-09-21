@@ -1,72 +1,146 @@
-# Linux as the host (WIP)
+# Kernelets in Linux
 
-*A second host for the same kernelets. The Design chapter assumes the host kernel is Asterinas; this chapter asks whether Linux can host kernelets instead, finds nothing that rules out a patched Linux, and says exactly what it costs. **No kernelet has been built or run, on either host.** What was built and measured here is the mechanism each claim turns on; every other Linux fact is cited to Linux's own source with a link. The chapter also revises two decisions in the Design chapter and withdraws two assumptions, because the mechanism that makes Linux mode possible is better in both modes.*
+*The same kernelets, with Linux as the host kernel. An operator keeps the kernel they already run, applies a small patch, loads one module, and selected workloads get a kernel of their own in safe Rust. This chapter is the complete design, written to be read alone. A prototype of its central mechanisms runs a kernel whose source is unchanged from the Asterinas tree, inside a patched Linux 6.12.*
 
-## Why ask
+<figure class="fwd-fig">
+<div class="head">
+<div class="tag">The architecture</div>
+<div class="title">One Linux kernel; each sandbox has a kernel of its own inside it</div>
+</div>
+<svg viewBox="0 0 900 420" role="img" aria-label="Left, the host side: Linux applications and the kernelet runtime in user mode; below them the Linux kernel, with its own subsystems, the gate patched into its entry path, and the endovisor module containing the loader, the service table implementation, the fault handler, containment and device models. Right, one sandbox of many: the tenant's programs run in user mode as Linux tasks called carriers; their system calls pass through the gate into the kernelet, which is the unchanged Asterinas kernel proper in safe Rust over vOSTD, holding the model page tables and its grant of memory. The kernelet calls the endovisor only through the service table. Linux's page tables for the carriers are filled from the kernelet's model by the endovisor's fault handler.">
+<defs>
+<linearGradient id="ix-cg" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
+<stop offset="100%" stop-color="#1937FF" stop-opacity=".22"/>
+</linearGradient>
+<marker id="ix-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#9AA0BE"/>
+</marker>
+<marker id="ix-ac" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#00F7FF"/>
+</marker>
+</defs>
+<g font-family="ui-monospace,monospace" font-size="10.5">
+<text x="20" y="22" fill="#9A9DB0" font-size="9" letter-spacing="1.6">HOST</text>
+<text x="880" y="22" fill="#00F7FF" font-size="9" letter-spacing="1.6" text-anchor="end">A SANDBOX (ONE OF MANY)</text>
+<rect x="20" y="34" width="150" height="36" rx="5" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+<text x="95" y="56" fill="#9AA0BE" text-anchor="middle">Linux apps</text>
+<rect x="186" y="34" width="224" height="36" rx="5" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+<text x="298" y="56" fill="#9AA0BE" text-anchor="middle">kernelet runtime</text>
+<rect x="490" y="34" width="390" height="36" rx="5" fill="rgba(255,255,255,.06)" stroke="rgba(0,247,255,.30)"/>
+<text x="685" y="50" fill="#C9CCE0" text-anchor="middle">tenant programs</text>
+<text x="685" y="63" fill="#6A6F8C" text-anchor="middle" font-size="8">each thread is a Linux task: a carrier</text>
+<path d="M12 90 H888" stroke="rgba(255,255,255,.28)" stroke-dasharray="5 4"/>
+<text x="14" y="86" fill="#6A6F8C" font-size="8">user mode</text>
+<text x="14" y="101" fill="#6A6F8C" font-size="8">kernel mode</text>
+<rect x="12" y="108" width="876" height="296" rx="10" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.12)"/>
+<text x="24" y="124" fill="#9A9DB0" font-size="9" letter-spacing="1.4">THE LINUX KERNEL THE OPERATOR ALREADY RUNS</text>
+<rect x="24" y="134" width="386" height="40" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+<text x="217" y="159" fill="#9AA0BE" text-anchor="middle">Linux's own subsystems, unchanged</text>
+<rect x="430" y="134" width="446" height="40" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
+<text x="653" y="152" fill="#00F7FF" text-anchor="middle">the gate: a patch to Linux's entry path</text>
+<text x="653" y="166" fill="#5C93A8" text-anchor="middle" font-size="8.5">a carrier's system calls and exceptions go to its kernelet, never to Linux</text>
+<path d="M685 70 V132" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
+<text x="694" y="116" fill="#00F7FF" font-size="8.5">system calls, faults</text>
+<rect x="490" y="192" width="386" height="196" rx="10" fill="rgba(0,247,255,.04)" stroke="rgba(0,247,255,.42)"/>
+<text x="502" y="208" fill="#00F7FF" font-size="9" letter-spacing="1.4">KERNELET</text>
+<rect x="502" y="216" width="362" height="46" rx="6" fill="url(#ix-cg)" stroke="rgba(0,247,255,.55)"/>
+<text x="683" y="236" fill="#8FF6FC" text-anchor="middle">kernel proper: Linux-compatible, safe Rust</text>
+<text x="683" y="252" fill="#5C93A8" text-anchor="middle" font-size="8.5">source unchanged &#183; forbid(unsafe_code)</text>
+<rect x="502" y="270" width="362" height="46" rx="6" fill="url(#ix-cg)" stroke="rgba(0,247,255,.55)"/>
+<text x="683" y="290" fill="#8FF6FC" text-anchor="middle">vOSTD: OSTD's API, virtualized</text>
+<text x="683" y="306" fill="#5C93A8" text-anchor="middle" font-size="8.5">model page tables &#183; frame allocator &#183; per-seat data</text>
+<rect x="502" y="324" width="362" height="52" rx="6" fill="rgba(6,10,36,.55)" stroke="rgba(0,247,255,.35)"/>
+<text x="683" y="345" fill="#C9CCE0" text-anchor="middle">image (text shared by every instance) + data</text>
+<text x="683" y="362" fill="#C9CCE0" text-anchor="middle">grant: memory from Linux, charged to the sandbox</text>
+<path d="M653 174 V190" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
+<rect x="24" y="192" width="386" height="196" rx="10" fill="rgba(25,55,255,.12)" stroke="rgba(0,247,255,.5)"/>
+<text x="36" y="208" fill="#00F7FF" font-size="9" letter-spacing="1.4">ENDOVISOR: ONE LOADABLE MODULE</text>
+<g fill="rgba(6,10,36,.55)" stroke="rgba(0,247,255,.35)">
+<rect x="36" y="216" width="176" height="34" rx="5"/><rect x="222" y="216" width="176" height="34" rx="5"/>
+<rect x="36" y="258" width="176" height="34" rx="5"/><rect x="222" y="258" width="176" height="34" rx="5"/>
+<rect x="36" y="300" width="176" height="34" rx="5"/><rect x="222" y="300" width="176" height="34" rx="5"/>
+<rect x="36" y="342" width="362" height="34" rx="5"/>
+</g>
+<g fill="#8FF6FC" font-size="9.5" text-anchor="middle">
+<text x="124" y="237">image loader</text><text x="310" y="237">carriers &#183; kernelet stacks</text>
+<text x="124" y="279">service table (21 calls)</text><text x="310" y="279">page-fault handler</text>
+<text x="124" y="321">eviction &#183; fault containment</text><text x="310" y="321">device models &#183; channels</text>
+<text x="217" y="363">/dev/kernelet, for the runtime</text>
+</g>
+<path d="M500 293 H414" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
+<text x="456" y="286" fill="#00F7FF" font-size="8.5" text-anchor="middle">service</text>
+<text x="456" y="306" fill="#00F7FF" font-size="8.5" text-anchor="middle">calls</text>
+<path d="M396 70 V190" stroke="#9AA0BE" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ix-a)"/>
+<text x="388" y="186" fill="#9AA0BE" font-size="8.5" text-anchor="end">ioctl, exec</text>
+</g>
+</svg>
+<figcaption>Kernelets run in kernel mode, inside Linux, beside each other. What confines one is that everything above vOSTD is safe Rust, and that the only way out of its image is a table of twenty-one functions.</figcaption>
+</figure>
 
-[vOSTD](../overview/terminology.md), the build of the framework a kernelet is compiled against, virtualizes an **API**, not a machine. A kernelet calls a table of functions and never touches hardware. Nothing in that arrangement says who implements the table. If the answer can be "Linux", two things follow.
+## The idea in five sentences
 
-**For the research.** The claim stops being *we built a second personality of our own kernel* and becomes *the boundary is the API, and the host beneath it is replaceable*. A mechanism that works on two unrelated kernels is a mechanism, not a coincidence.
+A kernelet is a complete Linux-compatible kernel, written in safe Rust against a small framework interface, and it touches the machine only through that interface ([background](kernelets-in-brief.md)). Nothing in that arrangement says who implements the interface, so Linux can. A tenant's threads are ordinary Linux tasks, and a small patch to Linux's entry path, **the gate**, hands each of their system calls to their kernelet before Linux would look at it. The kernelet keeps its own page tables for its tenant's processes, and Linux's page tables are filled from them on demand, by a fault handler that checks every frame against what the kernelet owns. Everything else a kernel needs (threads, timers, memory, devices) maps onto what Linux already exports to modules.
 
-**For adoption.** The objection to kernelets is not the idea; it is the deployment. Kernelets ask an operator to put a young kernel in the most privileged position on the machine. Linux mode removes that ask. An operator keeps the kernel they already run, and gains sandboxes whose kernel code is safe Rust.
+## What it asks of Linux
 
-That does not make Linux mode the better design. Of the three properties the boundary owes a tenant, Linux weakens all three, and each is argued where it arises later:
+| it asks for | which is |
+|---|---|
+| a patch | **the gate**: one pointer in the task structure, one flag bit, and two calls in the generic entry layer, which x86-64, RISC-V, s390 and LoongArch share |
+| exported symbols | **four**: `kernel_clone`, `set_memory_rox`, `set_memory_rw`, `set_memory_ro` |
+| a module | the **endovisor** |
+| of the operator | not to configure the machine to panic on an oops |
+| not needed | a boot parameter, a particular preemption model, hardware virtualization, any change in behavior for tasks outside a sandbox |
 
-- **Safety.** Even patched, the kernelet is not quite the tenant's only system-call surface: three of the four entry points are unhooked, and Linux's own trusted base is now inside the boundary ([the tenant](tenant.md)). Both of those have answers in [Alternative designs](../alternatives/index.md), where one hook in the generic entry layer covers every entry.
-- **Fault containment.** A fault in kernelet code is a Linux oops rather than a contained kill, unless a module catches it — which one can, and [Alternative designs](../alternatives/index.md) shows how ([five places](not-as-assumed.md)).
-- **Fairness.** A runaway kernelet cannot be stopped, because Linux will not stop a task in kernel mode, and a tenant's pages are charged to nobody by default.
+The details and the patch itself are on [the endovisor page](endovisor.md#patch). An unpatched Linux is ruled out, by function and not by speed: without the gate a tenant's second process would make its system calls to Linux.
 
-So the two modes are a real choice and not a ladder. Linux mode is what an operator can deploy on the kernel they already run; Asterinas mode is what the design is specified against, and the difference between them is a list of named properties rather than a feeling about maturity.
+## What a tenant gets
 
-## What this chapter concludes
+The three properties the book's boundary owes a tenant, as they stand on this host ([Boundaries and trust](principles.md) has the argument):
 
-**Nothing found here rules out a patched Linux.** Both qualifications are earned. *Patched*: an unmodified Linux is ruled out, for reasons of function rather than speed — without the patch a kernelet cannot intercept a tenant past its first process. *Nothing found*: no kernelet has run, on either host.
+- **Safety**: held. The tenant's only kernel is its kernelet. No system call, by any entry instruction, from any thread or child, reaches Linux.
+- **Fault containment**: held for the kernelet's own code. A kernelet that faults, panics, overflows its stack or loops forever ends, and only it ends. A failure inside a service call is a bug in the host, on this host as on the other.
+- **Fairness**: held for processor time and memory, by Linux's own control groups, because every task and every page of a kernelet belongs to its sandbox's group. Interrupt-time work that a tenant's I/O induces is charged as Linux charges it for any process.
 
-One configuration is not yet settled and is deliberately not in that sentence. A kernel built with **type-checked indirect branches** rewrites its own call sites and function preambles to compare a hash of each function's type, and a kernelet image arrives without what that rewrite needs. It is a hardening option rather than a property of Linux: it requires the kernel to be built with a compiler that x86-64 distributions do not use for it, it can be turned off at boot, and the kernelet side may well be able to satisfy it — the compiler half is [measured](evidence.md) to work, and Linux already requires its two compilers to agree on the hash for a given prototype. It is recorded as assumption A19, and it belongs there rather than in a conclusion.
+And what it costs: Linux's own correctness is in the trusted base, as it is for a container; a process's threads do not share Linux page tables, so first touches of memory are paid per thread; and copying to or from tenant memory costs a software page-table walk where the other host pays nothing ([Memory](virtualizing-ostd/memory.md#copies) has the measurement).
 
-Three things had to be true. Two were tested on a kernel built and booted for the purpose; the third is an argument from Linux's own interfaces, cited page by page:
+## What has been built
 
-1. **Many kernelets can share one kernel address space.** The Design chapter used to give each kernelet its own kernel page table, because each was linked at fixed addresses. Linux cannot do that: its kernel half is shared by every process by construction. The fix is to make the kernelet image position-independent and load each instance at a different offset. One physical copy of the text serves every instance, and each instance's data is selected by the processor's own program-counter-relative addressing, with no register, no table and no lookup. This was [measured](evidence.md): four instances, one physical text page, each call returning its own instance's data.
+A prototype of the central mechanisms, not the endovisor. On a Linux 6.12 with the gate patch, a module carrying a minimal vOSTD runs the Asterinas tree's 100-line example kernel **with its source byte-for-byte unchanged**: the kernel builds a tenant address space, runs a user program in it, services its `write` and `exit` system calls, and prints *Hello, world*. That exercises the gate, carriers and the root carrier, kernelet stacks, the model and the cache, and tenant copies by walking the model. Earlier experiments established the shared-text loading scheme, the cost of the gate, fault recovery by die notifier, and the processor's refusal of direct tenant access. The [prototype page](prototype.md) says exactly what each run showed and what remains unverified: most importantly eviction, the device models and the multi-instance loader, none of which has been built.
 
-2. **The tenant's system calls can reach the kernelet, and only with a patch.** Linux offers an out-of-tree component no way to answer a system call in the kernel, so the chapter first looked for a way without one, and there is not one. [Syscall User Dispatch](tenant.md) can divert a call to a stub in user space, but Linux clears it at every `fork` and every `exec`, so only a tenant's first thread is ever intercepted; and there is no stub trick that closes it, because the child's first instruction runs before anything in user space could re-arm the setting. What dispatch does give is a **measurement**: at least **885 ns** added to every call, which is the floor for any interception that goes through user space. The per-task hook a small patch adds costs nothing measurable against a floor of 44 ns in the same guest. So the patch is not the fast tier of two. It is the only tier, and what it buys first is that the kernelet is the tenant's boundary at all.
+## How to read the labels
 
-3. **Most of the rest maps onto ordinary Linux.** Kernelet tasks are kernel threads, tenant memory is a virtual memory area whose fault handler is the kernelet's, grains are pages from Linux's allocator addressed through its direct map, and a virtual interrupt is a wakeup. None of that needs a patch. What does not map is enumerated rather than glossed: the kernel proper cannot touch its tenant's memory directly at all, and the kernel-mode fault path, the per-CPU and preemption model, the tenant's process lifecycle and the virtual system-call page each need an answer the design does not have ([five places](not-as-assumed.md), [what differs](what-differs.md)). None of this was built; the third point is argued from Linux's interfaces, not demonstrated.
+Every number says where it came from: *measured on the booted prototype*, *measured in a model*, *measured on the tree* (the Asterinas source), *estimated*, *arithmetic* or *chosen*. A claim the design leans on that nobody has tested is marked **[unverified]**.
 
-One thing is needed before any of it: an out-of-tree module **cannot make memory executable at an address it chooses**. `vmap()` strips the execute permission, `execmem_alloc()` is not exported, and no permission setter is exported either. So Linux mode needs `set_memory_rox` exported — and `set_memory_rw` with it, because the first call also makes those frames read-only in the host's direct map and they cannot be given back until that is undone. Three more are wanted for a complete module. The [evidence](evidence.md) page lists them with what each one is for.
-
-## What this is not
-
-Running one kernel's code under another kernel is an old idea, and Linux mode is not new in that respect. It is worth saying which old idea it is closest to, and where it differs, so the contribution is not read as larger than it is.
-
-**Kernel code in a host kernel.** [Rump kernels](https://rumpkernel.org/) and the [Linux Kernel Library](https://github.com/lkl/linux) take a kernel's subsystems and run them somewhere else, usually a user-space process. The shape is the same: an operating system's code above a small, portable substrate. Two things differ. Those projects move code *out* of the kernel and reach user space; a kernelet stays in kernel mode, which is where its performance comes from. And their substrate is hand-written for each environment, whereas vOSTD is the same API the unmodified kernel already compiles against.
-
-**Sandboxes that service a tenant's system calls.** [gVisor](https://gvisor.dev/docs/architecture_guide/platforms/), [Gramine](https://gramineproject.io/) and User-Mode Linux all put a kernel personality between the tenant and the host, and gVisor's current platform intercepts calls in a way whose shape is the one measured here as the no-patch path ([the tenant](tenant.md) states the difference exactly). What differs is where the personality runs: theirs in user mode, entering the kernel once more per call, and a kernelet's in kernel mode, which is what the patched hook's measurement is about. [Dune](https://dl.acm.org/doi/10.5555/2387880.2387913) gives a user process privileged hardware features for a related reason by a different route.
-
-**Mutually distrusting components at full privilege in one address space.** This is the closest prior art for what a host full of kernelets actually is, and it is the driver-isolation line: [Nooks](https://dl.acm.org/doi/10.1145/945445.945454) wrapped untrusted drivers inside the kernel and recovered from their failures, and the later work on language-enforced isolation carried the same idea with types rather than hardware. That line is where "separation by discipline rather than by page tables" was shown to be workable, and where its failure modes were catalogued. Kernelets differ in what the discipline is — a whole kernel written in safe Rust above a narrow API, rather than a wrapper around an existing driver — and in what is isolated, which here is a tenant rather than a device.
-
-**Many instances of one text in one address space.** Shared libraries, `dlmopen`, thread-local storage and per-CPU variables all solve this, and [One address space, many kernelets](one-address-space.md) says what is different about solving it from the program counter.
-
-**Hardware that could separate kernelets.** Protection keys for supervisor pages are the mechanism people reach for, and two facts are worth stating before anyone counts on them. Linux has no support for them at all: the merged work covers user-space keys only. And the hardware offers sixteen keys, while every instance of a kind executes the same shared text and would therefore have to share one — which buys "kernelet data versus the rest of the kernel", not one instance versus another among thousands. It is not a fix that is one patch away.
-
-So the contribution is not "kernel code can be virtualized" and not "one text can serve many instances". It is that the boundary can be an **API the kernel already compiles against**, that the host beneath it is replaceable, and that on Linux the replacement costs a handful of exported symbols and one patch whose absence is a security problem rather than a slowdown.
-
-## What it costs, stated once
-
-Linux mode is not free, and this chapter does not pretend otherwise:
-
-- **Exports, a patch, and a build option.** A pair of exported symbols before anything runs and three more for a complete module; a kernel built with the notifier machinery the alias rule needs, which any kernel with virtualization support already has; and the system-call hook, which is required rather than optional. The boot setting this list used to carry is withdrawn, because a seccomp filter closes what it was for. [Alternative designs](../alternatives/index.md) withdraws the build option too, and two of the exports, by keeping the kernelet's own page table as a model rather than maintaining a second map.
-- **One hardening option, not yet settled.** Where the host's own build enforces type-checked indirect branches, a kernelet's entry functions must carry preambles the host's compiler would accept, and nothing in this design produces them yet; the first call into a kernelet would trap. The option needs a compiler x86-64 distributions do not use for the kernel and can be turned off at boot, so this excludes a configuration rather than a class of machine. Assumption A19.
-- **Linux's own maturity is now in the trusted base.** The operator keeps their kernel, and keeps its bugs. Kernelets stop the tenant's *kernel* from being the attack surface; they do not make Linux smaller.
-- **The three weakened properties above**, which are the reason the two modes are a choice rather than a ladder.
-- **A user-access path the framework has to grow.** On a host that enables the processor's supervisor-access check — Linux does, Asterinas does not — the framework's copy routines need a second body, because reaching a tenant's memory through a *user* mapping is refused. Bracketing the access is a few instructions and handles every valid address, including one that has to be faulted in. What it does not handle is a *bad* address, and those are routine here by design, since this kernel validates a tenant's pointers by faulting on them rather than by checking them. The complete answers are small too: reach the memory through a mapping that is not marked user, or teach Linux's fixup search about the kernelet's table, which is fifteen lines and the same patch containment wants. It is a change inside the framework, not a barrier, and the Design chapter never named it because Asterinas leaves the check off.
-- **Open design, not just open engineering.** How a kernelet's processes map onto Linux tasks, who owns the tenant's signals, how per-CPU data is selected on a task Linux schedules, and how the virtual system-call page is handled are not answered in this chapter.
+Each page ends with what it decides. The identifiers there (D93, A27) point into the book's [design register](../../notes/design-register.md), one table of every decision (D) with the alternative it rejected, and every assumption (A) with its standing, across both hosts. *Kept* means a decision made for the Asterinas host holds here unchanged; *revised* means this chapter changed it. The register is an index; nothing in this chapter needs it to be understood.
 
 ## In this chapter
 
-- [Background: the Linux this chapter needs](background.md) — every Linux concept used later, defined before use, for a reader who has never worked on Linux.
-- [One address space, many kernelets](one-address-space.md) — the position-independent scheme, why it is needed, what it costs, and the Design-chapter decisions it revises.
-- [The endovisor as a Linux module](endovisor.md) — loading a kernelet, its memory, its tasks, its interrupts.
-- [The tenant: user mode and system calls](tenant.md) — the hard part: what a fault handler can and cannot supply, four candidate mechanisms, and the measured choice.
-- [Five places where the host does not behave as the design assumed](not-as-assumed.md) — termination, fault containment, tenant memory, the kernel stack, and per-CPU data, collected in one place.
-- [What differs between the two hosts](what-differs.md) — the item-by-item tables, which are this chapter's central claim.
-- [Evidence](evidence.md) — what was built, what was measured, and what is still argued rather than shown.
+Background, for a reader new to either side:
+
+- [Kernelets in brief](kernelets-in-brief.md): the two-layer kernel, API virtualization, and the vocabulary.
+- [The Linux this chapter needs](background.md): tasks, the entry path, signals, address spaces, modules, program loaders, control groups.
+
+The design, in the order of the book's main [Design](../design/index.md) chapter:
+
+- [Boundaries and trust](principles.md): the parties, the interfaces, the threat model, the invariants.
+- [Builds and images](builds-and-images.md): one source, one shared text, many instances; what the build checks.
+- [The kernelet API: control half](kernelet-api-control.md): identity, configuration, the life cycle, the endovisor's records.
+- [The kernelet API: service half](kernelet-api-service.md): the twenty-one services, and what each becomes on Linux.
+- [Virtualizing OSTD](virtualizing-ostd/index.md): the map, and then the mechanisms.
+  - [Memory](virtualizing-ostd/memory.md)
+  - [Tasks, scheduling, and CPUs](virtualizing-ostd/tasks.md)
+  - [Interrupts and time](virtualizing-ostd/interrupts-and-time.md)
+  - [User mode](virtualizing-ostd/user-mode.md)
+  - [Devices](virtualizing-ostd/devices.md)
+  - [Boot, power, panic, and the rest](virtualizing-ostd/the-rest.md)
+- [Faults, termination, and reclamation](faults-and-reclamation.md): stopping a kernelet that will not cooperate, and giving everything back.
+- [Channels](channels.md): vsock through a switch.
+- [Zero-copy I/O](zero-copy-io.md): lending frames to Linux's block layer and sockets.
+- [The endovisor](endovisor.md): the module, the patch, the device node, the life of a sandbox.
+- [The kernelet runtime](kernelet-runtime.md): an OCI runtime over the endovisor.
+
+And what stands behind it:
+
+- [Alternatives considered](alternatives.md): what lost, and why.
+- [The prototype](prototype.md): what has been verified by code.

@@ -1,0 +1,101 @@
+# The kernelet API: control half
+
+*The operations by which kernelets are created, fed, watched, killed and destroyed, and the records the endovisor keeps about each. When Asterinas is the host, this is an interface between two components. On Linux both sides are inside one module, so it is the endovisor's internal structure; it is specified here so that the life cycle and its bookkeeping can be checked.*
+
+## Identity
+
+A kernelet is named by a **kernelet identifier**: a slot number and a generation that is advanced every time the slot is reused. The pair never repeats, so a stale identifier held anywhere in the endovisor cannot come to name a later kernelet. Every table in the endovisor stores identifiers, task names and physical addresses; none stores a pointer into a kernelet.
+
+A **task name** is an index and a generation in the same way, so a late wake-up aimed at a task that has exited fails cleanly. A machine holds at most 4,096 kernelets (*chosen*), a kernelet at most 64 seats, and a kernelet's task count is bounded by its configuration, because each task costs Linux a task structure and two stacks.
+
+## Configuration
+
+Fixed when a sandbox is created, except memory, which can grow:
+
+| field | meaning |
+|---|---|
+| kind | which registered image to instantiate |
+| seats | the number of virtual CPUs, 1 to 64 |
+| initial and maximum grains | memory at start, and the ceiling `grains_request` may reach, in units of 2 MiB |
+| maximum tasks | the bound on carriers |
+| command line | passed to the kernel proper |
+| devices | each with a kind, a register-file size, a virtual interrupt line and the seat it is bound to |
+| policy | the oops budget, the log rate in bytes per second, and the limit on channel connections |
+
+Processor limits are *not* in the configuration. They belong to the sandbox's Linux control group, which the runtime sets up, because that is where Linux enforces them.
+
+## The life cycle
+
+A kernelet moves through six states, each transition a single compare-and-swap so that racing requests resolve cleanly:
+
+<figure class="fwd-fig">
+<div class="head">
+<div class="tag">Life cycle</div>
+<div class="title">Six states; the only way back is a destroy that must be retried</div>
+</div>
+<svg viewBox="0 0 900 170" role="img" aria-label="A kernelet is Created by KERNELET_CREATE, becomes Running when its sandbox file is executed, becomes Dying on a stop, a kill, a fault or a lost carrier, becomes Exited when its last carrier is gone, becomes Destroying on KERNELET_DESTROY, and becomes Destroyed when everything has been returned. A kill before start goes from Created straight to Exited. A destroy that finds a device thread still holding a buffer goes back to Exited and is retried.">
+<defs>
+<marker id="cl-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#00F7FF"/>
+</marker>
+<marker id="cl-g" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#9AA0BE"/>
+</marker>
+</defs>
+<g font-family="ui-monospace,monospace" font-size="10.5">
+<g fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)">
+<rect x="20" y="60" width="110" height="40" rx="6"/><rect x="172" y="60" width="110" height="40" rx="6"/><rect x="324" y="60" width="110" height="40" rx="6"/><rect x="476" y="60" width="110" height="40" rx="6"/><rect x="628" y="60" width="110" height="40" rx="6"/>
+</g>
+<rect x="780" y="60" width="100" height="40" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+<g fill="#8FF6FC" text-anchor="middle">
+<text x="75" y="84">Created</text><text x="227" y="84">Running</text><text x="379" y="84">Dying</text><text x="531" y="84">Exited</text><text x="683" y="84">Destroying</text>
+</g>
+<text x="830" y="84" fill="#9AA0BE" text-anchor="middle">Destroyed</text>
+<g stroke="#00F7FF" stroke-width="1.4" fill="none">
+<path d="M130 80 H170" marker-end="url(#cl-a)"/><path d="M282 80 H322" marker-end="url(#cl-a)"/><path d="M434 80 H474" marker-end="url(#cl-a)"/><path d="M586 80 H626" marker-end="url(#cl-a)"/><path d="M738 80 H778" marker-end="url(#cl-a)"/>
+</g>
+<path d="M75 60 V30 H531 V58" stroke="#9AA0BE" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#cl-g)"/>
+<path d="M683 100 V134 H531 V102" stroke="#9AA0BE" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#cl-g)"/>
+<g fill="#5C93A8" font-size="8.5" text-anchor="middle">
+<text x="150" y="116">exec of the</text><text x="150" y="128">sandbox file</text>
+<text x="303" y="116">stop, kill, fault,</text><text x="303" y="128">carrier lost</text>
+<text x="455" y="116">last carrier</text><text x="455" y="128">gone</text>
+</g>
+<text x="303" y="24" fill="#9AA0BE" font-size="8.5" text-anchor="middle">kill before start</text>
+<text x="607" y="150" fill="#9AA0BE" font-size="8.5" text-anchor="middle">busy: a device thread still holds a buffer; retry</text>
+<text x="607" y="52" fill="#5C93A8" font-size="8.5" text-anchor="middle">DESTROY</text>
+<text x="759" y="52" fill="#5C93A8" font-size="8.5" text-anchor="middle">all returned</text>
+</g>
+</svg>
+</figure>
+
+- **create** checks the configuration, reserves a slot and an identifier, and builds the device table. It allocates nothing for the kernelet itself, because everything a sandbox costs must be charged to its control group, and no member of that group exists until the sandbox file is executed.
+- **start** happens inside the [program loader](virtualizing-ostd/tasks.md#root), on the process that becomes the root carrier: load the [instance](builds-and-images.md), build the shared pages, make the initial grant, start the device threads, and queue the boot task and one suspended worker per seat.
+- **grant** adds grains, zeroed, recorded in the owner array and then published in the grant table. The kernelet asks with `grains_request`, which is answered at once: granted up to the ceiling, refused beyond it. The runtime can raise the ceiling or push memory with `KERNELET_GRANT`, and a push is announced to the kernelet as a job. Memory only grows while a kernelet lives.
+- **raise an interrupt** is one atomic operation and a wakeup, legal from any Linux context.
+- **kill** marks the kernelet dying and returns at once; [stopping the carriers](faults-and-reclamation.md) is asynchronous.
+- **wait** reports the **exit status**: exited with a code, panicked with a message, or killed with a reason.
+- **destroy** is the [drain list](faults-and-reclamation.md#destroy).
+
+## What the endovisor keeps per kernelet
+
+The list matters because destroy must account for every entry, and because a structure missing from it is where a use-after-free would hide.
+
+- identity, state, and a count of operations in progress (destroy waits for it to reach zero);
+- the kind, the configuration, the instance's base address and its private pages;
+- the grant: each run's physical base, length and Linux page handle; the metadata region;
+- the registered models (tenant page-table roots), each with the list of carriers bound to it;
+- the carriers: for each, the Linux task, the kernelet stack, the depth, the seat held, the pending exception;
+- the seats: holder, job queue, timer, tick count;
+- the devices: model state, inbox, device thread, the Linux file behind it, and the count of kernelet buffers the thread still holds;
+- the channel connections that name this kernelet;
+- the log ring and the statistics;
+- the exit status and those waiting for it.
+
+Two tables are machine-wide: the **slot table**, from slot to kernelet and generation, and the **owner array**, from each 2 MiB of physical memory to the kernelet that owns it, if any.
+
+## What this page decides
+
+- **Every endovisor table names kernelets and tasks by generation-stamped identifiers, never by pointer**, as on the other host, so that reuse cannot alias.
+- **Memory is granted at start, not at create** (register D106), so that it is charged to the sandbox's control group from the first page.
+- **Processor limits are the control group's, not the configuration's** (register D107). The Asterinas host needs its own throttle because its scheduler has no groups; Linux's has.

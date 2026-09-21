@@ -4,7 +4,6 @@ This volume is the design document: the specification of Asterinas Kernelets, wr
 
 - [Overview](overview/index.md): the goals the boundary must meet, the idea in one page, the terminology, and the challenges.
 - [Design](design/index.md): the mechanisms, one per resource, each with the obligation it discharges and its cost.
-- [Linux as the host (WIP)](linux-mode/index.md): the same kernelets over Linux instead of Asterinas, what it takes, and what it proves about API virtualization.
-- [Alternative designs for Linux as the host (WIP)](alternatives/index.md): twenty designs against the limitations that chapter admits, the corrections they forced on it, and the one to build.
+- [Kernelets in Linux](linux-mode/index.md): the same kernelets over Linux instead of Asterinas, what it takes, and what it proves about API virtualization.
 
 > **To be written.** After the Design chapter: the implementation plan, the evaluation plan and the limitations. The Design chapter's pages each end with what they decide, and the [design register](../notes/design-register.md) lists every decision and assumption; the Limitations chapter will collect the assumptions marked **[unverified]** there and the extensions the Design chapter defers (the frame move of [Channels](design/channels.md), the tickless kernelet of [Interrupts and time](design/virtualizing-ostd/interrupts-and-time.md), the `virtiofs` backend of [The kernelet runtime](design/kernelet-runtime.md)).

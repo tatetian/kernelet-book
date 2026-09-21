@@ -1,0 +1,174 @@
+# Faults, termination, and reclamation
+
+*What ends a kernelet, how each of its tasks is stopped even if it will not cooperate, and how everything it held goes back to Linux. It discharges fault containment, and the half of fairness that says a tenant cannot hold resources past its own death.*
+
+## The shape of a death
+
+A kernelet ends in one of three ways: its kernel asks to (`power::poweroff` becomes the service `stop`), its kernel fails (a panic nothing catches, or a fault), or the host decides (the operator or the endovisor kills it). Whatever the cause, the same sequence follows:
+
+1. the kernelet is **marked dying**, which is a single store;
+2. every one of its carriers is **stopped** at a point where it holds nothing of Linux's;
+3. when the last carrier is gone the kernelet has **exited**, and the runtime is told why;
+4. **destroy** returns its memory and removes every record that named it.
+
+No code from the kernelet image runs after the mark. Nothing is unwound and no destructor runs: a kernelet's state is abandoned, not tidied, because tidying would mean running the tenant's kernel on the host's behalf at the moment it is least trusted.
+
+## When a carrier may be pulled out {#safe}
+
+A carrier can be removed from kernelet code by force only at a moment when it holds nothing of Linux's: no lock, no reference, no half-finished update. Two tests together identify such a moment, and every mechanism on this page uses both.
+
+- **Its instruction pointer is in a kernelet's text.** This excludes all of Linux's own code and all of the endovisor's: the entry path, the fault path, the exit loop, the gate's hooks, the service bodies. Kernelet code holds nothing of Linux's because it has no way to acquire anything: the only way out of an image is a service call.
+- **Its service-call depth is 0.** The endovisor keeps, in each carrier record, a **depth**: 1 from the moment a service prologue begins until its epilogue ends, 0 otherwise ([service half](kernelet-api-service.md#depth)). The record is endovisor memory, so a kernelet cannot hold its own depth at 1. For a running carrier this says the same thing as the first test, from independent bookkeeping, and the mechanisms below require both: an instruction pointer in kernelet text with a depth of 1 means the endovisor's own accounting is wrong, and is treated as a host bug, not acted on.
+
+A carrier that fails either test is in Linux's or the endovisor's code and must be allowed to finish what it is doing. Service calls are short and do not block indefinitely, and that is the endovisor's obligation, not the kernelet's.
+
+### Leaving for good {#leaving}
+
+However a carrier is stopped, it leaves the kernelet the same way it leaves on every trip to user mode: by the [stack switch](virtualizing-ostd/tasks.md) back to its Linux stack, where the frames of whichever gate hook or start function entered the kernelet are waiting, intact. The only difference is a flag that says *do not come back*. Linux's code then unwinds normally, the carrier detaches from the gate, frees the kernelet stack unread, gives up its seat if it holds one, and lets the pending `SIGKILL` end the task in Linux's exit loop. This chapter calls that *leaving for good*. No Linux frame is ever abandoned; only kernelet frames are.
+
+## Stopping a carrier {#stopping}
+
+When the kernelet is marked, the endovisor sends `SIGKILL` to every carrier except the root carrier, and starts the eviction described below. Where a carrier is at that moment decides what stops it:
+
+| the carrier is | what stops it |
+|---|---|
+| in user mode | Linux's own signal handling: the carrier enters the exit loop, the gate's resume hook sees the mark, detaches and steps aside, and Linux kills the task |
+| asleep in a service call (parked, waiting for a job) | the sleep is killable, so it wakes; the service epilogue sees the mark and the carrier [leaves for good](#leaving) |
+| running in a service call | the call completes; the epilogue sees the mark |
+| entering a service call | the prologue sees the mark |
+| not yet started | its start function sees the mark before entering the image |
+| **running kernelet code** | **eviction** |
+
+**The root carrier's own life.** The root carrier carries no kernelet task, has no kernelet stack and holds no seat; it lives in its resume hook, cloning carriers on request. It is not counted among the kernelet's carriers and is exempt from the sweep. After the mark it refuses new requests and waits for the carrier count to reach zero; then it records the exit status, moves the kernelet to *exited*, wakes whoever is waiting for that, and ends itself. So *exited* means that no task of the sandbox is left, the root included. If the root carrier is itself killed from outside, that is a mark with the reason *carrier lost*, and the endovisor's cleanup thread does the root's remaining duties.
+
+**Noticing a carrier that Linux killed.** A carrier killed from outside, by the operator or by the out-of-memory killer, never runs endovisor code again. Every carrier therefore holds a [lifeline](virtualizing-ostd/tasks.md#death): an open endovisor file in its descriptor table, which Linux closes when the task exits, for whatever reason and whether or not the carrier ever entered user mode. A release for a carrier that had not left for good marks the kernelet dying with *carrier lost*, and hands the carrier's kernelet stack and seat to the endovisor's cleanup thread.
+
+### Eviction {#eviction}
+
+The last row is the hard one, and it is where Linux differs most from a host built for the purpose. Linux acts on a kill signal only when a task returns to user mode. A carrier looping in kernelet code, say in a `loop {}` reached through a logic bug a tenant found, never returns to user mode, so Linux by itself would never kill it, and the sandbox could never be destroyed.
+
+<figure class="fwd-fig">
+<div class="head">
+<div class="tag">Forced termination</div>
+<div class="title">Eviction: a timer interrupt changes where the carrier resumes</div>
+</div>
+<svg viewBox="0 0 900 250" role="img" aria-label="A carrier is looping in kernelet code on its kernelet stack at service-call depth zero. The endovisor arms a timer on the processor the carrier is running on. The timer interrupt saves the interrupted registers; the endovisor's timer callback checks that the interrupted instruction lies in a dying kernelet's text and that the carrier's depth is zero, then rewrites the saved instruction pointer. The interrupt returns not into the loop but to an exit stub in the endovisor, which switches to the carrier's Linux stack, leaves the kernelet for good, and lets Linux's pending kill signal end the task.">
+<defs>
+<linearGradient id="fr-cg" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
+<stop offset="100%" stop-color="#1937FF" stop-opacity=".22"/>
+</linearGradient>
+<marker id="fr-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#9AA0BE"/>
+</marker>
+<marker id="fr-ac" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M0 0 L8 4 L0 8 z" fill="#00F7FF"/>
+</marker>
+</defs>
+<g font-family="ui-monospace,monospace" font-size="10.5">
+<rect x="20" y="24" width="196" height="92" rx="8" fill="url(#fr-cg)" stroke="rgba(0,247,255,.55)"/>
+<text x="32" y="44" fill="#00F7FF" font-size="9" letter-spacing="1.2">KERNELET STACK &#183; DEPTH 0</text>
+<text x="118" y="72" fill="#8FF6FC" text-anchor="middle" font-size="9.5">kernelet code, not returning</text>
+<text x="118" y="92" fill="#5C93A8" text-anchor="middle" font-size="9">loop { }</text>
+<path d="M216 70 H268" stroke="#9AA0BE" stroke-width="1.4" marker-end="url(#fr-a)"/>
+<text x="242" y="60" fill="#9AA0BE" text-anchor="middle" font-size="8.5">1 timer</text>
+<text x="242" y="88" fill="#9AA0BE" text-anchor="middle" font-size="8.5">interrupt</text>
+<rect x="270" y="24" width="360" height="92" rx="8" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
+<text x="282" y="44" fill="#00F7FF" font-size="9" letter-spacing="1.2">ENDOVISOR &#183; TIMER CALLBACK</text>
+<text x="450" y="66" fill="#C9CCE0" text-anchor="middle" font-size="9.5">2 interrupted ip in a dying kernelet's text?</text>
+<text x="450" y="82" fill="#C9CCE0" text-anchor="middle" font-size="9.5">and the carrier's depth is 0?</text>
+<text x="450" y="102" fill="#8FF6FC" text-anchor="middle" font-size="9.5">3 saved instruction pointer := the endovisor's exit stub</text>
+<path d="M630 70 H682" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#fr-ac)"/>
+<text x="656" y="60" fill="#00F7FF" text-anchor="middle" font-size="8.5">4 return</text>
+<rect x="684" y="24" width="196" height="92" rx="8" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
+<text x="696" y="44" fill="#9A9DB0" font-size="9" letter-spacing="1.2">EXIT STUB &#183; LEAVE FOR GOOD</text>
+<text x="782" y="66" fill="#C9CCE0" text-anchor="middle" font-size="9">switch to the Linux stack</text>
+<text x="782" y="82" fill="#C9CCE0" text-anchor="middle" font-size="9">give up the seat, detach</text>
+<text x="782" y="102" fill="#C9CCE0" text-anchor="middle" font-size="9">5 SIGKILL ends the task</text>
+<rect x="20" y="150" width="860" height="80" rx="8" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.12)"/>
+<text x="36" y="170" fill="#9A9DB0" font-size="9" letter-spacing="1.4">WHY IT IS SAFE</text>
+<text x="36" y="190" fill="#C9CCE0" font-size="9.5">in kernelet text at depth 0, a carrier holds nothing of Linux's &#183; kernelet code cannot disable interrupts, so the timer always lands</text>
+<text x="36" y="208" fill="#C9CCE0" font-size="9.5">the kernelet is already dying, so its own half-finished state does not matter &#183; no kernelet code runs afterwards</text>
+</g>
+</svg>
+</figure>
+
+**Eviction** removes such a carrier by force. The endovisor arms a high-resolution timer on the processor the carrier is running on, in the mode that runs its callback inside the timer interrupt itself even on a real-time kernel. Linux's timer interrupt publishes the registers it interrupted ([`sysvec_apic_timer_interrupt`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/apic/apic.c#L1049) calls `set_irq_regs()`), and a timer callback can read them with `get_irq_regs()`, which is how Linux's own profiler samples the interrupted instruction ([`perf_swevent_hrtimer()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/events/core.c#L11222)); the per-processor variable behind it is exported ([`lib/irq_regs.c`](https://elixir.bootlin.com/linux/v6.12/source/lib/irq_regs.c#L13)). The endovisor's callback checks three things: the interrupted context was kernel mode, the interrupted instruction pointer lies inside the text of a kernelet that is marked dying, and the current carrier's depth is 0. If all hold, it overwrites the saved instruction pointer with the address of an **exit stub** in the endovisor's text, and nothing else. The interrupt then returns to the stub instead of the loop. The stub runs on the kernelet stack, which always has its [16 KiB reserve](#stack), and does one thing: it [leaves for good](#leaving), through the ordinary stack switch. The interrupted computation is simply never resumed.
+
+A carrier that is runnable but not on a processor at that instant is caught when it next runs; the endovisor repeats the sweep every millisecond until the kernelet's carrier count reaches zero. Kernelet code cannot mask interrupts, since OSTD's interface for that is absent from vOSTD, so there is no state in which the timer cannot land.
+
+Eviction asks nothing of Linux that is not already exported. **[unverified]** (assumption A27): it is argued from Linux's source and from the profiler's precedent for reading the interrupted registers; rewriting them to abandon a kernel context has not been built.
+
+## A fault in kernelet code {#fault}
+
+The kernel proper is safe Rust, and in this design no instruction in a kernelet is *expected* to fault: tenant memory is never dereferenced ([Memory](virtualizing-ostd/memory.md#copies)). A page fault, a general-protection fault or an invalid opcode in kernelet text is therefore a bug in vOSTD, a miscompilation, or memory corruption. It must end that kernelet and nothing else.
+
+To Linux, a kernel-mode fault with no recovery entry is an **oops**: it prints the registers and a backtrace, and kills the current task with whatever that task holds. But Linux consults a notifier chain first, and lets a notifier call the oops off: [`__die_body()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/dumpstack.c#L424) returns early if a notifier answers `NOTIFY_STOP`, and [`oops_end()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/dumpstack.c#L359) then returns to the faulting context instead of killing the task. [`register_die_notifier()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/notifier.c#L600) is exported.
+
+The endovisor registers one. Its test is the same as eviction's, that the faulting instruction is in a kernelet's text and the carrier's depth is 0, and its action is the same, to point the saved instruction pointer at the exit stub, after marking the kernelet dying with the fault's address as the reason. *Measured* in an earlier experiment: a module recovered from a deliberate bad access in its own text this way and the machine continued ([the prototype](prototype.md#earlier)).
+
+Three costs come with it, and they are why this mechanism is reserved for bugs.
+
+- **The oops is printed before the notifier is asked**, with interrupts off and a machine-wide lock held, which on a serial console takes tens of milliseconds. It happens once per kernelet, since the kernelet is dead afterwards, and a tenant cannot provoke it without first finding a bug in trusted code.
+- **Linux marks itself tainted** on the first oops, permanently. That is an accurate report: trusted kernel code has failed.
+- **The operator must not configure the machine to panic or capture a crash dump on an oops.** With `panic_on_oops` set, [`oops_end()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/dumpstack.c#L359) calls `crash_kexec()` before anything else when a crash kernel is loaded, and the machine reboots into the dump kernel. Distributions in the Red Hat family ship that setting on servers. It is an operator requirement of this design. The variable is not visible to a module, so it is the [kernelet runtime](kernelet-runtime.md) that reads `/proc/sys/kernel/panic_on_oops` and refuses to create a sandbox while it is set.
+
+A fault at depth 1 is a fault in Linux or in the endovisor. It is a host bug, it is not contained, and it is handled as Linux handles any oops.
+
+## A kernelet stack that overflows {#stack}
+
+A carrier that runs off the end of its kernelet stack cannot be rescued after the fact: the fault cannot be delivered on a stack that has no room, the processor escalates to a double fault, and Linux halts the machine on a double fault it cannot attribute to one of its own stacks ([`exc_double_fault`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/traps.c#L401)). Recursion depth in a kernel can depend on input (path resolution is the classic case), so the overflow has to be prevented rather than caught.
+
+Kernelet images are built with the compiler's function-entry instrumentation (`-Z instrument-mcount`), which places a call to a fixed symbol at the top of every function that survives inlining, in vOSTD, the kernel proper, and the libraries compiled with them. vOSTD defines that symbol as a short routine, written in assembly because the compiler's contract for it is that it preserves every register: it finds the carrier record, which holds the stack's limit, through Linux's per-processor pointer to the current task and the gate pointer in it (three loads that are always in the first-level cache; the two offsets are published in the kernelet's boot arguments), and compares the stack pointer with the limit plus a reserve of 16 KiB. Below that, vOSTD calls `stop` with the reason *stack exhausted*, and the kernelet dies an ordinary death.
+
+The reserve is for Linux, not for the kernelet. Service calls run on the carrier's Linux stack ([service half](kernelet-api-service.md#depth)), but two kinds of Linux code still run on top of whatever kernelet frame they interrupt: the scheduler, when Linux preempts the carrier on return from an interrupt, and the exception path, including the printing of an oops, if kernelet code faults. Linux writes all such code to fit in what is left of a 16 KiB stack, so a full 16 KiB is enough by Linux's own standard. **[unverified]**: the depth has not been measured, and the failure mode if the argument is wrong is a halted machine, not a dead kernelet. The largest frame a function may have without a further probe is 4 KiB, which the compiler's stack probes enforce, so no single call can jump the reserve.
+
+**[unverified]** (assumption A28): the cost is *estimated* at one to two percent of kernel time from the call count of typical system calls; it has not been measured on a kernelet.
+
+## What ends a kernelet
+
+| cause | detected by | reason reported |
+|---|---|---|
+| the kernel proper powers off or exits | the `stop` service | exited, with its code |
+| a panic nothing in the kernel proper catches | the `stop` service | panicked, with the message |
+| the operator or the endovisor asks | `kill` on the endovisor's device | killed: requested |
+| too many caught panics (the *oops budget*) | the `oops` service | killed: oops budget |
+| a kernelet stack nearly exhausted | the function-entry check | killed: stack |
+| a fault in kernelet text | the die notifier | killed: kernel fault, with the address |
+| a carrier killed from outside (the operator, the out-of-memory killer) | the release of the carrier's [lifeline](#stopping) | killed: carrier lost |
+| the sandbox's memory limit, enforced by Linux | the same, since Linux kills a carrier | killed: carrier lost |
+
+The first four are identical on both hosts. One cause on the other host has no counterpart here: there is no "preemption held off too long" kill, because Linux preempts kernelet code regardless of the kernelet's own counter.
+
+## Destroy {#destroy}
+
+Destroy runs in the endovisor, on the runtime's request, after the kernelet has exited. It is a list, and its order is the argument that nothing can still reach what is being freed.
+
+1. **Enter.** Move from *exited* to *destroying*, or refuse. Wait for operations in progress on the sandbox descriptor to finish. If a device thread still holds a reference to the kernelet's memory, move back to *exited* and answer *busy*; nothing has been released, and the runtime retries.
+2. **Carriers.** Assert the carrier count is zero and the root carrier is gone, which is what *exited* means. Every kernelet stack was freed by its carrier as it left for good, or by the cleanup thread for a carrier that Linux killed.
+3. **Caches.** Assert no Linux address space is bound to any model of this kernelet. This holds because every carrier is dead and a carrier's address space dies with it, and it is what makes step 6 safe: no Linux page table anywhere maps a frame of the grant.
+4. **Timers, jobs, virtual interrupts.** Cancel the kernelet's timers and wait for their callbacks to finish; clear its pending jobs.
+5. **Devices and channels.** Stop and join its device threads, then drop its device models. Its channel connections were reset when it was marked dying; assert that the switch holds none.
+6. **The image.** Unmap the instance's range, which removes this instance's mapping of the kind's shared text and leaves the text itself alone, since sibling instances are executing it. Drop the kind's reference. Free the instance's data, shared pages and metadata region ([Builds and images](builds-and-images.md)). The shared text's frames get their write permission back in Linux's direct map, with `set_memory_rw()`, only when the *kind* is unregistered and no instance is left.
+7. **Memory.** For each run: zero it, clear its owner-array entries, then free its pages to Linux, which uncharges them from the sandbox's control group. Zeroing at the grant protects the next tenant; zeroing here as well is for Linux, which does not clear memory it hands to its own kernel allocations.
+8. **Identity.** Retire the kernelet's slot and advance its generation, so that a stale identifier can never name a new kernelet.
+
+The claim that the list is complete is *argued*, not checked: it is complete if every structure that can name a kernelet or a frame of its grant appears in it. On Linux those are the carrier records, the address-space bindings, the timer and job tables, the device and channel tables, the owner array and the slot table.
+
+## What this design does not contain
+
+- **A misbehaving service call.** A carrier at depth 1 that loops or faults is a bug in Linux or in the endovisor, and takes down what such bugs take down. This bound is not specific to Linux; the design has it on either host.
+- **Induced work Linux does not charge.** Interrupt handling for devices that serve a tenant's I/O, and for its timers, is charged to whatever task it interrupts, as for any Linux process. The design bounds it and does not charge it.
+- **Global memory pressure.** A grant is kernel memory, which Linux's machine-wide out-of-memory killer does not attribute to the carriers. If the operator lets the sum of sandbox limits exceed the machine, the victims will be other processes. Within its own limit, a sandbox that runs out is killed whole.
+- **The machine-wide stall of an oops**, once per kernelet that dies of a fault.
+
+## What a tenant sees
+
+An exit status that the runtime reports: the code its kernel passed, the panic message, or the kill reason. Processes inside the sandbox see nothing; they stop existing. Connections to other sandboxes are reset. A killed sandbox can leave a torn write in its disk image, as a machine that loses power can.
+
+## What this page decides
+
+- **A carrier running kernelet code is removed by eviction** (register D98): a timer callback on its processor points the interrupted frame's instruction pointer at the endovisor's exit stub when the instruction is in a dying kernelet's text at depth 0. The alternative considered earlier, unmapping the kernelet's text so that the carrier faults, needs a machine-wide TLB flush per revocation, because the range flush is not exported, and turns every forced termination into an oops.
+- **A fault in kernelet text is contained by a die notifier and the same exit stub** (register D99), at the price of one printed oops, a tainted kernel, and an operator requirement. The alternative, a patch that lets Linux's fixup search find the kernelet, was not taken because in this design no kernelet instruction is expected to fault, so the path is for bugs only.
+- **Stack exhaustion is prevented by compiler-placed checks, not caught** (register D100), because on Linux it cannot be caught.
+- **Termination discards the kernelet stack rather than unwinding it** (register D35, kept), and **grains are zeroed at grant** (register D55, kept).
