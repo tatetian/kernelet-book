@@ -32,7 +32,7 @@ No full kernelet, meaning the Linux-compatible kernel proper with its file syste
 | the gate | a patch to Linux v6.12 | 103 added lines in 8 files, none removed |
 | runtime | a static test program that forks, sets *no new privileges* and executes the sandbox file | 154 lines |
 
-**The run.** Linux 6.12.0, built from `tinyconfig` plus a fragment (SMP, full preemption, modules, seccomp, control groups, address-space randomization), patched, booted in QEMU with hardware virtualization and two processors. One command, `make hello`, builds everything, boots, and checks the serial log. This is the log, unedited except for the boot messages before it:
+**The run.** Linux 6.12.0, built from `tinyconfig` plus a fragment (SMP, full preemption, modules, seccomp, control groups, address-space randomization), patched, booted in QEMU with hardware virtualization and two processors. One command, `make hello`, builds everything, boots, and checks the serial log. This is the log from the module's loading on; one line is left out, Linux's notice that an out-of-tree module taints the kernel:
 
 ```
 INIT: loading kernelet.ko
@@ -59,9 +59,11 @@ kernelet: root carrier (pid 32) dying
 kernelet: task carrier (pid 34) lifeline closed
 kernelet: root carrier (pid 32) lifeline closed
 kernelet: boot carrier (pid 33) dying
+kernelet: root carrier gone, the sandbox is dying; 1 carrier(s) left
 kernelet: boot carrier (pid 33) lifeline closed, the last one
 RUN-HELLO: no carrier left (module references: 0)
 RUN-HELLO: done
+INIT: /tests/10-hello exited 0
 INIT: unloading kernelet
 kernelet: endovisor unloaded
 INIT: done
@@ -85,7 +87,7 @@ The checks (`Hello, world`; exit code 0; clean unload; no `BUG:`, `Oops`, `WARNI
 
 ## A probe kernel: demand paging, an exception, and eviction {#probe}
 
-Hello World never misses in the model, never faults, and exits politely. A second small kernel, written for the purpose in safe Rust against the same vOSTD (190 lines, `deny(unsafe_code)`), does the three things it does not. It was run after the prototype had been brought in line with what review changed in the design: the rule that the kernel proper hears only of faults taken in user mode, protections built by the handler, one file per model with `unmap_mapping_range()` as the flush behind a per-model lock, service calls on the Linux stack, and a lifeline per carrier.
+Hello World never misses in the model, never faults, and exits politely. A second small kernel, written for the purpose in safe Rust against the same vOSTD (190 lines, `deny(unsafe_code)`), does the three things it does not. It was run after the prototype had been brought in line with what review changed in the design: the rule that the kernel proper hears only of faults taken in user mode, protections built by the handler, one file per model with `unmap_mapping_range()` as the flush behind a per-model lock, service calls on the Linux stack, and a lifeline per carrier. The log below is an excerpt: lines that repeat Hello World's start-up and shutdown are left out, and one long symbol name is shortened.
 
 ```
 kernelet: kernelet image text [0xffffffffc003e1e7, 0xffffffffc0042f45), 19806 bytes
@@ -98,6 +100,7 @@ kernelet: probe: page fault at 0x900000 (error code 0x6), mapping a fresh frame
 kernelet: cache fill pid 34: va 0x900000 <- pa 0x806000 (rw-)
 kernelet: syscall 1 serviced by the kernelet (pid 34)
 kernelet: probe: demand paging: read back "PROBE-OK" from 0x900008
+traps: probe.klet[34] trap invalid opcode ip:401036 sp:0 error:0 in [kernelet-model][401036,10000+7ffffffee000]
 kernelet: signal 4 (si_code 2) from pid 34 is trap 6 -> exception
 kernelet: probe: illegal instruction at 0x401036 (trap 6), stepping over two bytes
 kernelet: syscall 1000 serviced by the kernelet (pid 34)

@@ -52,7 +52,7 @@ When a process calls `execve`, Linux offers the file to each registered **binary
 
 ## Sleeping, waking, thread groups, and descriptors
 
-A task that must wait puts itself on a **wait queue** and sleeps; another context wakes it with `wake_up_process()`. A sleep can be *killable*, meaning a fatal signal ends it, and *freezable*, meaning Linux may park the task in place when the machine suspends or when its control group is frozen.
+A task that must wait puts itself on a **wait queue** and sleeps; another context wakes it with `wake_up_process()`. A sleep can be *killable*, meaning a fatal signal ends it, and *freezable*, meaning Linux may park the task in place when the machine suspends. (Freezing a *control group* is a different mechanism: it stops each task as the task passes through Linux's signal-delivery code on its way to user mode.)
 
 Tasks created with the thread flag form a **thread group**, which is what Linux calls a process: they share signal handling, and a fatal signal to one ends them all. Tasks created without it are separate processes even if they are related. Linux also has a helper, [`vhost_task_create()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/vhost_task.c#L118), that gives a module a worker which runs only kernel code yet is a thread of the calling process, and so belongs to that process's control group.
 
