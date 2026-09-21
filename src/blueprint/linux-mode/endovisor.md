@@ -67,7 +67,7 @@ EXPORT_SYMBOL_GPL(set_memory_rw);
 EXPORT_SYMBOL_GPL(set_memory_ro);
 ```
 
-**One operator requirement.** The machine must not be set to panic, or to capture a crash dump, on an oops ([why](faults-and-reclamation.md#fault)).
+**Three host settings, which the runtime checks.** The machine must not be set to panic, or to capture a crash dump, on an oops (`kernel.panic_on_oops` off; [why](faults-and-reclamation.md#fault)). Linux's per-fault log lines must be off (`debug.exception-trace`), or a tenant could write to the operator's log ([why](virtualizing-ostd/user-mode.md#exceptions)). And `fs.suid_dumpable` must be 0, its default ([why](#abi)).
 
 **One build configuration still open.** A Linux built with type-checked indirect branches ([assumption A19](builds-and-images.md#audit)).
 

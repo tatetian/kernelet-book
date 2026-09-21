@@ -89,7 +89,7 @@ A kernelet is a complete Linux-compatible kernel, written in safe Rust against a
 | a patch | **the gate**: one pointer in the task structure, one flag bit, and two calls in the generic entry layer, which x86-64, RISC-V, s390 and LoongArch share |
 | exported symbols | **four**: `kernel_clone`, `set_memory_rox`, `set_memory_rw`, `set_memory_ro` |
 | a module | the **endovisor** |
-| of the operator | not to configure the machine to panic on an oops |
+| of the operator | three host settings: no panic on an oops, no per-fault lines in the kernel log, and the default core-dump policy |
 | not needed | a boot parameter, hardware virtualization, any change in behavior for tasks outside a sandbox; nor a particular preemption model: where Linux does not preempt kernel code, the endovisor [reschedules kernelet code itself](virtualizing-ostd/tasks.md#yield) |
 
 The details and the patch itself are on [the endovisor page](endovisor.md#patch). An unpatched Linux is ruled out, by function and not by speed: without the gate a tenant's second process would make its system calls to Linux.
