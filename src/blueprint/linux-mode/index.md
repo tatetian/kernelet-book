@@ -90,7 +90,7 @@ A kernelet is a complete Linux-compatible kernel, written in safe Rust against a
 | exported symbols | **four**: `kernel_clone`, `set_memory_rox`, `set_memory_rw`, `set_memory_ro` |
 | a module | the **endovisor** |
 | of the operator | not to configure the machine to panic on an oops |
-| not needed | a boot parameter, a particular preemption model, hardware virtualization, any change in behavior for tasks outside a sandbox |
+| not needed | a boot parameter, hardware virtualization, any change in behavior for tasks outside a sandbox; nor a particular preemption model, though on a Linux that does not preempt kernel code this rests on [a mechanism that is designed and not yet built](virtualizing-ostd/tasks.md#yield) |
 
 The details and the patch itself are on [the endovisor page](endovisor.md#patch). An unpatched Linux is ruled out, by function and not by speed: without the gate a tenant's second process would make its system calls to Linux.
 

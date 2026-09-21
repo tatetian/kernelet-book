@@ -25,7 +25,7 @@ loop {
     let job = services().job_wait();      // sleeps in Linux until a job is posted for this virtual CPU
     match job.kind() {
         JOB_VIRQ  => deliver_virq(job.line()),   // run the line's handlers, then its bottom halves
-        JOB_TICK  => tick::run(job.count()),     // expire timers, run the kernel proper's tick callbacks
+        JOB_TICK  => tick::run(seat_record().take_ticks()),  // expire timers, run the kernel proper's tick callbacks
         JOB_GRANT => grant::add_new_runs(),      // new memory appeared in the grant table
     }
 }

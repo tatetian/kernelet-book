@@ -37,7 +37,7 @@ struct klet_user_ctx {                   /* vOSTD's UserContext begins with exac
 
 /* job_wait() returns one of these, packed: kind in bits 0..7, payload in bits 8..39 */
 #define KLET_JOB_VIRQ   1                /* payload: the line, 0..255 */
-#define KLET_JOB_TICK   2                /* payload: ticks elapsed since the last one */
+#define KLET_JOB_TICK   2                /* payload: none; the number of ticks is in the seat record */
 #define KLET_JOB_GRANT  3                /* payload: none; re-read the grant table */
 
 #define KLET_SPAWN_SUSPENDED  1          /* task_spawn flag: do not run until task_unpark */
@@ -91,7 +91,7 @@ struct klet_entry_table {                /* in the image, 4 KiB from its base; r
 
 ## Who is calling {#depth}
 
-No service takes a "which kernelet" argument, because a kernelet must not be able to claim to be another. The endovisor finds the caller from Linux: the current task's [gate pointer](virtualizing-ostd/user-mode.md) leads to its **carrier record**, which names the kernelet, the kernelet task, the [seat](virtualizing-ostd/tasks.md#seats) the carrier holds, and the **service-call depth**. The record is endovisor memory. The kernel proper cannot name it at all. vOSTD, which is trusted, reads two fields of it (the task's name and its stack limit) and writes none.
+No service takes a "which kernelet" argument, because a kernelet must not be able to claim to be another. The endovisor finds the caller from Linux: the current task's [gate pointer](virtualizing-ostd/user-mode.md) leads to its **carrier record**, which names the kernelet, the kernelet task, the [seat](virtualizing-ostd/tasks.md#seats) the carrier holds, and the **service-call depth**. The record is endovisor memory. The kernel proper cannot name it at all. vOSTD, which is trusted, reads three fields of it (the task's name, the number of the seat it holds, which is what `CpuId::current()` returns, and its stack limit) and writes none.
 
 Every service function is wrapped in the same prologue and epilogue.
 
@@ -101,7 +101,7 @@ Every service function is wrapped in the same prologue and epilogue.
 
 The depth is 1 exactly while the carrier, having come from kernelet code, is inside endovisor or Linux code and may hold their locks. It is one of the two tests that make [eviction](faults-and-reclamation.md#eviction) safe.
 
-**Two kinds of call, with respect to the seat.** `task_park`, `task_yield` and `job_wait` exist to let others run: they give up the seat, sleep in Linux, and take a seat again before returning. vOSTD must not make them while its no-preemption counter is raised, because the kernel proper's code between raising and lowering it assumes its per-CPU data is not touched by anyone else; the prologue checks the counter, which is on a page the kernelet writes, and answers `-KLET_STATE`. That check protects the kernelet from its own bugs, not the host from the kernelet, so it does not matter that the kernelet could lie. `user_run` gives up the seat too, for as long as the tenant stays in user mode; like a machine's return to user mode it is legal with the counter raised, and `execute` raises it on purpose. It can block in Linux before it leaves, when it has to create or replace the carrier's memory area.
+**Three kinds of call, with respect to the seat.** `task_park`, `task_yield` and `job_wait` exist to let others run: they give up the seat, sleep in Linux, and take a seat again before returning. vOSTD must not make them while its no-preemption counter is raised, because the kernel proper's code between raising and lowering it assumes its per-CPU data is not touched by anyone else; the prologue checks the counter, which is on a page the kernelet writes, and answers `-KLET_STATE`. That check protects the kernelet from its own bugs, not the host from the kernelet, so it does not matter that the kernelet could lie. `user_run` gives up the seat too, for as long as the tenant stays in user mode; like a machine's return to user mode it is legal with the counter raised, and `execute` raises it on purpose. It can block in Linux before it leaves, when it has to create or replace the carrier's memory area.
 
 Every other call keeps the seat. Three of those can block inside Linux: `grains_request` and `task_spawn` while Linux allocates memory, and `tlb_shootdown` while it waits for fault handlers to finish. The seat stays taken meanwhile, which is correct, since a processor that is waiting for a TLB flush is not available either. `tlb_shootdown` cannot be allowed to fail, so it is never refused for the counter's sake.
 
@@ -115,7 +115,7 @@ A carrier inside a service call cannot be [evicted](faults-and-reclamation.md#ev
 |---|---|
 | `grains_request` | page allocator or contiguous allocator, charged to the sandbox's control group; zero; record in the owner array, then publish in the grant table ([Memory](virtualizing-ostd/memory.md)) |
 | `pt_root_register` | check that the root frame is in the grant; create the model's record and its file object |
-| `pt_root_unregister` | empty every cache of the model; drop the record |
+| `pt_root_unregister` | refused while any carrier is bound to the model; otherwise empty every cache of the model and drop the record. vOSTD calls it only when the last task has let go of the address space, and must not reuse the root frame until it has returned |
 | `pt_activate` | record the model as the calling carrier's; the carrier's memory area is created, or replaced, by the next `user_run` |
 | `tlb_shootdown` | wait out fault handlers on this model, then `unmap_mapping_range()` on the model's file, which empties the range in every carrier's cache ([Memory](virtualizing-ostd/memory.md#interlock)) |
 | `task_spawn` | queue a request to the root carrier, which clones a carrier ([Tasks](virtualizing-ostd/tasks.md#root)); the name is returned at once |
