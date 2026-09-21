@@ -1,10 +1,12 @@
 # One address space, many kernelets
 
-*The mechanism that makes Linux mode possible. The Design chapter gives every kernelet its own kernel page table; Linux cannot. This page shows how to put every kernelet in one shared kernel address space instead, what that costs the trusted base, and what protection it gives up. The scheme is better in Asterinas mode too, so this page also revises two Design-chapter decisions and withdraws two assumptions.*
+*The mechanism that makes Linux mode possible. The Design chapter used to give every kernelet its own kernel page table, and Linux cannot; this page is why it no longer does. This page shows how to put every kernelet in one shared kernel address space instead, what that costs the trusted base, and what protection it gives up. The scheme is better in Asterinas mode too, so this page also revises two Design-chapter decisions and withdraws two assumptions.*
 
 ## The problem, stated exactly
 
-A kernelet's image is linked at fixed addresses: its code at one address, its writable data at another, the same addresses in every kernelet ([Builds and images](../design/builds-and-images.md#window), and the [design register](../../notes/design-register.md), D3). Two kernelets therefore want the *same* virtual address to hold *different* data. The only way to grant both wishes is to give each kernelet its own page table, and that is what the Design chapter does: a kernelet's kernel page table is the host's, with two top-level entries swapped for its own.
+Read this section in the past tense: it states the problem as the Design chapter posed it, before this page changed the answer. The register keeps the old scheme with its reason, under [D3](../../notes/design-register.md).
+
+A kernelet's image **was** linked at fixed addresses: its code at one address, its writable data at another, the same addresses in every kernelet. Two kernelets therefore wanted the *same* virtual address to hold *different* data. The only way to grant both wishes is to give each kernelet its own page table, and that is what the Design chapter said: a kernelet's kernel page table was the host's, with two top-level entries swapped for its own.
 
 Linux will not have it. Its kernel half is shared by every process by construction: one set of upper-half page-table entries, referenced from every process's page table, kept in step by the kernel itself. There is no supported way for a module to give one task a different kernel half, and no unsupported way that survives contact with Linux's own bookkeeping.
 
@@ -133,7 +135,7 @@ It adds less than it appears to, on either host. A kernelet could already reach 
 
 ## What this replaces in the Design chapter
 
-This scheme is better in Asterinas mode too. It removes two top-level page-table entries per kernelet and everything beneath them, removes the rule that the image's mappings cannot use global page-table entries and the translation refill that rule costs after every address-space switch, and removes the assumption that the machine's physical memory fits in a 512 GiB window. The Design chapter is changed accordingly, in this branch:
+This scheme is better in Asterinas mode too. It removes two top-level page-table entries per kernelet and everything beneath them, removes the rule that the image's mappings cannot use global page-table entries and the translation refill that rule costs after every address-space switch, and removes the assumption that the machine's physical memory fits in a 512 GiB window. The Design chapter is changed accordingly, and now reads as follows:
 
 - **D3** becomes: the image is position-independent, and the loader places each instance at an offset of its choosing in the shared kernel address space; the shared regions carry no relocations, which the audit checks.
 - **D58** is unchanged in substance and clarified in wording: `paddr_to_vaddr` adds the host's linear-map base, which the host supplies at creation instead of the compile-time constant it was, and frame metadata keeps a sparse per-instance region on both hosts.
