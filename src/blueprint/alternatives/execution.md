@@ -22,7 +22,7 @@ A kernelet has as many seats as it has virtual CPUs. Entering kernelet code acqu
 
 **What it costs.** An acquire and a release per crossing into kernelet code, and the honest answer to a question worth asking: the seat and the stack cannot be the same object. A seat must be released when the code sleeps, and a stack must not be.
 
-**Verdict.** Promising, and the one to build in this cluster. It is also the only design here that improves the host we wrote, because a lease is a better abstraction than a virtual CPU on either host.
+**Verdict.** Promising, and the one to build in this cluster. It is also the only design here that improves the host we wrote, because a lease is a better abstraction than a virtual CPU on either host. Recorded as decision D88, adopted for Linux mode as part of the chosen restoration and argued rather than adopted for Asterinas mode, since changing what `CpuId` means there reaches into a chapter this exploration did not review.
 
 ## Be a process {#be-a-process}
 
