@@ -115,6 +115,22 @@ Two ways of multiplexing a machine among mutually distrusting tenants have domin
 
 Asterinas Kernelets are a third point in that space, and this book calls the idea **API virtualization**: rather than virtualizing the hardware beneath a kernel, or multiplexing one kernel above its syscall table, it virtualizes the interface a kernel is written against. The Asterinas kernel is a *framekernel*: all `unsafe` code lives in a small framework, OSTD, and the kernel above it is safe Rust written against OSTD's API. A **kernelet** is that kernel, unmodified, compiled against **vOSTD**, a build of OSTD's own source in which every operation's effect is confined to the kernelet that makes it, and whatever a kernelet must never have does not exist. The boundary is the language, not the hardware: the crate graph decides what a kernelet can name, and a table of C-ABI calls decides what may cross. Each tenant gets a kernel of its own, and the machine underneath stays real; the price is that the boundary rests on the compiler and on OSTD's soundness.
 
+## A growth strategy: shipping in Linux, before replacing Linux {#growth}
+
+> **The host is a replaceable part, so we do not have to win the hardest argument first.**
+
+**The hardest argument is "replace your kernel".** An operator asked to put Asterinas underneath a fleet is being asked to bet the machine on a young code base, and no amount of safe Rust makes that an easy signature. It is the right argument to win eventually. It is the wrong one to need first.
+
+We do not need it first, and that is a property of the design rather than a concession in it. A kernelet is not built on a machine; it is built on an interface. It calls a table of functions and never touches hardware, and nothing in that arrangement says who implements the table. If the answer can be Linux, then the host underneath is a replaceable part, which is what [Linux as the host](blueprint/linux-mode/index.md) sets out to test.
+
+For an operator that changes the question being asked of them. The host stays the kernel they already run, already patch and already trust. What changes is that selected workloads stop sharing it with their neighbors and get a kernel of their own, in safe Rust, inside the same machine. Nothing is replaced; something is added, for the tenants that want it. The decision is reversible, which is what makes it takeable: a workload that does not suit a kernelet keeps running the way it runs today, beside one that does, and the cost of being wrong is one workload rather than one fleet.
+
+For the project it is somewhere real to grow. The same source, the same framework and the same kernel proper compile against a second implementation of one table, so the work is not done twice and the maturity is not earned twice. Real tenants, real workloads and real bugs, while the host role stays Linux's — and when the code has earned that role, the host underneath can change without anything above it noticing.
+
+A second implementation also pays a dividend that a single one cannot. Porting the interface to a host we do not control exposed a requirement our own API had never stated: it assumed a hardware protection that Asterinas leaves off and Linux turns on, which no amount of reading our own kernel would have revealed. That is the kind of defect a second host finds and a second reviewer does not.
+
+Honest about the price, because the chapters are. Nothing has been built, on either host. Linux mode asks the operator for a small kernel patch and a handful of exported symbols. And three of the properties the boundary owes a tenant come out weaker there than on the host we wrote, which [the comparison](blueprint/alternatives/comparison.md) states row by row. The claim is that the ask is small enough to carry and the gap is small enough to name, not that either is zero.
+
 ## How to read this book {#how-to-read}
 
 You need to know Rust and roughly how an operating-system kernel is put together. Nothing else is assumed. The book is three volumes, and they are meant to be read in the order that suits the reader rather than the order they were written in.
