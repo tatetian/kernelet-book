@@ -76,7 +76,7 @@ Position-independent code reaches its data by an offset from the address of the 
 
 **The exception table** is the one read-only section that holds addresses on the tree today. The design re-encodes it as pairs of offsets relative to the entry itself, which is how Linux encodes its own, so that it holds no address and can be shared. On Linux nothing consults it (no kernelet instruction is expected to fault), but one image format serves both hosts.
 
-**Per-instance state.** An instance's data region holds, in order: the relocated tables (`.got`, `.data.rel.ro`); `.data` and `.bss`; one copy of the per-CPU section for each [seat](virtualizing-ostd/tasks.md#seats); and vOSTD's own tables. *Measured on the tree*: `.data` 27 KiB, `.bss` 23 KiB and the per-CPU section 2 KiB for the whole kernel, so under 128 KiB of private state per kernelet before per-seat copies (*estimated*).
+**Per-instance state.** An instance's data region holds, in order: the relocated tables (`.got`, `.data.rel.ro`); `.data` and `.bss`; one copy of the per-CPU section for each [virtual CPU](virtualizing-ostd/tasks.md#vcpus); and vOSTD's own tables. *Measured on the tree*: `.data` 27 KiB, `.bss` 23 KiB and the per-CPU section 2 KiB for the whole kernel, so under 128 KiB of private state per kernelet before the per-CPU copies (*estimated*).
 
 ## How the endovisor loads an instance
 
@@ -84,12 +84,12 @@ A kind is registered once: the runtime hands the endovisor the image file, and t
 
 Creating an instance is then four steps.
 
-1. **Allocate the data.** Pages from Linux's allocator, sized by the template plus one per-CPU copy per seat; copy the template in, zero the rest.
+1. **Allocate the data.** Pages from Linux's allocator, sized by the template plus one per-CPU copy per virtual CPU; copy the template in, zero the rest.
 2. **Build the range.** One call to [`vmap()`](https://elixir.bootlin.com/linux/v6.12/source/mm/vmalloc.c#L3413) with the kind's text pages followed by this instance's data pages. Linux returns one contiguous kernel virtual range: the instance's base.
 3. **Make the text executable.** `vmap()` always returns non-executable memory. The endovisor calls [`set_memory_rox()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c#L2118) on the text part of this range, which makes it read-and-execute and never writable-and-executable.
 4. **Relocate.** Add the base to each of the few hundred entries in the instance's relocated tables, and mark that part read-only.
 
-Then it fills in the instance's [boot arguments](virtualizing-ostd/the-rest.md) and asks the root carrier to start the boot task at the image's entry point.
+Then it fills in the instance's [boot arguments](virtualizing-ostd/the-rest.md) and the carrier of virtual CPU 0 enters the image at its entry point.
 
 **This is where Linux must export something.** A module has no other way to obtain executable memory at an address of its choosing: `vmap()` strips the execute permission, Linux's allocator for executable memory ([`execmem_alloc()`](https://elixir.bootlin.com/linux/v6.12/source/mm/execmem.c#L55)) is not exported, and none of the permission setters are. *Measured*: executing from a plain `vmap()` range faults with Linux's "tried to execute NX-protected page" report. The patch therefore exports `set_memory_rox()`. It must also export `set_memory_rw()`, because the first call makes the same frames read-only in Linux's direct map as a side effect, and they cannot be given back to the page allocator until that is undone. `set_memory_ro()`, for step 4's hardening, is the third. Making a range executable does *not* make the direct-map alias of those frames executable; Linux masks that bit out itself.
 
@@ -103,8 +103,8 @@ The write protection in the direct map is undone, with `set_memory_rw()`, when t
 
 Control and data cross between the image and the endovisor in exactly two ways.
 
-- **Two tables of C function pointers.** The image exports an **entry table** at a fixed offset (4 KiB from its base): the function that runs a task's body, the bounds of its per-CPU section, and a hash of the source it was built from. The endovisor hands the image a **service table** when it enters it: the [service half](kernelet-api-service.md) of the kernelet API. The image has no undefined symbols. It cannot call Linux, because it cannot name anything in Linux.
-- **Six kinds of shared page**, which the endovisor maps after the instance's data: the boot arguments, the grant table, the info page, the clock page, and the per-task and per-seat records ([service half](kernelet-api-service.md#pages)).
+- **Two tables of C function pointers.** The image exports an **entry table** at a fixed offset (4 KiB from its base): the function at which a secondary virtual CPU enters, the address of the [upcall stub](virtualizing-ostd/scheduling.md#upcall) to which an interrupted virtual CPU is redirected, the bounds of its per-CPU section, and a hash of the source it was built from. The endovisor hands the image a **service table** when it enters it: the [service half](kernelet-api-service.md) of the kernelet API. The image has no undefined symbols. It cannot call Linux, because it cannot name anything in Linux.
+- **Five kinds of shared page**, which the endovisor maps after the instance's data: the boot arguments, the grant table, the info page, the clock page, and the virtual CPUs' records ([service half](kernelet-api-service.md#pages)).
 
 ## What the build checks {#audit}
 

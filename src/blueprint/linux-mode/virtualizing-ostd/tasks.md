@@ -1,27 +1,29 @@
-# Tasks, scheduling, and CPUs
+# Tasks, virtual CPUs, and carriers
 
-*How a kernelet's tasks become Linux tasks, where they come from, which stack they run on, and what "a CPU" means to a kernel that Linux schedules. It discharges the CPU half of fairness, and the rule that per-CPU data is never touched by two tasks at once.*
+*What a kernelet's tasks are on Linux, what its processors are, and where the Linux tasks behind those processors come from. A kernelet's tasks are its own and Linux never sees them; what Linux gives a kernelet is virtual CPUs. How the two levels of scheduling then work is the [next page](scheduling.md).*
 
-## What a kernelet task needs
+## Tasks are the kernelet's; processors are Linux's
 
-The kernel proper creates tasks through OSTD's `TaskOptions::new(closure).build()` and starts them with `Task::run()`. Some are kernel threads that never leave the kernel. Some are tenant threads, whose closure is the loop on the [User mode](user-mode.md) page. OSTD's API does not say which is which when the task is created: a task becomes a tenant thread only when its closure first calls `UserMode::execute`.
+The kernel proper creates tasks through OSTD's `TaskOptions::new(closure).build()` and starts them with `Task::run()`. Some are kernel threads. Some are tenant threads, whose closure is the loop on the [User mode](user-mode.md) page. There may be thousands.
 
-So whatever carries a kernelet task on Linux must be schedulable by Linux, must keep a stack alive while the task sleeps or runs user code, and must be *able* to enter user mode even if it never does.
+On Linux none of them is a Linux task. A kernelet task is OSTD's own object: a closure, a stack, saved registers, and a place in the run queues of whatever scheduler the kernel proper injected. OSTD's task layer is the same code in vOSTD as on a machine: creating a task allocates a stack, switching tasks saves one set of callee-saved registers and loads another, and waiting is a matter of OSTD's own wait queues. None of it involves Linux.
+
+What a kernelet cannot make for itself is a processor to run them on. That is what it gets from the host: a fixed number of **virtual CPUs**, chosen when the sandbox is created, each of them a Linux task.
 
 ## Carriers {#carriers}
 
-A **carrier** is the Linux task that carries one kernelet task. The pairing is one to one and lasts for the life of the task. Linux schedules carriers like any other task; the kernel proper's own scheduler is compiled in and never consulted, exactly as when Asterinas is the host. Waiting and waking map onto Linux directly: the services `task_park` and `task_unpark` are a sleep on, and a wake of, the carrier.
+A **carrier** is the Linux task that carries one virtual CPU of a kernelet, for the life of the sandbox. Whatever the virtual CPU does, that Linux task is what does it: it runs the kernel proper's code and vOSTD's, it [enters user mode](user-mode.md) to run whichever tenant thread the kernelet's scheduler picked, it takes that thread's system calls and faults at the gate, and it sleeps in Linux when the virtual CPU has nothing to run. Linux schedules the carriers, like any tasks; it does not know what they carry.
 
-A carrier is *not* a Linux kernel thread. A kernel thread has no address space and can never return to user mode, and because OSTD does not announce which tasks will want to, every carrier has to be capable of it. Linux has exactly one kind of task with that property that kernel code can start in an in-kernel function: the kind Linux itself uses to launch `init` and its user-mode helpers, created by [`kernel_clone()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L2745) with a start function and without the kernel-thread flag ([`user_mode_thread()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L2854) is the in-tree caller). Such a task runs the function in kernel mode, and when the function returns, Linux's fork-return path takes the task to user mode with whatever is in its saved register file ([`ret_from_fork()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/process.c#L140)). `kernel_clone()` is not exported to modules; the patch exports it, and that is the only thing the patch adds for this page.
+A carrier is *not* a Linux kernel thread. A kernel thread has no address space and can never return to user mode, and a virtual CPU must. Linux has exactly one kind of task with that ability that kernel code can start in an in-kernel function: the kind Linux itself uses to launch `init` and its user-mode helpers, created by [`kernel_clone()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L2745) with a start function and without the kernel-thread flag ([`user_mode_thread()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L2854) is the in-tree caller). Such a task runs the function in kernel mode, and when the function returns, Linux's fork-return path takes the task to user mode with whatever is in its saved register file ([`ret_from_fork()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/process.c#L140)). `kernel_clone()` is not exported to modules; the patch exports it.
 
 ## The root carrier, and the family it starts {#root}
 
 <figure class="fwd-fig">
 <div class="head">
 <div class="tag">Where carriers come from</div>
-<div class="title">A sandbox is one Linux process tree, cloned from a blank template</div>
+<div class="title">A sandbox is a small Linux process tree, cloned from a blank template</div>
 </div>
-<svg viewBox="0 0 900 330" role="img" aria-label="The kernelet runtime, a host user-space program, places a process in the sandbox's control group with its seccomp filter and credentials, and that process executes the sandbox file. The endovisor's binary-format handler gives it a blank address space and it becomes the root carrier, which never runs tenant code. Every kernelet task, the boot task, kernel threads, the interrupt worker, and each tenant thread, is carried by a clone of the root carrier made with kernel_clone, and each inherits the gate attachment, the seccomp filter, the control group, the credentials, a blank address space and a reference on the endovisor module.">
+<svg viewBox="0 0 900 330" role="img" aria-label="The kernelet runtime, a host user-space program, places a process in the sandbox's control group with its seccomp filter, credentials and namespaces, and that process executes the sandbox file. The endovisor's binary-format handler gives it a blank address space and it becomes the root carrier, which never runs tenant code. The root carrier clones one carrier per virtual CPU with kernel_clone, and the device threads. Each carrier inherits the gate attachment, the seccomp filter, the control group, the credentials, the namespaces, a blank address space and a reference on the endovisor module. The kernelet's own tasks, however many, run on those carriers and are not Linux tasks.">
 <defs>
 <linearGradient id="tk-cg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -38,7 +40,7 @@ A carrier is *not* a Linux kernel thread. A kernel thread has no address space a
 <rect x="20" y="20" width="250" height="64" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
 <text x="145" y="42" fill="#C9CCE0" text-anchor="middle">kernelet runtime</text>
 <text x="145" y="58" fill="#6A6F8C" text-anchor="middle" font-size="8.5">sets cgroup &#183; seccomp filter &#183; credentials</text>
-<text x="145" y="72" fill="#6A6F8C" text-anchor="middle" font-size="8.5">then: execve("sandbox.klet")</text>
+<text x="145" y="72" fill="#6A6F8C" text-anchor="middle" font-size="8.5">then executes the sandbox file</text>
 <path d="M270 52 H330" stroke="#9AA0BE" stroke-width="1.4" marker-end="url(#tk-a)"/>
 <rect x="332" y="20" width="250" height="64" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
 <text x="457" y="42" fill="#00F7FF" text-anchor="middle">endovisor: program loader</text>
@@ -48,174 +50,113 @@ A carrier is *not* a Linux kernel thread. A kernel thread has no address space a
 <rect x="644" y="20" width="236" height="64" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
 <text x="762" y="42" fill="#8FF6FC" text-anchor="middle">root carrier</text>
 <text x="762" y="58" fill="#5C93A8" text-anchor="middle" font-size="8.5">never runs tenant code</text>
-<text x="762" y="72" fill="#5C93A8" text-anchor="middle" font-size="8.5">loop: take request &#183; kernel_clone()</text>
+<text x="762" y="72" fill="#5C93A8" text-anchor="middle" font-size="8.5">clones the carriers, once, at start</text>
 <path d="M762 84 V128" stroke="#00F7FF" stroke-width="1.4"/>
-<path d="M110 128 H762" stroke="#00F7FF" stroke-width="1.4"/>
-<path d="M110 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
-<path d="M327 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
-<path d="M544 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
-<path d="M762 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
-<text x="436" y="120" fill="#00F7FF" text-anchor="middle" font-size="9">one clone per kernelet task, started in an in-kernel function</text>
-<g>
-<rect x="20" y="160" width="180" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="110" y="182" fill="#8FF6FC" text-anchor="middle">carrier</text>
-<text x="110" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">boot task</text>
-<text x="110" y="216" fill="#5C93A8" text-anchor="middle" font-size="8.5">stays in kernel mode</text>
-<rect x="237" y="160" width="180" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="327" y="182" fill="#8FF6FC" text-anchor="middle">carrier</text>
-<text x="327" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">kernel thread / worker</text>
-<text x="327" y="216" fill="#5C93A8" text-anchor="middle" font-size="8.5">stays in kernel mode</text>
-<rect x="454" y="160" width="180" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="544" y="182" fill="#8FF6FC" text-anchor="middle">carrier</text>
-<text x="544" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">tenant thread A</text>
-<text x="544" y="216" fill="#5C93A8" text-anchor="middle" font-size="8.5">enters user mode</text>
-<rect x="672" y="160" width="180" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="762" y="182" fill="#8FF6FC" text-anchor="middle">carrier</text>
-<text x="762" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">tenant thread B</text>
-<text x="762" y="216" fill="#5C93A8" text-anchor="middle" font-size="8.5">enters user mode</text>
-</g>
+<path d="M150 128 H762" stroke="#00F7FF" stroke-width="1.4"/>
+<path d="M150 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
+<path d="M410 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
+<path d="M700 128 V158" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#tk-ac)"/>
+<text x="436" y="120" fill="#00F7FF" text-anchor="middle" font-size="9">one clone per virtual CPU, started in an in-kernel function</text>
+<rect x="20" y="160" width="260" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
+<text x="150" y="182" fill="#8FF6FC" text-anchor="middle">carrier of virtual CPU 0</text>
+<text x="150" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">runs whichever kernelet task</text>
+<text x="150" y="216" fill="#C9CCE0" text-anchor="middle" font-size="9.5">the kernelet's scheduler picked</text>
+<rect x="300" y="160" width="220" height="70" rx="6" fill="url(#tk-cg)" stroke="rgba(0,247,255,.55)"/>
+<text x="410" y="182" fill="#8FF6FC" text-anchor="middle">carrier of virtual CPU 1</text>
+<text x="410" y="200" fill="#C9CCE0" text-anchor="middle" font-size="9.5">kernel threads, tenant threads,</text>
+<text x="410" y="216" fill="#C9CCE0" text-anchor="middle" font-size="9.5">in user mode or kernel mode</text>
+<rect x="540" y="160" width="320" height="70" rx="6" fill="rgba(25,55,255,.16)" stroke="rgba(0,247,255,.35)"/>
+<text x="700" y="182" fill="#5C93A8" text-anchor="middle">device threads</text>
+<text x="700" y="200" fill="#6A6F8C" text-anchor="middle" font-size="9.5">threads of the root carrier;</text>
+<text x="700" y="216" fill="#6A6F8C" text-anchor="middle" font-size="9.5">run only endovisor code</text>
 <rect x="20" y="254" width="860" height="56" rx="8" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.12)"/>
 <text x="36" y="274" fill="#9A9DB0" font-size="9" letter-spacing="1.4">INHERITED BY EVERY CLONE, BECAUSE LINUX COPIES IT</text>
 <text x="36" y="294" fill="#C9CCE0" font-size="9.5">gate attachment &#183; seccomp filter &#183; control group &#183; credentials &#183; namespaces &#183; blank address space (no vDSO) &#183; module reference</text>
 </g>
 </svg>
-<figcaption>Nothing in the bottom row is set up per carrier by the endovisor. It is what <code>fork</code> does, which is why there is no window in which a carrier lacks it.</figcaption>
+<figcaption>Nothing in the bottom row is set up per carrier by the endovisor. It is what <code>fork</code> does, which is why there is no window in which a carrier lacks it. A sandbox with a thousand tenant threads still has this many Linux tasks.</figcaption>
 </figure>
 
 A sandbox begins as an ordinary process that the [kernelet runtime](../kernelet-runtime.md) has prepared: it has been placed in the sandbox's control group, given the sandbox's credentials and namespaces, and has installed the seccomp filter from the [User mode](user-mode.md) page. That process then executes the **sandbox file**, a small in-memory file that the endovisor made for this sandbox and handed to the runtime as a descriptor ([The endovisor](../endovisor.md#abi)), as if it were a program.
 
-Linux lets a module teach it new executable formats: a **binary-format handler** ([`struct linux_binfmt`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/binfmts.h#L82), registered with [`__register_binfmt()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L88)) is offered every file that is executed and may claim it. The endovisor registers one that claims sandbox files. Its handler does what every program loader does first, calling [`begin_new_exec()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L1222), which gives the process a fresh address space, closes its close-on-exec descriptors, resets its signal handlers, and drops everything else the runtime's child might have registered with Linux that would make Linux write into user memory later: its restartable-sequence area, its robust-futex list, its thread-exit notification address, its timers. It then makes the address space truly blank. Linux has already placed one area in it, the temporary stack that holds the arguments and environment of the `execve`, which the ELF loader would go on to use; this handler unmaps it, so that nothing of the host's is left for a tenant to read. It maps no program and no stack, and no vDSO, since mapping that page is the ELF loader's act and not Linux's. It initializes the process's saved registers as a 64-bit user task, which matters even though this process will never run user code: a clone that starts in a kernel function copies its parent's saved registers, segment selectors and flags included, so every carrier starts from whatever the root carrier has (*found by the prototype*). It attaches the gate to the process, [flags it](user-mode.md#gate), and returns. The process is now the **root carrier**.
+Linux lets a module teach it new executable formats: a **binary-format handler** ([`struct linux_binfmt`](https://elixir.bootlin.com/linux/v6.12/source/include/linux/binfmts.h#L82), registered with [`__register_binfmt()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L88)) is offered every file that is executed and may claim it. The endovisor registers one that claims sandbox files. Its handler does what every program loader does first, calling [`begin_new_exec()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L1222), which gives the process a fresh address space, closes its close-on-exec descriptors, resets its signal handlers, and drops everything else the runtime's child might have registered with Linux that would make Linux write into user memory later: its restartable-sequence area, its robust-futex list, its thread-exit notification address, its timers.
 
-The root carrier never reaches user mode. On its way there the gate's resume hook runs, and for the root carrier that hook is a service loop: wait for a request to start a kernelet task, discard any signal that is pending on itself other than `SIGKILL`, call `kernel_clone()` with the endovisor's start function, repeat. The middle step is not tidiness: `kernel_clone()` refuses to run for a caller with a signal pending, and a root carrier that never returns to user mode would otherwise never clear one. A clone that still fails for that reason is retried after a short killable sleep, not in a tight loop: a host administrator who freezes the sandbox's control group leaves a signal-like mark pending on the root carrier for as long as the freeze lasts, and spawning simply waits it out. The first request is for the kernelet's boot task. Each later one comes from the service `task_spawn`, which is what `Task::run()` becomes; the service queues the request and returns without waiting, so `run()` keeps OSTD's meaning of "make runnable".
+It then makes the address space truly blank. Linux has already placed one area in it, the temporary stack that holds the arguments and environment of the `execve`, which the ELF loader would go on to use; this handler unmaps it, so that nothing of the host's is left for a tenant to read. It maps no program and no stack, and no vDSO, since mapping that page is the ELF loader's act and not Linux's. It initializes the process's saved registers as a 64-bit user task, which matters even though this process will never run user code: a clone that starts in a kernel function copies its parent's saved registers, segment selectors and flags included, so every carrier starts from whatever the root carrier has (*found by the prototype*). It attaches the gate to the process, [flags it](user-mode.md#gate), and returns. The process is now the **root carrier**.
 
-Every carrier is thus a child of the root carrier, and a clone without shared memory: it gets its own copy of the root's blank address space, which stays empty unless the task enters user mode ([Memory](memory.md#cache)). What it inherits is the row at the bottom of the figure. Two of those entries deserve a sentence each. The *module reference* is Linux's own: an address space created by a binary-format handler holds a reference on the handler's module, a forked copy takes another ([`dup_mm()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L1682)), and both are dropped by core kernel code when the address space dies ([`__mmput()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L1340)), so the endovisor cannot be unloaded from under a carrier. One thing must be added by hand: the endovisor's file objects name the module as their owner, because Linux releases the last of them slightly *after* it drops the address space's reference (*found by the prototype*, as a crash in unloaded code). The *control group* is what makes fair accounting a matter of membership rather than bookkeeping: every task of the kernelet, kernel thread or tenant thread, is a member of the sandbox's group, so the processor time the kernelet burns and the kernel memory Linux allocates on its behalf are charged to the sandbox by the machinery Linux already has.
+The root carrier never reaches user mode. On its way there the gate's resume hook runs, and for the root carrier that hook is where it does its work: it discards any signal pending on itself other than `SIGKILL` (`kernel_clone()` refuses to run for a caller with a signal pending, and a task that never returns to user mode would never clear one), clones one carrier per virtual CPU with `kernel_clone()` and the endovisor's start function, starts the [device threads](devices.md), and then waits for the sandbox to end ([Faults](../faults-and-reclamation.md#stopping)). A clone that fails because a signal arrived meanwhile is retried after a short killable sleep.
 
-The root carrier sets `SIGCHLD` to *ignored*, which makes Linux reap its children without a wait.
+Every carrier is thus a child of the root carrier, and a clone without shared memory: it starts with its own copy of the root's blank address space. What it inherits is the row at the bottom of the figure. Two of those entries deserve a sentence each. The *module reference* is Linux's own: an address space created by a binary-format handler holds a reference on the handler's module, a forked copy takes another ([`dup_mm()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L1682)), and both are dropped by core kernel code when the address space dies ([`__mmput()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/fork.c#L1340)), so the endovisor cannot be unloaded from under a carrier. One thing must be added by hand: the endovisor's file objects name the module as their owner, because Linux releases the last of them slightly *after* it drops the address space's reference (*found by the prototype*, as a crash in unloaded code). The *control group* is what makes fair accounting a matter of membership rather than bookkeeping: everything the kernelet executes, it executes on a member of the sandbox's group, so the processor time it burns and the kernel memory Linux allocates on its behalf are charged to the sandbox by the machinery Linux already has.
 
-## Kernelet stacks
+The carrier of virtual CPU 0 enters the image at its entry point and boots the kernelet. The others wait until vOSTD calls the service `vcpu_boot(i)`, which is what starting a secondary processor becomes, and then enter at the entry table's `vcpu_entry`. The root carrier sets `SIGCHLD` to *ignored*, which makes Linux reap its children without a wait.
 
-A carrier's Linux kernel stack is 16 KiB ([`THREAD_SIZE_ORDER`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/page_64_types.h#L15)), is shared with Linux's own entry frames, and is emptied on every return to user mode. A kernelet task needs a stack that is larger, since a full Linux-compatible system-call path in Rust runs on it, and that persists, since the task's loop lives on it. So each kernelet task has a **kernelet stack**: 256 KiB of Linux's `vmalloc` memory, which comes with an unmapped guard page on either side, allocated by the endovisor when the carrier starts and freed when it dies.
+## Kernelet stacks {#stacks}
 
-The rule is simple: **kernelet code runs on the kernelet stack, and Linux's and the endovisor's code runs on the Linux stack.** The carrier switches to the kernelet stack when a gate hook resumes the kernelet, and back when the kernelet calls `user_run`. It also switches to the Linux stack for the length of every [service call](../kernelet-api-service.md#depth), so that Linux's code, including every sleep, runs on a stack Linux knows. The switch is a dozen instructions that save the callee-saved registers and exchange the stack pointer. Linux tolerates kernelet code on a stack it did not allocate:
+Every kernelet task has a **kernelet stack**, as every task has a kernel stack on a machine: 256 KiB, which vOSTD obtains with the service `kstack_alloc` and returns with `kstack_free`. The endovisor takes it from Linux's `vmalloc` area, which puts an unmapped guard page on either side, and charges it to the sandbox.
 
-- The scheduler saves and restores only the stack pointer, so a carrier can be preempted on the kernelet stack.
+A carrier's *Linux* kernel stack is a different thing: 16 KiB ([`THREAD_SIZE_ORDER`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/include/asm/page_64_types.h#L15)), used by Linux's entry code, and emptied on every return to user mode. The rule that relates the two is simple: **kernelet code runs on the current task's kernelet stack, and Linux's and the endovisor's code runs on the carrier's Linux stack.** The carrier switches to a kernelet stack when a gate hook or a start function enters the kernelet, and back when the kernelet calls [`user_run`](user-mode.md#user-run) or idles. It also switches to the Linux stack for the length of every [service call](../kernelet-api-service.md#depth), so that Linux's code, including every sleep, runs on a stack Linux knows. Between those moments the kernelet switches among its own tasks' stacks as its scheduler directs, and the endovisor neither sees nor cares which one is current: it remembers only where the kernelet was when it last left, and resumes there.
+
+Linux tolerates kernelet code on stacks it did not allocate:
+
+- The scheduler saves and restores only the stack pointer, so a carrier can be preempted on a kernelet stack.
 - Linux finds the current task through a per-processor pointer, not through the stack.
-- An interrupt that arrives on the kernelet stack pushes its frame there and then moves to Linux's per-processor interrupt stack, as it would on any kernel stack.
+- An interrupt that arrives on a kernelet stack pushes its frame there and then moves to Linux's per-processor interrupt stack, as it would on any kernel stack.
 - The saved user registers are found from the top of the Linux stack, which does not move.
 
-One thing Linux does not tolerate is an overflow. Running off the end of a kernelet stack hits the guard page while the stack pointer is already bad, which escalates to a double fault, and Linux halts the machine on a double fault whose stack it does not recognize ([`exc_double_fault`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/traps.c#L401)). Depth of recursion in the kernel proper can depend on tenant input, so this must not be left to chance. Kernelet images are compiled with a call at every function entry that compares the stack pointer with a limit in the carrier record and ends the kernelet in an orderly way when only a 16 KiB reserve remains; the mechanism is on the [Faults](../faults-and-reclamation.md#stack) page.
+One thing Linux does not tolerate is an overflow. Running off the end of a kernelet stack hits the guard page while the stack pointer is already bad, which escalates to a double fault, and Linux halts the machine on a double fault whose stack it does not recognize ([`exc_double_fault`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/kernel/traps.c#L401)). Depth of recursion in the kernel proper can depend on tenant input, so this must not be left to chance. Kernelet images are compiled with a call at every function entry that compares the stack pointer with the current task's limit and ends the kernelet in an orderly way when only a 16 KiB reserve remains; the mechanism is on the [Faults](../faults-and-reclamation.md#stack) page.
 
-## Seats {#seats}
+## Virtual CPUs and per-CPU data {#vcpus}
 
-The kernel proper uses per-CPU data everywhere: allocator caches, statistics, the read side of RCU. OSTD's contract for it is that code which has disabled preemption has the current CPU's copy to itself. On bare metal that holds because a CPU runs one thing at a time.
+The kernel proper uses per-CPU data everywhere: run queues, allocator caches, statistics, the read side of RCU. OSTD's contract for it is that code which has disabled preemption has the current CPU's copy to itself.
 
-Carriers break the premise twice. Linux migrates them between processors whenever it likes, in the middle of any computation. And Linux will happily run more carriers of one kernelet at the same instant than the kernelet has virtual CPUs, so two of them could pick the same copy. A preemption counter cannot fix the second problem, and on a Linux built without kernel preemption the first has no primitive to hook.
+With a carrier per virtual CPU that contract holds by construction. Each virtual CPU has its own copy of the image's per-CPU section, and only its carrier ever runs as that virtual CPU. `CpuId::current()` is the virtual CPU's number, which vOSTD reads from the virtual CPU's record; it finds the record through Linux's per-processor pointer to the current task and the [gate pointer](user-mode.md#gate) in that task. Which *physical* processor the carrier happens to be on is of no interest to the kernelet, and Linux may move a carrier between processors whenever it likes: the virtual CPU moves with it.
 
-<figure class="fwd-fig">
-<div class="head">
-<div class="tag">Seats</div>
-<div class="title">A virtual CPU is a lease on one copy of the per-CPU data, not a processor</div>
-</div>
-<svg viewBox="0 0 900 250" role="img" aria-label="A kernelet with two seats. Each seat is one copy of the kernelet's per-CPU data. Five carriers: carrier A holds seat 0 and carrier B holds seat 1, and both are running kernelet code, on whatever processors Linux chose. Carrier C is in user mode and holds no seat. Carrier D is asleep inside a service call and holds no seat. Carrier E has just made a system call and waits for a seat to come free.">
-<defs>
-<linearGradient id="st-cg" x1="0" y1="0" x2="1" y2="0">
-<stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
-<stop offset="100%" stop-color="#1937FF" stop-opacity=".22"/>
-</linearGradient>
-<marker id="st-ac" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-<path d="M0 0 L8 4 L0 8 z" fill="#00F7FF"/>
-</marker>
-</defs>
-<g font-family="ui-monospace,monospace" font-size="10.5">
-<text x="20" y="22" fill="#00F7FF" font-size="9" letter-spacing="1.4">THE KERNELET'S SEATS (2 VIRTUAL CPUS)</text>
-<rect x="20" y="32" width="250" height="56" rx="6" fill="url(#st-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="145" y="54" fill="#8FF6FC" text-anchor="middle">seat 0</text>
-<text x="145" y="72" fill="#5C93A8" text-anchor="middle" font-size="8.5">per-CPU data, copy 0 &#183; held by A</text>
-<rect x="290" y="32" width="250" height="56" rx="6" fill="url(#st-cg)" stroke="rgba(0,247,255,.55)"/>
-<text x="415" y="54" fill="#8FF6FC" text-anchor="middle">seat 1</text>
-<text x="415" y="72" fill="#5C93A8" text-anchor="middle" font-size="8.5">per-CPU data, copy 1 &#183; held by B</text>
-<text x="20" y="130" fill="#9A9DB0" font-size="9" letter-spacing="1.4">ITS CARRIERS, WHEREVER LINUX RUNS THEM</text>
-<g>
-<rect x="20" y="140" width="160" height="64" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
-<text x="100" y="162" fill="#00F7FF" text-anchor="middle">carrier A</text>
-<text x="100" y="178" fill="#C9CCE0" text-anchor="middle" font-size="9">in kernelet code</text>
-<text x="100" y="193" fill="#5C93A8" text-anchor="middle" font-size="8.5">holds seat 0</text>
-<rect x="195" y="140" width="160" height="64" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
-<text x="275" y="162" fill="#00F7FF" text-anchor="middle">carrier B</text>
-<text x="275" y="178" fill="#C9CCE0" text-anchor="middle" font-size="9">in kernelet code</text>
-<text x="275" y="193" fill="#5C93A8" text-anchor="middle" font-size="8.5">holds seat 1</text>
-<rect x="370" y="140" width="160" height="64" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
-<text x="450" y="162" fill="#C9CCE0" text-anchor="middle">carrier C</text>
-<text x="450" y="178" fill="#9AA0BE" text-anchor="middle" font-size="9">in user mode</text>
-<text x="450" y="193" fill="#6A6F8C" text-anchor="middle" font-size="8.5">no seat</text>
-<rect x="545" y="140" width="160" height="64" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
-<text x="625" y="162" fill="#C9CCE0" text-anchor="middle">carrier D</text>
-<text x="625" y="178" fill="#9AA0BE" text-anchor="middle" font-size="9">asleep in task_park</text>
-<text x="625" y="193" fill="#6A6F8C" text-anchor="middle" font-size="8.5">gave its seat up</text>
-<rect x="720" y="140" width="160" height="64" rx="6" fill="rgba(255,255,255,.03)" stroke="rgba(0,247,255,.35)" stroke-dasharray="4 3"/>
-<text x="800" y="162" fill="#C9CCE0" text-anchor="middle">carrier E</text>
-<text x="800" y="178" fill="#9AA0BE" text-anchor="middle" font-size="9">just made a system call</text>
-<text x="800" y="193" fill="#00F7FF" text-anchor="middle" font-size="8.5">waits for a free seat</text>
-</g>
-<path d="M100 140 V92" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#st-ac)"/>
-<path d="M275 140 Q300 110 380 92" stroke="#00F7FF" stroke-width="1.4" fill="none" marker-end="url(#st-ac)"/>
-<text x="560" y="56" fill="#9AA0BE" font-size="9">taken on entering kernelet code</text>
-<text x="560" y="72" fill="#9AA0BE" font-size="9">given up on leaving: to user mode, or to sleep</text>
-<text x="450" y="232" fill="#6A6F8C" text-anchor="middle" font-size="9">Linux may run all five at once, on any processors. At most two of them are ever inside the kernelet.</text>
-</g>
-</svg>
-</figure>
+Where Linux puts the carriers is Linux's decision, within the processors the sandbox's control group allows. Two carriers of one sandbox may share a physical processor for a while; the kernelet then simply has two virtual CPUs that run at half speed, which its scheduler observes as [stolen time](scheduling.md#upcall). An operator who wants better pins the sandbox to as many processors as it has virtual CPUs.
 
-The kernel proper does not care which processor it is on. It cares that nobody else is touching its copy. A **seat** makes that the definition: a seat is a lease on one copy of the kernelet's per-CPU data, and a kernelet has as many seats as it has virtual CPUs. A carrier takes a free seat whenever it enters kernelet code (from the gate, or on waking inside a service call) and gives it up whenever it leaves (to user mode, or to sleep). While it holds a seat, `CpuId::current()` is the seat's number and the per-CPU accessors index that seat's copy. Race freedom comes from possession, so it does not depend on how Linux was configured, and a carrier that Linux preempts or migrates while holding a seat simply keeps it.
+## The watch timer {#watch}
 
-A task may be restricted to some seats (`task_spawn` and `task_set_seats` carry a mask), and then waits for one of those. That is how OSTD's "run this on CPU *i*" is honored: each virtual CPU's [worker](interrupts-and-time.md), for instance, is restricted to its own seat, so that timers and interrupt handlers for virtual CPU *i* always see virtual CPU *i*'s data.
+Three things on the [Scheduling](scheduling.md) page need something that runs *on the processor a carrier is on*, in hard-interrupt context, while the carrier executes kernelet code: delivering the tick, making a carrier give way on a Linux that does not preempt kernel code, and enforcing the bound on how long a kernelet may defer Linux's preemption. One mechanism serves all three.
 
-If every permitted seat is taken, the carrier sleeps until one is free. That caps a tenant's parallelism *inside its kernel* at its virtual-CPU count, which is what a virtual-CPU count means, and it is something a tenant can observe as latency when it is oversubscribed.
+The **watch timer** is one Linux high-resolution timer per processor, with a period of 1 ms (*chosen*, equal to OSTD's tick), created in the mode that is both *hard* (its callback runs in the interrupt itself, even on a real-time kernel) and *pinned* (Linux may otherwise move a timer to another processor to let the arming one stay idle or isolated). A carrier arms the timer of its own processor, if it finds it unarmed, every time it enters the kernelet: from its start function, from a gate hook, and on return from every service call and from every stub described below. A timer fires on the processor that armed it and never follows a task; but a carrier can change processors only while it is asleep or rescheduled inside Linux's code, and it re-arms on the way back in, so the timer that matters is always armed where the carrier is.
 
-A seat is never taken away from a carrier that holds it. So a carrier that stays in kernelet code for a long time keeps its virtual CPU's worker waiting, and with it that virtual CPU's timers and interrupt handlers, where on a machine an interrupt would simply have landed. The tenant whose kernel does this delays only its own I/O, and [eviction](../faults-and-reclamation.md#eviction) bounds the pathological case.
+Whether the timer re-arms must *not* depend on what it happened to interrupt: a carrier that is printing through a service call, or a competitor that has just been given the processor, is not kernelet code, and a timer that stopped there would need someone to arm it again, which is exactly what a runaway kernelet never does (*found by the prototype*: built that way, it fired seven times in four seconds). Instead each processor has a pointer to the carrier being watched there. A carrier sets it to itself on every way into the kernelet and clears it on leaving, but only if it still points to itself. The timer stops only when the pointer is empty or its carrier is no longer runnable.
 
-A seat is also where per-virtual-CPU bookkeeping lives: the RCU state (a seat nobody holds is quiescent by definition, so an idle virtual CPU never stalls a grace period), and an optional processor-time budget that can refuse a seat to a kernelet that has exhausted its quota.
-
-## Priority, affinity, and preemption
-
-OSTD lets the kernel proper set a task's priority and CPU affinity. The `task_spawn` request carries both, and the root carrier applies them to the clone with [`set_user_nice()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/sched/syscalls.c#L65) and [`set_cpus_allowed_ptr()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/sched/core.c#L3118), both exported, after intersecting the affinity with the processors the sandbox is allowed. Hard limits on processor time come from the sandbox's control group.
-
-Linux preempts kernelet code like any other kernel code, where it preempts kernel code at all. `disable_preempt()` in vOSTD therefore does not talk to Linux. It raises a per-task **no-preemption counter**, kept in vOSTD, which means three things inside the kernelet and nothing outside it. While it is raised the task keeps its seat, so nobody else touches its per-CPU data. vOSTD will not make a service call that gives up the seat (the service half refuses one with an error, as a check on the kernel proper's own discipline). And it stands in for "interrupts off", which is sound because no kernelet code ever runs in interrupt context. That is all the kernel proper's uses of it need.
+Each time it fires, the callback looks at what it interrupted, which Linux's timer interrupt publishes ([`get_irq_regs()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/events/core.c#L11222) is how Linux's profiler reads it). If that is a carrier, it [delivers the tick](scheduling.md#upcall) and [checks the grace](scheduling.md#cooperative). And it does the following.
 
 ### Where Linux does not preempt kernel code {#yield}
 
-Many distribution kernels are built or booted not to: they reschedule a task in kernel mode only where the code volunteers. Linux's own code volunteers often; a kernelet never does, since it cannot call Linux. Left alone, a tenant that kept its kernel busy could then hold a processor for as long as it liked, past its control group's limit and against every other task that wants that processor. Whether it would also stall Linux's RCU, machine-wide, depends on how the kernel was built. Where the preemption model is chosen at boot, RCU is the preemptible kind, and Linux's own tick reports a quiescent state for kernel code that is neither in a read-side section nor running with preemption off, which describes kernelet code (*measured on the booted prototype*, which is such a kernel: grace periods completed at the same rate throughout an eight-second monopoly). On a kernel *built* without kernel preemption, RCU hears from a processor only when it runs user code, idles, or passes a voluntary preemption point, and a busy kernelet would stall it; there the mechanism below is what keeps RCU moving as well.
+Many distribution kernels are built or booted so that a task in kernel mode is rescheduled only where the code volunteers. Linux's own code volunteers often; a kernelet never does, since it cannot call Linux. Left alone, a tenant that kept its kernel busy could then hold a processor for as long as it liked, past its control group's limit and against every other task that wants that processor.
 
-So the endovisor volunteers on the kernelet's behalf, with a **watch timer**: one Linux timer per processor, created in the mode that is both *hard* (its callback runs in the interrupt itself) and *pinned* (Linux may otherwise move a timer to another processor to let the arming one stay idle or isolated), which a carrier arms on its own processor, if it finds it unarmed, every time it enters kernelet code: from its start function, which is the only entry a task that never leaves the kernel ever makes, from a gate hook, and on return from every service call. (A timer fires on the processor that armed it, and never follows a task. A carrier can change processors only while it is asleep or rescheduled inside Linux's code, which is to say inside a service call or outside the kernelet, and it re-arms on the way back in; on a kernel that does not preempt kernel code it cannot change processors while it stays in kernelet code. So the timer that matters is always armed on the processor the carrier is on.) Each time it fires, the callback looks at what it interrupted. If that is a carrier in kernelet text at depth 0, and Linux has marked the carrier as due to reschedule, the callback saves the interrupted instruction pointer in the carrier record and points the frame at a **yield stub**, by the same means as [eviction](../faults-and-reclamation.md#eviction). Whether the timer re-arms must *not* depend on what it happened to interrupt: a carrier that is printing through a service call, or a competitor that has just been given the processor, is not kernelet code, and a timer that stopped there would need someone to arm it again, which is exactly what a runaway kernelet never does (*found by the prototype*: built that way, it yielded seven times in four seconds). Instead each processor has a pointer to the carrier being watched there. A carrier sets it to itself on every way into kernelet code, which includes the way back from the yield stub itself, since the stub is one more place where the processor may have been lent to another carrier; it clears it on leaving kernelet code, but only if it still points to itself. The timer stops only when the pointer is empty or its carrier is no longer runnable. Its period is 1 ms (*chosen*), and the endovisor arms watch timers only when Linux reports that the preemption model in force does not preempt kernel code; elsewhere they would be a thousand useless interrupts a second.
+Whether it would also stall Linux's RCU, machine-wide, depends on how the kernel was built. Where the preemption model is chosen at boot, RCU is the preemptible kind, and Linux's own tick reports a quiescent state for kernel code that is neither in a read-side section nor running with preemption off, which describes kernelet code (*measured on the booted prototype*, which is such a kernel: grace periods completed at the same rate throughout an eight-second monopoly). On a kernel *built* without kernel preemption, RCU hears from a processor only when it runs user code, idles, or passes a voluntary preemption point, and a busy kernelet would stall it; there the mechanism below is what keeps RCU moving as well.
 
-The callback does not consult the kernelet's no-preemption counter. That counter is the kernelet's own, on a page it can write, and honoring it would hand a tenant the processor; nor is there a reason to, since a carrier that is rescheduled keeps its seat, which is all the counter promises.
+So the endovisor volunteers on the kernelet's behalf. When the watch timer interrupts a carrier in kernelet text, with nothing [masked](scheduling.md#upcall), and finds that Linux has marked the carrier as due to reschedule, it saves the interrupted instruction pointer in the virtual CPU's record and points the frame at a **yield stub**, by the same means as [eviction](../faults-and-reclamation.md#eviction). The stub saves every register and the flags on the current kernelet stack, switches to the Linux stack as a service call does, calls Linux's voluntary preemption point (`cond_resched()`, exported) and, if that declined and the mark is still set, `schedule()` (on some configurations the first is compiled to nothing), switches back, restores everything, and jumps to the saved instruction pointer. Kernelet code is compiled without a red zone, as all kernel code is, so nothing below its stack pointer is live. If the kernelet was marked dying in the meantime, the stub leaves for good instead of resuming. On a Linux that does preempt kernel code the mark is never found set on return from an interrupt, and the stub never runs.
 
-The stub saves every register and the flags on the kernelet stack, switches to the Linux stack as a service call does, calls Linux's voluntary preemption point (`cond_resched()`, exported) and, if that declined and the mark is still set, `schedule()` (on some configurations the first is compiled to nothing), switches back, restores everything, and jumps to the saved instruction pointer. Kernelet code is compiled without a red zone, as all kernel code is, so nothing below its stack pointer is live. If the kernelet was marked dying in the meantime, the stub leaves for good instead of resuming. On a Linux that does preempt kernel code the mark is never found set on return from an interrupt, and the stub never runs.
+The callback does not consult the kernelet's `masked` depth to decide *whether* the kernelet may keep the processor forever; it consults it to decide *how long* to wait, which is the [two-strike rule](scheduling.md#cooperative).
 
 *Measured on the booted prototype* (assumption A29), on Linux 6.12 booted with `preempt=none`, with a kernelet computing a checksum for eight seconds and a competing host process pinned to the same processor: without the watch timer the competitor was starved for 4.3 seconds at a stretch; with it, the longest gap was 0.27 seconds, the two shared the processor evenly, the stub ran more than 800 times at arbitrary instruction boundaries, and the checksum was identical, bit for bit, to the one computed undisturbed and to a reference computed in user space ([the prototype](../prototype.md#yield)).
 
-## When a task ends, and when a carrier dies {#death}
+## When a carrier dies {#death}
 
-When a kernelet task's closure returns, the carrier switches to its Linux stack for the last time, detaches itself from the gate, frees the kernelet stack, and ends by sending itself `SIGKILL`; Linux offers a module no direct way to exit a task that is not a kernel thread. Because no two carriers share a Linux thread group, the signal ends that one task.
+A carrier lives as long as its sandbox. When the kernelet is stopped, each carrier [leaves the kernelet for good](../faults-and-reclamation.md#leaving): it switches to its Linux stack for the last time, detaches itself from the gate, and ends by sending itself `SIGKILL`; Linux offers a module no direct way to exit a task that is not a kernel thread. Because no two carriers share a Linux thread group, the signal ends that one task. (A kernelet *task* that ends is no event for Linux at all: OSTD frees its stack and picks another.)
 
-A carrier can also be killed from outside, by the operator or by Linux's out-of-memory killer. Killing *one* carrier would abandon a kernelet task in the middle of whatever it was doing, possibly holding the kernel proper's locks, and the kernelet as a whole cannot survive that. So the unit of killing is the sandbox. Every carrier holds, from the moment it starts, one open file of the endovisor's in its Linux descriptor table, its **lifeline**. Nothing reads or writes it. (A clone begins with a copy of its parent's descriptor table. The root carrier's table holds exactly one descriptor, its own lifeline, because the program loader closes every other descriptor the runtime's child still had; a new carrier's start function closes the inherited copy before it opens its own, so that each lifeline has exactly one holder.) Linux closes a task's descriptors when the task exits, whatever the cause, and the file's release function is the endovisor's notice that the carrier is gone; if the carrier had not [left for good](../faults-and-reclamation.md#leaving) by then, the endovisor ends the whole kernelet. A tenant cannot close its lifeline, because closing a descriptor is a Linux system call.
+A carrier can also be killed from outside, by the operator or by Linux's out-of-memory killer. Losing a carrier is losing a processor in the middle of whatever it was doing, possibly holding the kernel proper's locks, and the kernelet as a whole cannot survive that. So the unit of killing is the sandbox. Every carrier holds, from the moment it starts, one open file of the endovisor's in its Linux descriptor table, its **lifeline**. Nothing reads or writes it. (A clone begins with a copy of its parent's descriptor table. The root carrier's table holds exactly one descriptor, its own lifeline, because the program loader closes every other descriptor the runtime's child still had; a new carrier's start function closes the inherited copy before it opens its own, so that each lifeline has exactly one holder.) Linux closes a task's descriptors when the task exits, whatever the cause, and the file's release function is the endovisor's notice that the carrier is gone; if the carrier had not left for good by then, the endovisor ends the whole kernelet. A tenant cannot close a lifeline, because closing a descriptor is a Linux system call.
 
-A carrier is an ordinary Linux task, so the host can send it other signals too. The gate's [resume hook](user-mode.md#exceptions) discards every one but `SIGKILL`: a carrier cannot be stopped, continued or terminated politely, one at a time, from the host. To end a sandbox the operator uses `KERNELET_KILL` or the group's `cgroup.kill`. *Pausing* one with the control group's freezer is not supported: Linux freezes a group's tasks as they pass through its signal-delivery code, which a carrier that stays in the kernel (the root carrier, a worker, a parked task) never reaches, and while a freeze is pending Linux refuses the root carrier's clones. The runtime therefore does not offer the container interface's `pause`. Inside the sandbox, of course, the tenant kills its own processes as often as it likes; those are the kernel proper's signals, and Linux never hears of them.
+A carrier is an ordinary Linux task, so the host can send it other signals too. The gate's [resume hook](user-mode.md#exceptions) discards every one but `SIGKILL`: a carrier cannot be stopped, continued or terminated politely, one at a time, from the host. To end a sandbox the operator uses `KERNELET_KILL` or the group's `cgroup.kill`. *Pausing* one with the control group's freezer is not supported: Linux freezes a group's tasks as they pass through its signal-delivery code, which a carrier that stays in the kernel (the root carrier, an idle virtual CPU) never reaches. The runtime therefore does not offer the container interface's `pause`. Inside the sandbox, of course, the tenant kills its own processes as often as it likes; those are the kernel proper's signals, and Linux never hears of them.
 
 ## Costs
 
-- **Per kernelet task**: a Linux task structure, a 16 KiB Linux stack that is mostly idle, a 256 KiB kernelet stack, and an address-space descriptor with one top-level page table, about 10 KiB (*estimated* from structure sizes), even for tasks that never enter user mode. That last item is the price of not knowing in advance which tasks will.
-- **Per task creation**: one queue operation and a wake of the root carrier on the creator's side; one `kernel_clone()` of an empty address space on the root's side. **[unverified]**: tens of microseconds, not measured on its own.
-- **Per entry into kernelet code**: a seat acquire and release, two uncontended atomic operations.
+- **Per sandbox**: one root carrier and one carrier per virtual CPU, each a Linux task structure, a 16 KiB Linux stack and an address-space descriptor. It does not grow with the number of kernelet tasks.
+- **Per kernelet task**: a 256 KiB kernelet stack and OSTD's task object, as on a machine.
+- **Per task creation or exit**: nothing in Linux beyond the stack's allocation.
+- **Per millisecond of kernelet execution on a processor**: one watch-timer interrupt.
 
 ## What a tenant sees
 
-The same processes and threads, scheduled by Linux's scheduler instead of Asterinas's, with `nice` and affinity honored. A tenant with more runnable threads in the kernel than virtual CPUs sees them queue for seats. Every thread of the sandbox, including the kernelet's own kernel threads, appears to the *host's* tools as a process in the sandbox's control group; none of that is visible from inside.
+Its own processes and threads, scheduled by its own kernel. From the host, a sandbox is a control group containing a handful of processes (the root carrier, one per virtual CPU, and the device threads) and nothing that corresponds to a tenant's threads.
 
 ## What this page decides
 
-- **Every kernelet task is carried by a Linux task cloned from the sandbox's root carrier with `kernel_clone()`** (register D93). Alternatives: kernel threads, which cannot enter user mode; letting Linux service the tenant's own `clone` call, which would require the kernel proper to know about it and so break the rule that its source does not change; and Linux's user-mode-helper interface, which needs no export but starts every task in the wrong control group, with the wrong credentials and without the filter.
+- **A carrier carries a virtual CPU, not a task, and is cloned from the sandbox's root carrier with `kernel_clone()`** (register D93, revised by D116). Kernel threads cannot enter user mode; Linux's user-mode-helper interface starts tasks in the wrong control group, with the wrong credentials and without the filter.
 - **The root carrier is created by a binary-format handler** (register D94), because `exec` is the one operation that gives a process a blank address space, and because Linux's own reference counting then pins the module for exactly as long as any carrier's address space lives.
-- **Kernelet code runs on a per-task kernelet stack** (register D84, kept). Linux's own stack is too small and does not persist.
-- **Where Linux does not preempt kernel code, the endovisor reschedules kernelet code through a yield stub** (register D115). The alternatives were to require a preemptible Linux of the operator, or to kill a sandbox whose kernel is merely busy.
-- **Per-CPU data is selected by a seat** (register D88, kept). Deriving the virtual CPU from the processor is unsound when Linux runs more carriers than virtual CPUs, and pinning rests on preemption settings the operator owns.
+- **Kernelet code runs on the current task's kernelet stack, and everything else on the carrier's Linux stack** (register D84, kept; D112).
+- **Per-CPU data belongs to a virtual CPU, which belongs to one carrier** (register D88's seat is retired by D116): there is no lease to take, because nothing else can be that virtual CPU.
+- **One pinned, hard-interrupt watch timer per processor serves the tick, the yield on a non-preempting Linux, and the grace bound** (register D115, extended by D117 and D119).

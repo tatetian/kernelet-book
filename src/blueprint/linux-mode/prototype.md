@@ -11,7 +11,10 @@
 | **A busy kernel on a Linux booted with `preempt=none`** | the watch timer and the yield stub: a kernelet that never volunteers is rescheduled anyway, and resumes intact | *measured on the booted prototype*, [below](#yield) |
 | **The software walk, in a model** | the cost the design adds to every tenant copy, and that the supervisor alias does not earn its risks | *measured in a model*, [below](#walk) |
 | **Earlier mechanism experiments** (in a Linux 6.12 guest) | shared text for many instances; the cost of a gate; Linux's refusal of executable `vmap` memory; SMAP's refusal of direct tenant access; recovery from a kernel-mode fault by die notifier | *measured on the booted prototype of each mechanism*, [below](#earlier) |
-| the function-entry stack check, the die notifier on a kernelet's own fault, the user-mode tick, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one seat, more than one kernelet | nothing | **[unverified]**: designed, not built |
+| the [second-level scheduler](virtualizing-ostd/scheduling.md): carriers as virtual CPUs, virtual interrupts and the upcall, the mirrored preemption count and its two-strike bound, address-space adoption, the floating-point services, more than one virtual CPU | nothing yet | **[unverified]**: the prototype's fourth phase, being built |
+| the function-entry stack check, the die notifier on a kernelet's own fault, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one kernelet | nothing | **[unverified]**: designed, not built |
+
+The three booted rows were built on an earlier form of the design, in which every kernelet task had a Linux task of its own as its carrier and a virtual CPU was a lease called a *seat* ([why that lost](alternatives.md)). What they show about the gate, the stack switch, the model and the cache, exceptions, eviction, the lifeline and the yield stub does not depend on that difference; where a log or a table below says *seat* or `task_spawn`, that is why.
 
 No full kernelet, meaning the Linux-compatible kernel proper with its file systems and network stack, has run on Linux. What has run is a small kernel written against the same OSTD interface, which uses the interface's hardest parts.
 

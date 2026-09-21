@@ -48,7 +48,7 @@ The rest of the chapter is organized by these needs, so it helps to have them in
 
 1. **A place to live**: memory for its code and data, with its code shared between instances ([Builds and images](builds-and-images.md)).
 2. **Memory to manage**: physical frames for its tenant's processes and its own heap ([Memory](virtualizing-ostd/memory.md)).
-3. **Threads of execution** that the host schedules ([Tasks](virtualizing-ostd/tasks.md)).
+3. **Processors to run its tasks on**, which the host shares out among sandboxes while the kernelet decides what runs on its share ([Tasks](virtualizing-ostd/tasks.md), [Scheduling](virtualizing-ostd/scheduling.md)).
 4. **A way to run its tenant in user mode** and get control back on every system call and exception ([User mode](virtualizing-ostd/user-mode.md)). This is the hard one on Linux.
 5. **Interrupts and time** ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)).
 6. **Devices** and **channels** to the outside ([Devices](virtualizing-ostd/devices.md), [Channels](channels.md)).

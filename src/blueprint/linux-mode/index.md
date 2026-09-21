@@ -7,7 +7,7 @@
 <div class="tag">The architecture</div>
 <div class="title">One Linux kernel; each sandbox has a kernel of its own inside it</div>
 </div>
-<svg viewBox="0 0 900 420" role="img" aria-label="Left, the host side: Linux applications and the kernelet runtime in user mode; below them the Linux kernel, with its own subsystems, the gate patched into its entry path, and the endovisor module containing the loader, the service table implementation, the fault handler, containment and device models. Right, one sandbox of many: the tenant's programs run in user mode as Linux tasks called carriers; their system calls pass through the gate into the kernelet, which is the unchanged Asterinas kernel proper in safe Rust over vOSTD, holding the model page tables and its grant of memory. The kernelet calls the endovisor only through the service table. Linux's page tables for the carriers are filled from the kernelet's model by the endovisor's fault handler.">
+<svg viewBox="0 0 900 420" role="img" aria-label="Left, the host side: Linux applications and the kernelet runtime in user mode; below them the Linux kernel, with its own subsystems, the gate patched into its entry path, and the endovisor module containing the loader, the service table implementation, the fault handler, containment and device models. Right, one sandbox of many: the tenant's programs run in user mode on the kernelet's virtual CPUs, each of which is a Linux task called a carrier; their system calls pass through the gate into the kernelet, which is the unchanged Asterinas kernel proper in safe Rust over vOSTD, holding the model page tables and its grant of memory. The kernelet calls the endovisor only through the service table. Linux's page tables for the tenant's processes are filled from the kernelet's model by the endovisor's fault handler.">
 <defs>
 <linearGradient id="ix-cg" x1="0" y1="0" x2="1" y2="0">
 <stop offset="0%" stop-color="#00F7FF" stop-opacity=".22"/>
@@ -29,7 +29,7 @@
 <text x="298" y="56" fill="#9AA0BE" text-anchor="middle">kernelet runtime</text>
 <rect x="490" y="34" width="390" height="36" rx="5" fill="rgba(255,255,255,.06)" stroke="rgba(0,247,255,.30)"/>
 <text x="685" y="50" fill="#C9CCE0" text-anchor="middle">tenant programs</text>
-<text x="685" y="63" fill="#6A6F8C" text-anchor="middle" font-size="8">each thread is a Linux task: a carrier</text>
+<text x="685" y="63" fill="#6A6F8C" text-anchor="middle" font-size="8">run on the kernelet's virtual CPUs; each is a Linux task, a carrier</text>
 <path d="M12 90 H888" stroke="rgba(255,255,255,.28)" stroke-dasharray="5 4"/>
 <text x="14" y="86" fill="#6A6F8C" font-size="8">user mode</text>
 <text x="14" y="101" fill="#6A6F8C" font-size="8">kernel mode</text>
@@ -49,7 +49,7 @@
 <text x="683" y="252" fill="#5C93A8" text-anchor="middle" font-size="8.5">source unchanged &#183; forbid(unsafe_code)</text>
 <rect x="502" y="270" width="362" height="46" rx="6" fill="url(#ix-cg)" stroke="rgba(0,247,255,.55)"/>
 <text x="683" y="290" fill="#8FF6FC" text-anchor="middle">vOSTD: OSTD's API, virtualized</text>
-<text x="683" y="306" fill="#5C93A8" text-anchor="middle" font-size="8.5">model page tables &#183; frame allocator &#183; per-seat data</text>
+<text x="683" y="306" fill="#5C93A8" text-anchor="middle" font-size="8.5">model page tables &#183; frame allocator &#183; tasks on virtual CPUs</text>
 <rect x="502" y="324" width="362" height="52" rx="6" fill="rgba(6,10,36,.55)" stroke="rgba(0,247,255,.35)"/>
 <text x="683" y="345" fill="#C9CCE0" text-anchor="middle">image (text shared by every instance) + data</text>
 <text x="683" y="362" fill="#C9CCE0" text-anchor="middle">grant: memory from Linux, charged to the sandbox</text>
@@ -63,7 +63,7 @@
 <rect x="36" y="342" width="362" height="34" rx="5"/>
 </g>
 <g fill="#8FF6FC" font-size="9.5" text-anchor="middle">
-<text x="124" y="237">image loader</text><text x="310" y="237">carriers &#183; kernelet stacks</text>
+<text x="124" y="237">image loader</text><text x="310" y="237">carriers &#183; virtual interrupts</text>
 <text x="124" y="279">service table (21 calls)</text><text x="310" y="279">page-fault handler</text>
 <text x="124" y="321">eviction &#183; fault containment</text><text x="310" y="321">device models &#183; channels</text>
 <text x="217" y="363">/dev/kernelet, for the runtime</text>
@@ -80,17 +80,17 @@
 
 ## The idea in five sentences
 
-A kernelet is a complete Linux-compatible kernel, written in safe Rust against a small framework interface, and it touches the machine only through that interface ([background](kernelets-in-brief.md)). Nothing in that arrangement says who implements the interface, so Linux can. A tenant's threads are ordinary Linux tasks, and a small patch to Linux's entry path, **the gate**, hands each of their system calls to their kernelet before Linux would look at it. The kernelet keeps its own page tables for its tenant's processes, and Linux's page tables are filled from them on demand, by a fault handler that checks every frame against what the kernelet owns. Everything else a kernel needs (threads, timers, memory, devices) maps onto what Linux already exports to modules.
+A kernelet is a complete Linux-compatible kernel, written in safe Rust against a small framework interface, and it touches the machine only through that interface ([background](kernelets-in-brief.md)). Nothing in that arrangement says who implements the interface, so Linux can. A kernelet's processors are ordinary Linux tasks, its **virtual CPUs**, on which its own scheduler runs its own tasks; and a small patch to Linux's entry path, **the gate**, hands every system call made on one of them to the kernelet before Linux would look at it. The kernelet keeps its own page tables for its tenant's processes, and Linux's page tables are filled from them on demand, by a fault handler that checks every frame against what the kernelet owns. Everything else a kernel needs (timers, interrupts, memory, devices) maps onto what Linux already exports to modules.
 
 ## What it asks of Linux
 
 | it asks for | which is |
 |---|---|
-| a patch | **the gate**: one pointer in the task structure, one flag bit, and two calls in the generic entry layer, which x86-64, RISC-V, s390 and LoongArch share |
-| exported symbols | **four**: `kernel_clone`, `set_memory_rox`, `set_memory_rw`, `set_memory_ro` |
+| a patch | **the gate**: one pointer in the task structure, one flag bit, and two calls in the generic entry layer, which x86-64, RISC-V, s390 and LoongArch share; and **one helper function**, by which a task that is not a kernel thread changes its address space |
+| exported symbols | **five**: `kernel_clone`, `mm_alloc`, `set_memory_rox`, `set_memory_rw`, `set_memory_ro` |
 | a module | the **endovisor** |
 | of the operator | three host settings: no panic on an oops, no per-fault lines in the kernel log, and the default core-dump policy |
-| not needed | a boot parameter, hardware virtualization, any change in behavior for tasks outside a sandbox; nor a particular preemption model: where Linux does not preempt kernel code, the endovisor [reschedules kernelet code itself](virtualizing-ostd/tasks.md#yield) |
+| not needed | a boot parameter, hardware virtualization, any change to Linux's scheduler, any change in behavior for tasks outside a sandbox; nor a particular preemption model: where Linux does not preempt kernel code, the endovisor [reschedules kernelet code itself](virtualizing-ostd/tasks.md#yield) |
 
 The details and the patch itself are on [the endovisor page](endovisor.md#patch). An unpatched Linux is ruled out, by function and not by speed: without the gate a tenant's second process would make its system calls to Linux.
 
@@ -102,11 +102,13 @@ The three properties the book's boundary owes a tenant, as they stand on this ho
 - **Fault containment**: held for the kernelet's own code. A kernelet that faults, panics, overflows its stack or loops forever ends, and only it ends. A failure inside a service call is a bug in the host, on this host as on the other.
 - **Fairness**: held for processor time and memory, by Linux's own control groups, because every task and every page of a kernelet belongs to its sandbox's group. Interrupt-time work that a tenant's I/O induces is charged as Linux charges it for any process.
 
-And what it costs: Linux's own correctness is in the trusted base, as it is for a container; a process's threads do not share Linux page tables, so first touches of memory are paid per thread; and copying to or from tenant memory costs a software page-table walk where the other host pays nothing ([Memory](virtualizing-ostd/memory.md#copies) has the measurement).
+And one thing a container cannot give: **the tenant's kernel schedules the tenant's threads**. Scheduling has two levels ([Scheduling](virtualizing-ostd/scheduling.md)). Linux decides how much processor time the sandbox gets and when, by its control group's weight and limits; the kernelet's own scheduler, whatever policy the kernel proper implements, decides exactly which of its tasks use that time. Linux never sees more runnable tasks of a sandbox than it has virtual CPUs, so nothing a kernelet's scheduler decides can cost a neighbor anything, and the two cooperate so that Linux does not take a virtual CPU away in the middle of a critical section, within a bound of two milliseconds.
+
+And what it costs: Linux's own correctness is in the trusted base, as it is for a container; and copying to or from tenant memory costs a software page-table walk where the other host pays nothing ([Memory](virtualizing-ostd/memory.md#copies) has the measurement).
 
 ## What has been built
 
-A prototype of the central mechanisms, not the endovisor. On a Linux 6.12 with the gate patch, a module carrying a minimal vOSTD runs the Asterinas tree's 100-line example kernel **with its source byte-for-byte unchanged**: the kernel builds a tenant address space, runs a user program in it, services its `write` and `exit` system calls, and prints *Hello, world*. That exercises the gate, carriers and the root carrier, kernelet stacks, the model and the cache, and tenant copies by walking the model. A second small kernel on the same prototype shows demand paging through a real miss in the model, a tenant exception taken from Linux's signal queue, and **eviction**: a kernel that spins forever in kernel mode, which Linux alone could never kill, is removed and its sandbox reclaimed. A third, on the same Linux booted so that it does not preempt kernel code, shows a busy kernelet being made to share its processor and resuming with its computation intact. Earlier experiments established the shared-text loading scheme, the cost of the gate, fault recovery by die notifier, and the processor's refusal of direct tenant access. The [prototype page](prototype.md) says exactly what each run showed and what remains unverified: most importantly the device models, the multi-instance loader and the stack check, none of which has been built.
+A prototype of the central mechanisms, not the endovisor. On a Linux 6.12 with the gate patch, a module carrying a minimal vOSTD runs the Asterinas tree's 100-line example kernel **with its source byte-for-byte unchanged**: the kernel builds a tenant address space, runs a user program in it, services its `write` and `exit` system calls, and prints *Hello, world*. That exercises the gate, carriers and the root carrier, kernelet stacks, the model and the cache, and tenant copies by walking the model. A second small kernel on the same prototype shows demand paging through a real miss in the model, a tenant exception taken from Linux's signal queue, and **eviction**: a kernel that spins forever in kernel mode, which Linux alone could never kill, is removed and its sandbox reclaimed. A third, on the same Linux booted so that it does not preempt kernel code, shows a busy kernelet being made to share its processor and resuming with its computation intact. Those three ran on an earlier form of the design, with a Linux task per kernelet task; the [second-level scheduler](virtualizing-ostd/scheduling.md) is designed and its prototype is being built. Earlier experiments established the shared-text loading scheme, the cost of the gate, fault recovery by die notifier, and the processor's refusal of direct tenant access. The [prototype page](prototype.md) says exactly what each run showed and what remains unverified: most importantly the device models, the multi-instance loader and the stack check, none of which has been built.
 
 ## How to read the labels
 
@@ -129,7 +131,8 @@ The design, in the order of the book's main [Design](../design/index.md) chapter
 - [The kernelet API: service half](kernelet-api-service.md): the twenty-one services, and what each becomes on Linux.
 - [Virtualizing OSTD](virtualizing-ostd/index.md): the map, and then the mechanisms.
   - [Memory](virtualizing-ostd/memory.md)
-  - [Tasks, scheduling, and CPUs](virtualizing-ostd/tasks.md)
+  - [Tasks, virtual CPUs, and carriers](virtualizing-ostd/tasks.md)
+  - [Scheduling](virtualizing-ostd/scheduling.md)
   - [Interrupts and time](virtualizing-ostd/interrupts-and-time.md)
   - [User mode](virtualizing-ostd/user-mode.md)
   - [Devices](virtualizing-ostd/devices.md)

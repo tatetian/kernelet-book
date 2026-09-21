@@ -4,9 +4,9 @@
 
 ## Identity
 
-A kernelet is named by a **kernelet identifier**: a slot number and a generation that is advanced every time the slot is reused. The pair never repeats, so a stale identifier held anywhere in the endovisor cannot come to name a later kernelet. Every table in the endovisor stores identifiers, task names and physical addresses; none stores a pointer into a kernelet.
+A kernelet is named by a **kernelet identifier**: a slot number and a generation that is advanced every time the slot is reused. The pair never repeats, so a stale identifier held anywhere in the endovisor cannot come to name a later kernelet. Every table in the endovisor stores identifiers, virtual CPU numbers and physical addresses; none stores a pointer into a kernelet.
 
-A **task name** is an index and a generation in the same way, so a late wake-up aimed at a task that has exited fails cleanly. A machine holds at most 4,096 kernelets (*chosen*), a kernelet at most 64 seats, and a kernelet's task count is bounded by its configuration, because each task costs Linux a task structure and two stacks.
+The endovisor has no names for a kernelet's tasks, because it never sees them: what it numbers are the kernelet's **virtual CPUs**. A machine holds at most 4,096 kernelets (*chosen*) and a kernelet at most 64 virtual CPUs. A kernelet's task count is bounded by its configuration all the same, because each task costs Linux the memory of a kernelet stack.
 
 ## Configuration
 
@@ -15,11 +15,11 @@ Given at create, completed by attaching devices before start, and fixed from sta
 | field | meaning |
 |---|---|
 | kind | which registered image to instantiate |
-| seats | the number of virtual CPUs, 1 to 64 |
+| virtual CPUs | their number, 1 to 64; each is one [carrier](virtualizing-ostd/tasks.md#carriers) |
 | initial and maximum grains | memory at start, and the ceiling `grains_request` may reach, in units of 2 MiB |
-| maximum tasks | the bound on carriers |
+| maximum tasks | the bound on kernelet stacks that `kstack_alloc` will grant |
 | command line | passed to the kernel proper |
-| devices | each with a kind, a register-file size, a virtual interrupt line and the seat it is bound to |
+| devices | each with a kind, a register-file size, a virtual interrupt line and the virtual CPU it is bound to |
 | policy | the oops budget, the log rate in bytes per second, and the limit on channel connections |
 
 Processor limits are *not* in the configuration. They belong to the sandbox's Linux control group, which the runtime sets up, because that is where Linux enforces them.
@@ -68,9 +68,9 @@ A kernelet moves through six states, each transition a single compare-and-swap s
 </figure>
 
 - **create** checks the configuration, reserves a slot and an identifier, and builds the device table. It allocates nothing for the kernelet itself, because everything a sandbox costs must be charged to its control group, and no member of that group exists until the sandbox file is executed.
-- **start** happens inside the [program loader](virtualizing-ostd/tasks.md#root), on the process that becomes the root carrier: load the [instance](builds-and-images.md), build the shared pages, make the initial grant, start the device threads, and queue the boot task and one suspended worker per seat.
-- **grant** adds grains, zeroed, recorded in the owner array and then published in the grant table. The kernelet asks with `grains_request`, which is answered at once: granted up to the ceiling, refused beyond it. The runtime can raise the ceiling or push memory with `KERNELET_GRANT`, and a push is announced to the kernelet as a job. Memory only grows while a kernelet lives.
-- **raise an interrupt** is one atomic operation and a wakeup, legal from any Linux context.
+- **start** happens inside the [program loader](virtualizing-ostd/tasks.md#root), on the process that becomes the root carrier: load the [instance](builds-and-images.md), build the shared pages, make the initial grant, and leave the rest to the root carrier, which clones one carrier per virtual CPU and starts the device threads. The carrier of virtual CPU 0 enters the image; the others wait for `vcpu_boot`.
+- **grant** adds grains, zeroed, recorded in the owner array and then published in the grant table. The kernelet asks with `grains_request`, which is answered at once: granted up to the ceiling, refused beyond it. The runtime can raise the ceiling or push memory with `KERNELET_GRANT`, and a push needs no announcement: it appears in the info page's count of runs, which vOSTD's allocator reads before it asks for more. Memory only grows while a kernelet lives.
+- **raise an interrupt** is one atomic operation and a kick of the virtual CPU the line is bound to, legal from any Linux context.
 - **kill** marks the kernelet dying and returns at once; [stopping the carriers](faults-and-reclamation.md) is asynchronous.
 - **wait** reports the **exit status**: exited with a code, panicked with a message, or killed with a reason.
 - **destroy** releases everything, in the [fixed order](faults-and-reclamation.md#destroy) that the book calls the *drain list*: one step for every record below.
@@ -82,9 +82,10 @@ The list matters because destroy must account for every entry, and because a str
 - identity, state, and a count of operations in progress (destroy waits for it to reach zero);
 - the kind, the configuration, the instance's base address and its private pages;
 - the grant: each run's physical base, length and Linux page handle; the metadata region;
-- the registered models (tenant page-table roots), each with its file object and its reader-writer lock;
-- the carriers: for each, the Linux task, the lifeline, the kernelet stack and its limit, the depth, the seat held, the model it is bound to, the pending exception;
-- the seats: holder, waiters, job queue, timer, tick count;
+- the registered models (tenant page-table roots), each with its file object, its Linux address space and its reader-writer lock;
+- the carriers, one per virtual CPU: for each, the Linux task, the lifeline, the service-call depth, the saved stack pointers, Linux's preemption count as it was on entry, the activated model, the pending exception, the strike count of the [grace](virtualizing-ostd/scheduling.md#cooperative);
+- the virtual CPUs' shared records and their timers;
+- the kernelet stacks handed out by `kstack_alloc`;
 - the devices: model state, inbox, device thread, the Linux file behind it;
 - the channel connections that name this kernelet;
 - the log ring and the statistics;
@@ -94,6 +95,6 @@ Two tables are machine-wide: the **slot table**, from slot to kernelet and gener
 
 ## What this page decides
 
-- **Every endovisor table names kernelets and tasks by generation-stamped identifiers, never by pointer**, as on the other host, so that reuse cannot alias.
+- **Every endovisor table names kernelets by generation-stamped identifiers, never by pointer**, as on the other host, so that reuse cannot alias.
 - **Memory is granted at start, not at create** (register D106), so that it is charged to the sandbox's control group from the first page.
 - **Processor limits are the control group's, not the configuration's** (register D107). The Asterinas host needs its own throttle because its scheduler has no groups; Linux's has.

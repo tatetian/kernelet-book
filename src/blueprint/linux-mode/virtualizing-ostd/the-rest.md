@@ -4,23 +4,23 @@
 
 ## A kernelet is entered, not booted
 
-There is no firmware, no boot loader and no processor bring-up. The endovisor [loads the image](../builds-and-images.md), prepares the shared pages, and asks the root carrier for the first carrier ([Tasks](tasks.md#root)). That carrier's kernelet task is the **boot task**, and its first act is to call the image's entry point, `_kernelet_entry(services, boot_args)`, on a fresh kernelet stack.
+There is no firmware, no boot loader and no processor bring-up. The endovisor [loads the image](../builds-and-images.md), prepares the shared pages, and the root carrier clones the carriers ([Tasks](tasks.md#root)). The carrier of virtual CPU 0 calls the image's entry point, `_kernelet_entry(services, boot_args)`, on a **boot stack**: a kernelet stack the endovisor allocates for each virtual CPU, which plays the part a processor's boot stack plays on a machine.
 
 vOSTD's initialization is OSTD's with everything a machine needs removed. In order, it:
 
 1. stores the service table pointer and reads the **boot arguments**, a read-only page holding the kernelet's identity, its number of virtual CPUs, the direct-map base, the locations of the other shared pages, the device list and the kernel command line;
 2. parses the command line and initializes logging;
 3. reads the grant table and hands the initial runs to its frame allocator;
-4. sets up the per-seat copies of its per-CPU data and its task table;
-5. releases the workers with `task_unpark`; the endovisor created them suspended, and told the kernelet their names in the boot arguments, so that no interrupt could be delivered before step 4;
+4. sets up the per-virtual-CPU copies of its per-CPU data;
+5. lowers virtual CPU 0's `masked` depth, which the endovisor set to 1 before entry so that no [virtual interrupt](interrupts-and-time.md) could be delivered before step 4;
 6. runs the image's initializers, which is how the kernel proper's components register themselves;
 7. calls the kernel proper's `main`.
 
 **Boot information.** `boot::boot_info()` returns a record synthesized from the boot arguments: a boot-loader name of `"kernelet"`, the command line, and one usable memory region per initial run, so that the kernel proper's idea of total memory is its initial grant. There is no ACPI table, no framebuffer and no initial RAM disk; an initial file system arrives as a block device.
 
-**Secondary processors.** On a machine, OSTD starts the other processors and runs a registered entry function on each. vOSTD spawns one task per additional virtual CPU instead, each restricted to that virtual CPU's [seat](tasks.md#seats), which runs the entry function and exits. They run concurrently with `main`, as processors do.
+**Secondary processors.** On a machine, OSTD starts the other processors and runs a registered entry function on each. vOSTD does the same with the service `vcpu_boot(i)` in place of the processor's start-up sequence: the waiting carrier of virtual CPU *i* enters the image at the entry table's `vcpu_entry`, on its own boot stack, runs the entry function, and joins the scheduler. The virtual CPUs run concurrently with `main`, as processors do.
 
-**When `main` returns.** OSTD's start-up code calls `Task::yield_now()` after `main`, from a context that is not itself a task, and on a machine that call never returns while any task exists. vOSTD keeps that meaning: from the boot context, `yield_now` gives up the seat and sleeps until the kernelet has no tasks left. The prototype found this the hard way ([findings](../prototype.md#findings)).
+**When `main` returns.** OSTD's start-up code calls `Task::yield_now()` after `main`, from a context that is not itself a task, and on a machine that call never returns: the scheduler switches to the first task and the boot context is left behind for good. It is the same code here, and the boot stack is simply not used again. A virtual CPU with nothing to run is idled as the kernel proper idles a processor, by a task of its own that calls OSTD's `halt_cpu()`; in vOSTD that function is the service `vcpu_idle` ([Interrupts and time](interrupts-and-time.md)).
 
 ## Power
 
@@ -51,4 +51,4 @@ A kernelet runs in kernel mode, so nothing in hardware stops its code from execu
 ## What this page decides
 
 - **A kernelet's log goes to a per-sandbox ring, rate-limited, not to Linux's log** (register D103). The alternative is simpler and lets any tenant write to the operator's console.
-- **`yield_now` from the boot context waits for the kernelet's last task** (register D104), which is what the call means on a machine.
+- **Virtual CPUs start and idle as processors do, through `vcpu_boot` and `vcpu_idle`** (register D116). With OSTD's own task layer in the build, `yield_now` from the boot context needs no special meaning, and register D104, which gave it one, is withdrawn.

@@ -6,14 +6,15 @@
 
 The **endovisor** is a loadable Linux kernel module, `kernelet.ko`, written in C. It is trusted exactly as the rest of Linux is. It is *endo-* because it lives inside the host kernel, beside the kernelets it manages and at their privilege level, where a hypervisor would sit beneath its guests. The relationship it has with user space is the one KVM has with a virtual machine monitor, with one difference: the device models, which for KVM live in the monitor, live in the endovisor, a function call away from the kernelets they serve.
 
-It has eight parts, and each is specified on the page that needs it.
+It has nine parts, and each is specified on the page that needs it.
 
 | part | what it does | specified on |
 |---|---|---|
 | **loader** | registers kinds; maps an instance's shared text and private data; relocates | [Builds and images](builds-and-images.md) |
-| **program loader and root carrier** | claims the sandbox file when it is executed; clones every carrier | [Tasks](virtualizing-ostd/tasks.md#root) |
-| **gate operations** | the syscall hook and the resume hook; the stack switch; `user_run` | [User mode](virtualizing-ostd/user-mode.md) |
-| **service half** | the twenty-one services over Linux, with the depth and seat bookkeeping | [service half](kernelet-api-service.md) |
+| **program loader and root carrier** | claims the sandbox file when it is executed; clones one carrier per virtual CPU | [Tasks](virtualizing-ostd/tasks.md#root) |
+| **gate operations** | the syscall hook and the resume hook; the stack switch; `user_run` and the adoption of address spaces | [User mode](virtualizing-ostd/user-mode.md) |
+| **virtual CPUs** | the watch timer; delivery of virtual interrupts; the yield stubs and the two-strike grace | [Scheduling](virtualizing-ostd/scheduling.md), [Tasks](virtualizing-ostd/tasks.md#watch) |
+| **service half** | the twenty-one services over Linux, with the depth and preemption-count bookkeeping | [service half](kernelet-api-service.md) |
 | **memory** | grains, the owner array, the fault handler that fills Linux's page tables from the model | [Memory](virtualizing-ostd/memory.md) |
 | **containment** | the dying mark, eviction, the die notifier, the exit stub, destroy | [Faults](faults-and-reclamation.md) |
 | **device models and the channel switch** | virtio register files, device threads, vsock | [Devices](virtualizing-ostd/devices.md), [Channels](channels.md) |
@@ -25,11 +26,14 @@ This is the whole ledger. Everything else the endovisor uses is already exported
 
 **A patch to the generic entry layer: the gate.** A pointer in the task structure, one bit in the syscall-work mask, a call after seccomp in `syscall_trace_enter()`, and a call at the top of `exit_to_user_mode_loop()`. The generic entry layer is shared by x86-64, RISC-V, s390 and LoongArch, so the gate is not an x86 patch.
 
-**Four exports.**
+**One helper function: `kernelet_switch_mm()`.** It replaces the calling task's address space with another that the caller holds a reference on, and returns the old one, for a task that is *not* a kernel thread. A carrier uses it to [adopt the Linux address space](virtualizing-ostd/user-mode.md#adopt) of the tenant process it is about to run. Linux has the operation twice already, for a kernel thread that borrows a user address space ([`kthread_use_mm()`](https://elixir.bootlin.com/linux/v6.12/source/kernel/kthread.c#L1439)) and for `exec` ([`exec_mmap()`](https://elixir.bootlin.com/linux/v6.12/source/fs/exec.c#L958)), and the helper is the common part of the two: take the task lock, switch with interrupts off through [`switch_mm_irqs_off()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/tlb.c#L498), which is not exported, and keep the per-address-space bookkeeping (the lazy-TLB reference, the concurrency ids of restartable sequences, the multi-generation LRU's list of address spaces) in step as those two do. It cannot be written in a module because everything it touches is private to the core kernel. **[unverified]**: not yet built; *estimated* at forty lines.
+
+**Five exports.**
 
 | symbol | why | what happens without it |
 |---|---|---|
-| `kernel_clone` | create a carrier: a task that starts in the endovisor and can enter user mode | no kernelet task can run a tenant |
+| `kernel_clone` | create a carrier: a task that starts in the endovisor and can enter user mode | no virtual CPU can run a tenant |
+| `mm_alloc` | create the empty Linux address space of a [model](virtualizing-ostd/memory.md#cache) | every tenant thread needs a Linux task of its own, and the kernelet's scheduler has nothing to schedule |
 | `set_memory_rox` | make an instance's text executable | no kernelet can run at all |
 | `set_memory_rw` | undo the side effect of the above on the direct map when a kind is unregistered and its text frames are freed | an unregistered kind leaks read-only frames into Linux's allocator |
 | `set_memory_ro` | protect an instance's relocated tables | hardening only |
@@ -71,13 +75,13 @@ EXPORT_SYMBOL_GPL(set_memory_ro);
 
 **One build configuration still open.** A Linux built with type-checked indirect branches ([assumption A19](builds-and-images.md#audit)).
 
-**Three interactions with the rest of Linux that an operator should know.** A host security module sees each carrier create a shared, writable, executable mapping of an endovisor file, and its policy must allow that to the sandbox's user. Live patching decides that a task is safe to patch by unwinding its stack; a carrier that is preempted while on its kernelet stack cannot be unwound, so a patch transition waits until that carrier next runs a service or returns to user mode, and waits indefinitely on a runaway kernelet until it is killed. **[unverified]**: neither has been tried. And suspending the machine needs every task to stop at a point Linux considers safe. The carriers' sleeps are marked freezable as well as killable, which covers a carrier that is waiting, and the service prologue and the resume hook give Linux its chance for a carrier that is running; a kernelet that stays in its own code for longer than Linux's freezing timeout, twenty seconds by default, makes that suspend attempt fail.
+**Three interactions with the rest of Linux that an operator should know.** A host security module sees a carrier create, for each tenant process, a shared, writable, executable mapping of an endovisor file, and its policy must allow that to the sandbox's user. Live patching decides that a task is safe to patch by unwinding its stack; a carrier that is preempted while on its kernelet stack cannot be unwound, so a patch transition waits until that carrier next runs a service or returns to user mode, and waits indefinitely on a runaway kernelet until it is killed. **[unverified]**: neither has been tried. And suspending the machine needs every task to stop at a point Linux considers safe. The carriers' sleeps are marked freezable as well as killable, which covers a carrier that is waiting, and the service prologue and the resume hook give Linux its chance for a carrier that is running; a kernelet that stays in its own code for longer than Linux's freezing timeout, twenty seconds by default, makes that suspend attempt fail.
 
-**Everything a sandbox costs the host is charged to its control group**, by one of two routes, and the list is the same list that [destroy](faults-and-reclamation.md#destroy) walks: the grant, the instance's private pages, its shared pages and metadata region, carrier records, kernelet stacks, log ring, device inboxes and channel queues are allocated by a member of the group with Linux's accounting flag; carriers and device threads are members, so their processor time, their Linux task structures and stacks, their page tables and their number (`pids.max`) are the group's. The queue of spawn requests is bounded by the sandbox's task limit.
+**Everything a sandbox costs the host is charged to its control group**, by one of two routes, and the list is the same list that [destroy](faults-and-reclamation.md#destroy) walks: the grant, the instance's private pages, its shared pages and metadata region, carrier records, kernelet stacks, log ring, device inboxes and channel queues are allocated by a member of the group with Linux's accounting flag; carriers and device threads are members, so their processor time, their Linux task structures and stacks, the page tables of the address spaces they fill and their number (`pids.max`) are the group's. The number of kernelet stacks is bounded by the sandbox's task limit, and the number of Linux address spaces by the number of models, each of which costs the kernelet a frame of its own grant.
 
-What the design does *not* ask for is as important to an operator: no boot parameter, no particular preemption model (where Linux does not preempt kernel code, the endovisor [reschedules kernelet code itself](virtualizing-ostd/tasks.md)), no virtualization support in the kernel, no change to any Linux subsystem's behavior for tasks that are not carriers. A Linux with the patch applied and the module not loaded behaves as it did.
+What the design does *not* ask for is as important to an operator: no boot parameter, no particular preemption model (where Linux does not preempt kernel code, the endovisor [reschedules kernelet code itself](virtualizing-ostd/tasks.md#yield)), no scheduler class, hook or BPF program in Linux's scheduler ([Scheduling](virtualizing-ostd/scheduling.md) says why not), no virtualization support in the kernel, no change to any Linux subsystem's behavior for tasks that are not carriers. A Linux with the patch applied and the module not loaded behaves as it did.
 
-**Would the patch be accepted upstream?** Not in this form, and the design does not depend on it. A version with a chance would present the gate as the in-kernel generalization of Syscall User Dispatch, behind a configuration option, with an in-tree user. The export of `kernel_clone` would be the contentious part, and the fallback is a narrower helper that creates only "a child of the current task that starts in a given function", which is what the endovisor uses it for.
+**Would the patch be accepted upstream?** Not in this form, and the design does not depend on it. A version with a chance would present the gate as the in-kernel generalization of Syscall User Dispatch, behind a configuration option, with an in-tree user. The export of `kernel_clone` would be the contentious part, and the fallback is a narrower helper that creates only "a child of the current task that starts in a given function", which is what the endovisor uses it for. `kernelet_switch_mm()` would be the second: letting a user task change address spaces outside `exec` is something Linux's memory-management maintainers have so far allowed only to kernel threads. **[unverified]**: a judgment, not tested on a mailing list.
 
 ## The device node {#abi}
 
@@ -86,9 +90,9 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 | operation | effect |
 |---|---|
 | `KERNELET_REGISTER_KIND` | hand over an image file; the endovisor checks it and keeps its text for sharing |
-| `KERNELET_CREATE` | create a sandbox of a kind, with its seats, memory limits, policy and command line; returns the sandbox descriptor |
+| `KERNELET_CREATE` | create a sandbox of a kind, with its number of virtual CPUs, memory limits, policy and command line; returns the sandbox descriptor |
 | `KERNELET_EXEC_FD` | returns the sandbox's **exec descriptor**, used once, to start it |
-| `KERNELET_GRANT` | raise the sandbox's memory ceiling, or push grains to it; the kernelet learns of pushed memory by a `JOB_GRANT` |
+| `KERNELET_GRANT` | raise the sandbox's memory ceiling, or push grains to it; the kernelet finds pushed memory in its grant table |
 | `KERNELET_ATTACH` | attach a virtual device, passing the descriptor of the file, block device or TAP interface behind it |
 | `KERNELET_ENDPOINT` | obtain a stream descriptor for the sandbox's log or console |
 | `KERNELET_CONNECT`, `KERNELET_LISTEN` | the host's end of a [channel](channels.md) |
@@ -104,9 +108,9 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 
 1. The runtime registers the kind (once per machine), creates the sandbox and attaches its devices.
 2. The runtime forks a child, which enters the sandbox's control group, drops to the sandbox's credentials, installs the [seccomp filter](virtualizing-ostd/user-mode.md), and executes the sandbox file.
-3. The endovisor loads the instance, grants its initial memory (now charged to that control group), and makes the child the root carrier, which clones the boot task's carrier and the workers' carriers.
-4. vOSTD initializes; the kernel proper boots, mounts its root file system from the virtio disk, and starts the tenant's `init`, whose kernelet task's first `user_run` creates the first tenant address space.
-5. The sandbox runs. Every tenant thread is a carrier; every system call goes through the gate to the kernelet; every page of tenant memory enters Linux's page tables through the endovisor's fault handler, checked against the grant.
+3. The endovisor loads the instance, grants its initial memory (now charged to that control group), and makes the child the root carrier, which clones one carrier per virtual CPU.
+4. vOSTD initializes on virtual CPU 0 and starts the others; the kernel proper injects its scheduler, boots, mounts its root file system from the virtio disk, and starts the tenant's `init`, whose kernelet task's first `user_run` creates the first tenant address space.
+5. The sandbox runs. The kernelet's scheduler decides which of its tasks run on its virtual CPUs, and Linux decides when the virtual CPUs run; every system call goes through the gate to the kernelet; every page of tenant memory enters Linux's page tables through the endovisor's fault handler, checked against the grant.
 6. The kernel proper powers off, or the runtime kills the sandbox. The endovisor marks it dying, stops every carrier, reports the exit, and on `KERNELET_DESTROY` returns the memory.
 
 ## Size
@@ -115,5 +119,5 @@ The endovisor offers user space one character device, `/dev/kernelet`, root-only
 
 ## What this page decides
 
-- **The endovisor is one C module, and Linux mode requires a patched Linux** (register D79, kept, and D80, revised): the gate and four exports. An unpatched Linux is ruled out by function, not speed: without the gate, a tenant's second process makes its system calls to Linux.
+- **The endovisor is one C module, and Linux mode requires a patched Linux** (register D79, kept, and D80, revised; D120): the gate, one helper and five exports. An unpatched Linux is ruled out by function, not speed: without the gate, a tenant's second process makes its system calls to Linux.
 - **A sandbox starts by `exec` of a sandbox file and is owned by a descriptor** (register D105). The alternative, a start `ioctl` that turns the calling thread into the root carrier, leaves the runtime's own address space in the root carrier, to be copied into every clone.
