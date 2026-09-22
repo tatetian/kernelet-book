@@ -11,7 +11,7 @@ vOSTD's initialization is OSTD's with everything a machine needs removed. In ord
 1. stores the service table pointer and reads the **boot arguments**, a read-only page whose full contents the [service half](../kernelet-api-service.md#pages) lists: the kernelet's identity, its number of virtual CPUs, the direct-map base, the locations of the other shared pages, the device list, the kernel command line, and the numbers by which vOSTD finds its way around Linux;
 2. parses the command line and initializes logging;
 3. reads the grant table and hands the initial runs to its frame allocator;
-4. sets up the per-virtual-CPU copies of its per-CPU data;
+4. finds its per-CPU data, which the endovisor has already laid out: one copy of the image's `.cpu_local` section per virtual CPU, each a bitwise copy of the section's initial image, as OSTD requires, at the base the virtual CPU's record names;
 5. turns virtual interrupts on (clears the record's `irq_off`, which the endovisor set before entry) so that no [virtual interrupt](interrupts-and-time.md) could be delivered before step 4;
 6. runs the image's initializers, which is how the kernel proper's components register themselves;
 7. calls the kernel proper's `main`.
@@ -43,7 +43,7 @@ A kernelet runs in kernel mode, so nothing in hardware stops its code from execu
 | CPU feature queries | identical: the `cpuid` instruction, read directly |
 | timestamp counter | identical: `rdtsc`, read directly |
 | port I/O, the interrupt controller, the IOMMU, PCI, ACPI | absent: a use does not compile |
-| enabling and disabling interrupts | virtualized: the interrupts-off guard sets and restores the virtual CPU's `irq_off` ([Scheduling](scheduling.md#upcall)); the hardware flag is never touched |
+| enabling and disabling interrupts | virtualized: the architecture primitives behind the interrupts-off guard, the context switch and `halt_cpu` set and restore the virtual CPU's `irq_off` ([Scheduling](scheduling.md#upcall)); the hardware flag is never touched |
 | sending inter-processor interrupts | virtualized as `vcpu_kick`; remote TLB flushes go through [`tlb_shootdown`](memory.md#cache) |
 | FS and GS base of a tenant thread | virtualized: OSTD's `FsBase` and `GsBase` write vOSTD's per-task context, which `user_run` applies ([User mode](user-mode.md#fpu)) |
 | floating-point and vector state | never used by kernelet code; a tenant thread's is saved and loaded by the kernel proper through `FpuContext`, which is two services ([User mode](user-mode.md#fpu)) |

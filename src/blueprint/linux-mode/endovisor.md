@@ -69,6 +69,10 @@ EXPORT_SYMBOL_GPL(kernel_clone);
 EXPORT_SYMBOL_GPL(set_memory_rox);
 EXPORT_SYMBOL_GPL(set_memory_rw);
 EXPORT_SYMBOL_GPL(set_memory_ro);
+
+/* kernel/fork.c, added by the second-level scheduler */
+EXPORT_SYMBOL_GPL(mm_alloc);
+struct mm_struct *kernelet_switch_mm(struct mm_struct *new);   /* 29 lines: see the helper above */
 ```
 
 **Host settings, which the runtime checks.** The machine must not be set to panic, or to capture a crash dump, on an oops (`kernel.panic_on_oops` off; [why](faults-and-reclamation.md#fault)). Linux's per-fault log lines must be off (`debug.exception-trace`), or a tenant could write to the operator's log ([why](virtualizing-ostd/user-mode.md#exceptions)). And `fs.suid_dumpable` must be 0, its default ([why](#abi)). The kernel must not be a real-time one, and processors that carry latency-critical host work should be kept apart from sandboxes by `cpuset`, because a kernelet in a critical section may hold a processor for up to 2 ms ([why](virtualizing-ostd/scheduling.md#cooperative)). High-resolution timers must be active, or the watch timer's period stretches to the tick's. And a host built with entry-path debugging (`DEBUG_ENTRY`) prints one warning the first time Linux preempts a carrier on a kernelet stack, which it does not recognize as a task's; the warning is harmless and fires once.

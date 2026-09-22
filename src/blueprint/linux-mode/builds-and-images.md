@@ -84,7 +84,7 @@ A kind is registered once: the runtime hands the endovisor the image file, and t
 
 Creating an instance is then four steps.
 
-1. **Allocate the data.** Pages from Linux's allocator, sized by the template plus one per-CPU copy per virtual CPU; copy the template in, zero the rest.
+1. **Allocate the data.** Pages from Linux's allocator, sized by the template plus one per-CPU copy per virtual CPU; copy the template in, copy the per-CPU section's initial image into each per-CPU slot (OSTD requires each copy to start as a bitwise copy of the section, not zeroed), and zero the rest.
 2. **Build the range.** One call to [`vmap()`](https://elixir.bootlin.com/linux/v6.12/source/mm/vmalloc.c#L3413) with the kind's text pages followed by this instance's data pages. Linux returns one contiguous kernel virtual range: the instance's base.
 3. **Make the text executable.** `vmap()` always returns non-executable memory. The endovisor calls [`set_memory_rox()`](https://elixir.bootlin.com/linux/v6.12/source/arch/x86/mm/pat/set_memory.c#L2118) on the text part of this range, which makes it read-and-execute and never writable-and-executable.
 4. **Relocate.** Add the base to each of the few hundred entries in the instance's relocated tables, and mark that part read-only.
@@ -116,6 +116,8 @@ The safety of the design rests on properties of the image file, so the build che
 4. The exception table's entries are self-relative.
 5. Every crate in the image was compiled with `unsafe` forbidden, except the crates on a named allowlist that is checked in beside the source and changes only by review: vOSTD itself, the Rust core and allocation libraries, the unwinder, and each third-party crate that contains `unsafe`, by name and version. The build computes the set of crates that actually contain `unsafe` and fails if it differs from the list in either direction. The trusted base is therefore a reviewed list, not "whatever the dependency graph pulled in"; what the check cannot see is `unsafe` that an allowlisted crate's macro expands into another crate.
 6. The source hash in the entry table matches the vOSTD this endovisor was built to serve.
+7. No instruction in the image touches the x87, SSE or AVX registers (the kernelet target is compiled without them, and the audit disassembles to confirm), because a tenant thread's floating-point state is live in the processor while kernelet code runs on Linux ([User mode](virtualizing-ostd/user-mode.md#fpu)).
+8. No function's stack frame exceeds 4 KiB, from the frame sizes the compiler emits on request, because the [entry check](faults-and-reclamation.md#stack) is made before a frame is allocated and the reserve behind it is 16 KiB.
 
 One property is still open. A Linux kernel built with **type-checked indirect branches** (kCFI) verifies, at every indirect call, a hash placed before the target function. The endovisor calls into the image through the entry table, so the image's entry functions would need hashes that Linux's compiler agrees with. The compiler side is *measured* to work (the markers can be emitted), and Linux already requires its C and Rust compilers to agree on these hashes. Whether a separately built image satisfies a kCFI kernel is **[unverified]** (assumption A19). The option needs a kernel built with Clang, which x86-64 distributions do not do today, and can be disabled at boot.
 
