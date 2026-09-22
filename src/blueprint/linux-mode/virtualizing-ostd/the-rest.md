@@ -8,7 +8,7 @@ There is no firmware, no boot loader and no processor bring-up. The endovisor [l
 
 vOSTD's initialization is OSTD's with everything a machine needs removed. In order, it:
 
-1. stores the service table pointer and reads the **boot arguments**, a read-only page holding the kernelet's identity, its number of virtual CPUs, the direct-map base, the locations of the other shared pages, the device list and the kernel command line;
+1. stores the service table pointer and reads the **boot arguments**, a read-only page whose full contents the [service half](../kernelet-api-service.md#pages) lists: the kernelet's identity, its number of virtual CPUs, the direct-map base, the locations of the other shared pages, the device list, the kernel command line, and the numbers by which vOSTD finds its way around Linux;
 2. parses the command line and initializes logging;
 3. reads the grant table and hands the initial runs to its frame allocator;
 4. sets up the per-virtual-CPU copies of its per-CPU data;
