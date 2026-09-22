@@ -90,7 +90,7 @@ The last row is the hard one, and it is where Linux differs most from a host bui
 <text x="782" y="102" fill="#C9CCE0" text-anchor="middle" font-size="9">5 SIGKILL ends the task</text>
 <rect x="20" y="150" width="860" height="80" rx="8" fill="rgba(255,255,255,.025)" stroke="rgba(255,255,255,.12)"/>
 <text x="36" y="170" fill="#9A9DB0" font-size="9" letter-spacing="1.4">WHY IT IS SAFE</text>
-<text x="36" y="190" fill="#C9CCE0" font-size="9.5">in kernelet text at depth 0, a carrier holds nothing of Linux's &#183; kernelet code cannot disable interrupts, so the timer always lands</text>
+<text x="36" y="190" fill="#C9CCE0" font-size="9.5">at depth 0 in kernelet text a carrier holds nothing of Linux's but one count, which the stub gives back &#183; it cannot mask interrupts</text>
 <text x="36" y="208" fill="#C9CCE0" font-size="9.5">the kernelet is already dying, so its own half-finished state does not matter &#183; no kernelet code runs afterwards</text>
 </g>
 </svg>
@@ -156,9 +156,9 @@ Destroy runs in the endovisor, on the runtime's request, after the kernelet has 
 6. **The image.** Unmap the instance's range, which removes this instance's mapping of the kind's shared text and leaves the text itself alone, since sibling instances are executing it. Drop the kind's reference. Free the instance's data, shared pages and metadata region ([Builds and images](builds-and-images.md)). The shared text's frames get their write permission back in Linux's direct map, with `set_memory_rw()`, only when the *kind* is unregistered and no instance is left.
 7. **Memory.** For each run: zero it, clear its owner-array entries, then free its pages to Linux, which uncharges them from the sandbox's control group. Zeroing at the grant protects the next tenant; zeroing here as well is for Linux, which does not clear memory it hands to its own kernel allocations.
 8. **Records.** Free the log ring once the runtime has closed its end, the statistics, and the carrier and virtual CPU records; the exit status stays readable through the sandbox descriptor until that is closed.
-9. **Identity.** Retire the kernelet's slot and advance its generation, so that a stale identifier can never name a new kernelet.
+9. **Identity.** Retire the kernelet's slot and advance its generation, so that a stale identifier can never name a new kernelet; drop the endovisor's own reference on itself for this sandbox.
 
-The claim that the list is complete is *argued*, not checked: it is complete if every structure that can name a kernelet or a frame of its grant appears in it. On Linux those are the carrier and virtual CPU records, the stack pool, the models with their files and Linux address spaces, the instance's pages, shared pages and metadata region, the kind's reference and the endovisor's own per-sandbox reference, the log ring and statistics, the exit status, the device and channel tables, the owner array and the slot table; and step 8 shows that *destroyed* waits for the runtime, since the ring is shared with it.
+The claim that the list is complete is *argued*, not checked: it is complete if every structure that can name a kernelet or a frame of its grant appears in it. On Linux those are the carrier and virtual CPU records, the stack pool, the models with their files and Linux address spaces, the instance's pages, shared pages and metadata region, the kind's reference and the endovisor's own per-sandbox reference (dropped in step 9, as the slot is retired), the log ring and statistics, the exit status, the device and channel tables, the owner array and the slot table; and step 8 shows that *destroyed* waits for the runtime, since the ring is shared with it.
 
 ## What this design does not contain
 
@@ -168,7 +168,7 @@ The claim that the list is complete is *argued*, not checked: it is complete if 
 - **Global memory pressure.** A grant is kernel memory, which Linux's machine-wide out-of-memory killer does not attribute to the carriers. If the operator lets the sum of sandbox limits exceed the machine, the victims will be other processes. Within its own limit, a sandbox that runs out is killed whole.
 - **The machine-wide stall of an oops**, once per kernelet that dies of a fault.
 - **Compaction on a grain request**, which moves other tenants' pages and flushes their translations, rate-limited but not charged ([Memory](virtualizing-ostd/memory.md)); and the run-queue lock traffic of `vcpu_on_spin`, at most a thousand per second per virtual CPU.
-- **Up to 2 ms of latency per preemption** for whoever else wants a processor a sandbox is on, while a kernelet is in a critical section ([Scheduling](virtualizing-ostd/scheduling.md#cooperative)); the same 2 ms defers the sandbox's own `cpu.max` throttling, and Linux carries that deficit into the group's next period.
+- **About 2 ms of latency per preemption** (two watch periods of the sandbox's run time and a delivery) for whoever else wants a processor a sandbox is on, while a kernelet is in a critical section ([Scheduling](virtualizing-ostd/scheduling.md#cooperative)); the same 2 ms defers the sandbox's own `cpu.max` throttling, and Linux carries that deficit into the group's next period.
 - **Two small interrupt-time residues of the scheduler**: the one extra watch-timer firing a processor takes after a carrier leaves it, and a kick's cross-processor call in the window between the notifier's report and its arrival.
 
 ## What a tenant sees
