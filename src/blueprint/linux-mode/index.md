@@ -37,9 +37,9 @@
 <text x="24" y="124" fill="#9A9DB0" font-size="9" letter-spacing="1.4">THE LINUX KERNEL THE OPERATOR ALREADY RUNS</text>
 <rect x="24" y="134" width="386" height="40" rx="6" fill="rgba(255,255,255,.06)" stroke="rgba(255,255,255,.16)"/>
 <text x="217" y="159" fill="#9AA0BE" text-anchor="middle">Linux's own subsystems, unchanged</text>
-<rect x="430" y="134" width="446" height="40" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
-<text x="653" y="152" fill="#00F7FF" text-anchor="middle">the gate: a patch to Linux's entry path</text>
-<text x="653" y="166" fill="#5C93A8" text-anchor="middle" font-size="8.5">a carrier's system calls and exceptions go to its kernelet, never to Linux</text>
+<rect x="490" y="134" width="386" height="40" rx="6" fill="rgba(25,55,255,.22)" stroke="rgba(0,247,255,.5)"/>
+<text x="683" y="152" fill="#00F7FF" text-anchor="middle">the gate: a patch to Linux's entry path</text>
+<text x="683" y="166" fill="#5C93A8" text-anchor="middle" font-size="8.5">a carrier's system calls and faults go to its kernelet, never to Linux</text>
 <path d="M685 70 V132" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
 <text x="694" y="116" fill="#00F7FF" font-size="8.5">system calls, faults</text>
 <rect x="490" y="192" width="386" height="196" rx="10" fill="rgba(0,247,255,.04)" stroke="rgba(0,247,255,.42)"/>
@@ -53,7 +53,7 @@
 <rect x="502" y="324" width="362" height="52" rx="6" fill="rgba(6,10,36,.55)" stroke="rgba(0,247,255,.35)"/>
 <text x="683" y="345" fill="#C9CCE0" text-anchor="middle">image (text shared by every instance) + data</text>
 <text x="683" y="362" fill="#C9CCE0" text-anchor="middle">grant: memory from Linux, charged to the sandbox</text>
-<path d="M653 174 V190" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
+<path d="M683 174 V190" stroke="#00F7FF" stroke-width="1.4" marker-end="url(#ix-ac)"/>
 <rect x="24" y="192" width="386" height="196" rx="10" fill="rgba(25,55,255,.12)" stroke="rgba(0,247,255,.5)"/>
 <text x="36" y="208" fill="#00F7FF" font-size="9" letter-spacing="1.4">ENDOVISOR: ONE LOADABLE MODULE</text>
 <g fill="rgba(6,10,36,.55)" stroke="rgba(0,247,255,.35)">
