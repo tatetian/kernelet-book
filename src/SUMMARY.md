@@ -39,7 +39,7 @@
   - [Zero-copy I/O](blueprint/design/zero-copy-io.md)
   - [The endovisor](blueprint/design/endovisor.md)
   - [The kernelet runtime](blueprint/design/kernelet-runtime.md)
-- [Kernelets in Linux](blueprint/linux-mode/index.md)
+- [Design for Linux](blueprint/linux-mode/index.md)
   - [Background: kernelets in brief](blueprint/linux-mode/kernelets-in-brief.md)
   - [Background: the Linux this chapter needs](blueprint/linux-mode/background.md)
   - [Boundaries and trust](blueprint/linux-mode/principles.md)

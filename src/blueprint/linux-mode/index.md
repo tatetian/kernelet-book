@@ -1,4 +1,4 @@
-# Kernelets in Linux
+# Design for Linux
 
 *The same kernelets, with Linux as the host kernel. An operator keeps the kernel they already run, applies a small patch, loads one module, and selected workloads get a kernel of their own in safe Rust. This chapter is the complete design, written to be read alone. A prototype of its central mechanisms runs a kernel whose source is unchanged from the Asterinas tree, inside a patched Linux 6.12.*
 
