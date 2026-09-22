@@ -11,8 +11,8 @@
 | **A busy kernel on a Linux booted with `preempt=none`** | the watch timer and the yield stub: a kernelet that never volunteers is rescheduled anyway, and resumes intact | *measured on the booted prototype*, [below](#yield) |
 | **The software walk, in a model** | the cost the design adds to every tenant copy, and that the supervisor alias does not earn its risks | *measured in a model*, [below](#walk) |
 | **Earlier mechanism experiments** (in a Linux 6.12 guest) | shared text for many instances; the cost of a gate; Linux's refusal of executable `vmap` memory; SMAP's refusal of direct tenant access; recovery from a kernel-mode fault by die notifier | *measured on the booted prototype of each mechanism*, [below](#earlier) |
-| the [second-level scheduler](virtualizing-ostd/scheduling.md): carriers as virtual CPUs, virtual interrupts and the upcall, the mirrored preemption count and its two-strike bound, address-space adoption, the floating-point services, more than one virtual CPU | nothing yet | **[unverified]**: the prototype's fourth phase, being built |
-| the function-entry stack check, the die notifier on a kernelet's own fault, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one kernelet | nothing | **[unverified]**: designed, not built |
+| **The second-level scheduler**: a 1,100-line kernel with a strict-priority scheduler of its own on two virtual CPUs, against a reference model; the mirror with and without; a sibling control group's share; a kernelet task switch beside Linux's | the policy holds exactly and preempts; zero preemptions inside critical sections; the neighbor's share within 1.2 % whether the sandbox runs 1 or 50 tasks; a task switch of about 1,000 cycles | *measured on the booted prototype*, [below](#sched) |
+| the function-entry stack check, the die notifier on a kernelet's own fault, the vsyscall filter, multi-instance loading of a real image, device models and device threads, channels, the runtime, more than one kernelet, more than two virtual CPUs, `vcpu_on_spin`, the next-expiry hook | nothing | **[unverified]**: designed, not built |
 
 The three booted rows were built on an earlier form of the design, in which every kernelet task had a Linux task of its own as its carrier and a virtual CPU was a lease called a *seat* ([why that lost](alternatives.md)). What they show about the gate, the stack switch, the model and the cache, exceptions, eviction, the lifeline and the yield stub does not depend on that difference; where a log or a table below says *seat* or `task_spawn`, that is why.
 
@@ -225,6 +225,77 @@ smap_test: the cell holds 5a5a5a5a5a5a5a5a at 0x4c70f0
 **Two rejected designs, measured.** A supervisor-only alias of a tenant's page table was built: a bare kernel-mode read through it succeeded where the same read through the tenant's address was fatal, at 0.92 cycles per access against 1.08 for an ordinary kernel address and 38 for Linux's bracketed `get_user`; its cost in TLB entries is what [the model above](#walk) measured later. And one Linux task was made to carry two tenant threads, swapping register file, thread pointer and floating-point state 400,000 times: a switch cost 291 ns more than a serviced call that stays on one thread, 91 ns of it floating-point state. A third figure quoted among the alternatives comes from the same series: code run in kernel mode of a hardware-virtualized guest, on the build host, paid 792 ns (3,002 cycles) for an exit and resume, and its second level of address translation cost nothing measurable while translations were resident and a factor of 1.20 on memory access at a working set too large for the TLB.
 
 The programs and unedited transcripts of these experiments were in the book's notes until this chapter replaced them; they are in the repository's history.
+
+## The second-level scheduler {#sched}
+
+The fourth phase rebuilt the prototype on the architecture of the [Scheduling](virtualizing-ostd/scheduling.md) page and ran four experiments against it, one per property the design promises. Everything below is *measured on the booted prototype*, on the same two-processor Linux 6.12 guest, with the sandbox in a control group of its own.
+
+**What changed underneath.** A carrier now carries a virtual CPU; the endovisor has no `task_spawn`, no seats and no job queue. vOSTD's task layer, scheduler interface, context switch (`switch.S` byte for byte), spin locks, wait queues and preemption guards are OSTD's own at `ab9a4cfdc`, ported verbatim; what was written new is the virtual CPU: the record, the upcall stub, the mirror, `vcpu_idle`, `vcpu_kick`, the kernelet-stack pool, the two floating-point services, and `kernelet_switch_mm()`. The pre-linked image still has zero undefined symbols. Of the three OSTD prerequisites the design names, the prototype implemented the two preemption points and not the next-expiry hook, so an idle virtual CPU wakes at every tick.
+
+**The test kernel.** `sched/`, 1,100 lines of safe Rust with `#![deny(unsafe_code)]`, injects a scheduler of its own through OSTD's `inject_scheduler`: strict priority in three levels, round robin within a level on a five-tick slice, a run queue per virtual CPU, and wake-ups that follow the waker unless the task is pinned. It is deliberately not the FIFO scheduler OSTD ships, so that a policy Linux cannot express is what the trace has to show. The three older kernels, `hello/src/lib.rs` still byte-identical to the tree's, pass unchanged on the new architecture; `make yield`'s checksum is still bit-identical after 3,936 upcalls.
+
+### The policy is obeyed, and it preempts
+
+Two virtual CPUs, six kernel tasks and two tenant threads, three seconds: 1,842 task switches and 49 cross-CPU wake-ups, every one of which the kernelet's own scheduler decided and Linux never saw. The trace is checked by a reference model in user space (`bench/sched-model.py`) that asserts *legality*, not one particular interleaving: a task runs only where it is pinned; never while a more urgent task is runnable on that virtual CPU; never twice in a row while a peer waits; never past its slice plus one tick; and a task woken into a more urgent level takes the processor within a tick and slack. No violation in three consecutive runs.
+
+One rule had to be restated on the way (*found by the prototype*): the slice is exact in the virtual CPU's *own* ticks and elastic in wall clock. A five-tick slice measured seven milliseconds once, because Linux had the carrier off the processor for two of them, and a virtual CPU that is off the processor gets no ticks. That is the honest shape of a second-level guarantee, and the [Scheduling](virtualizing-ostd/scheduling.md) page now says so.
+
+### Cooperative: no preemption inside a critical section
+
+Four kernel tasks, nothing pinned, hammering one spin lock for ten seconds while two competitors in a sibling control group on the same two processors make Linux preempt the carriers constantly. The endovisor counts, exactly, every time Linux switches a carrier out involuntarily while the kernelet's contribution to Linux's preemption count is provably in place.
+
+| | mirror on | mirror off | overstayer, mirror on |
+|---|---:|---:|---:|
+| involuntary deschedules inside a critical section | **0** | **1,467** | **0** |
+| spin-lock acquisitions | 267 M | 270 M | 88 M |
+| forced yields | 0 | 0 | **1,301** |
+| longest deferral of a Linux preemption | — | — | **2,205 µs** |
+| the sibling group's processor time over the run | 10.02 s | 9.97 s | 9.96 s |
+
+A repeat gave 0 against 1,068. The mirror is exactly what makes the difference, and it costs the neighbor nothing. The *overstayer* is a task that holds a preemption guard for 10 ms in a loop: it is forced to yield 1,301 times, no stay exceeds 2.2 ms, and its sandbox's own processor time falls from 9.87 s to 9.12 s, which is what "borrowed, not stolen" has to mean. The count is zero with nothing pinned, so the carriers were preempted and migrated between the two processors throughout, which is the case the first watch-timer rule got wrong. (This run predates the review that made the bound independent of the record; the prototype forces the yield on the second tick that finds a critical section with Linux waiting.)
+
+### Fair: the neighbor's share does not move
+
+The sandbox's group and a sibling with equal weight, both confined to two processors. The sibling runs busy loops; the sandbox runs one processor-bound kernelet task, then fifty at mixed priorities, then fifty plus the overstayer.
+
+| | 1 task | 50 tasks | 50 + overstayer |
+|---|---:|---:|---:|
+| the sibling's share, in processors | **0.988** | **0.998** | **0.987** |
+| runnable tasks of the sandbox Linux ever saw at once | 3 | **3** | **3** |
+| kernelet stacks the pool made | 4 | 53 | 54 |
+| forced yields | 0 | 0 | 460 |
+
+The spread is 1.19 %. Three is the whole argument: two carriers and the root carrier, whether the kernelet has one runnable task or fifty. The first version of this check compared absolute processor seconds across runs of different length and reported a 29 % spread that was not unfairness (*found by the prototype*: strict priority makes the fifty-task run four seconds longer, and both groups get proportionally more); shares are what may be compared.
+
+### Efficient: what a kernelet task switch costs
+
+Five boots, several thousand samples each, medians of the per-boot medians, on a 3.79 GHz counter.
+
+| measurement | median | p99 |
+|---|---:|---:|
+| two kernelet kernel tasks yielding to each other on one virtual CPU, round trip | **2,056 cycles, 542 ns** | 993 ns |
+| a blocked high-priority kernelet task woken by a low-priority one on the same virtual CPU, until it runs | **1,558 cycles, 411 ns** | 840 ns |
+| two Linux processes on one processor calling `sched_yield()`, round trip | 3,504 cycles, 924 ns | 1,809 ns |
+| a Linux pipe write waking a process on the other processor | 41,386 cycles, 10.9 µs | 4.4 ms |
+
+The first two rows are the design's numbers: a kernelet task switch, scheduler decision included, costs about 1,000 cycles, on a virtual CPU that Linux is meanwhile scheduling normally. The Linux rows are a scale, not a baseline: the Linux pair makes two system calls and changes address space, which the kernelet pair does not, so 542 against 924 ns is not a speed-up claim; and the pipe row's p99 is the cost of competing with the sandbox's own carriers for two processors. Two measurements the design asked for produced no samples in the kept runs and are **[unverified]**: a wake-up *across* virtual CPUs (the mechanism is exercised 49 times in the policy run, and the model asserts each was served within a tick, but no cycle count), and a switch between tenant threads of different processes (exercised 1,267 times below, without a cycle count). The floating-point swap: two tenant threads in two address spaces on one virtual CPU, each keeping four values in vector registers across every trip through the kernel, 518,501 check-ins, 1,037,002 save-load pairs and 1,267 address-space adoptions, not one value lost and, past four times the processor count, no leak of concurrency ids.
+
+### What phase 4 found
+
+Building it changed the design in these places, each folded into the page named.
+
+1. **The mirror must be idempotent, because OSTD's guard lifetimes cross a context switch.** `switch_to_task` takes a guard and the *next* task releases it, so the pairing of increment and decrement holds across tasks and virtual CPUs, not within one function; a first build decremented once too often, took Linux's count to −1, and was caught by the endovisor's range check. The flag `mirrored` in the record makes both operations idempotent, set *after* the increment and cleared *before* the decrement so that the flag never claims more than the count holds; with the flag on the other side of the instruction, the cooperative experiment counted the two-instruction window itself and reported 165 "failures" that vanished when the store moved ([Scheduling](virtualizing-ostd/scheduling.md#cooperative)).
+2. **The watch timer's per-processor pointer was a hole**, found in review and confirmed here: a carrier that Linux preempts inside kernelet code resumes without passing any way in. Preemption notifiers replace it ([Tasks](virtualizing-ostd/tasks.md#watch)).
+3. **`kernelet_switch_mm()` leaks a concurrency id per adoption unless it does what `exec` does around its swap**, and the leak is invisible on a kernel without restartable sequences, which the first guest was. With the brackets in place, 1,267 adoptions past four times the processor count leaked nothing. The helper also has to consume the caller's reference and return the old address space, because a task's exit drops one unconditionally. It is 29 lines of code, and the patch grew from 103 to 169 added lines ([The endovisor](endovisor.md#patch)).
+4. **`masked` became two fields**, a guard count and a virtual interrupt flag, because a single one would have meant a kernelet holding a spin lock received no ticks ([Scheduling](virtualizing-ostd/scheduling.md#upcall)).
+5. **The floating-point save had to move.** The first build saved a tenant thread's state where the kernel proper's own hooks place it, before a task switch, and lost values on the first check-in; saving at the return from user mode and loading before the return to it fixed it. The prototype attributes the loss to kernelet code using vector registers, which the kernelet target (`x86_64-unknown-none`, soft float) should preclude, so the cause is **[unverified]** and the design keeps the kernel proper's placement, which `CpuSync` chooses; the prototype's deviation stands until it is explained.
+6. **A model's area is created under a lock of its own**, since the fault path takes the model's semaphore inside Linux's address-space lock and `vm_mmap()` takes that lock inside the caller's ([Memory](virtualizing-ostd/memory.md#interlock)). The fill/flush semaphore was contended by two virtual CPUs for the first time and held; the case it exists for, a flush concurrent with a fill, is still only argued.
+7. **`vcpu_idle` has a protocol and there is no `timer_arm`**, since OSTD has only a periodic tick ([Interrupts and time](virtualizing-ostd/interrupts-and-time.md)). The prototype raises TICK on every wake from idle.
+8. **`user_run` marks the carrier as leaving before it reads the pending word** ([User mode](virtualizing-ostd/user-mode.md#user-run)).
+9. **The upcall stub needs a section of its own**, or the linker places it below the image's text and the load-time check refuses the module, which is what the check is for.
+10. **`enable_preemption_on_cpu()` must be the last thing `main` does**, and an injected `enqueue` must not ask to preempt a virtual CPU that merely has no current task, since the bootstrap context has none either; both are OSTD's shape, not Linux's.
+
+**Where the prototype still differs from the design.** It keeps the interrupted instruction pointer in the record rather than on the interrupted stack, and reads `stack_limit` for the 32 KiB rule, both of which the review changed afterwards; it re-normalizes and warns on a bad excess where the design kills; it sends the kick's cross-processor call synchronously, which is legal there because nothing raises a line from a hardware interrupt; `vcpu_on_spin` never fired, since no critical section here lasts a thousand failed spins, so that path and `yield_to()` are untested; the next-expiry hook is not implemented; more than two virtual CPUs and more than one sandbox at a time are not exercised; and the `sched` kernel's own scheduler briefly offered one task to two virtual CPUs a handful of times, which OSTD's context switch refused as it is written to, so the invariant held but that scheduler is not proved free of it.
 
 ## Findings {#findings}
 
