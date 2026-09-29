@@ -20,7 +20,7 @@
 
 <!-- ===== header ===== -->
 <text x="56" y="68" font-size="42" font-weight="700" fill="#0F1B3D">星绽 <tspan fill="#0097A7">Kernelets</tspan></text>
-<text x="56" y="114" font-size="28" font-weight="700" fill="#0F1B3D">给每一个智能体一个自己的内核——<tspan fill="#00808F">从虚拟机、微虚拟机，到 kernelet</tspan></text>
+<text x="56" y="114" font-size="28" font-weight="700" fill="#0F1B3D">给每一个智能体一个自己的内核——<tspan fill="#00808F">更安全、更快速、更便宜</tspan></text>
 <rect x="1676" y="44" width="188" height="34" rx="17" fill="#E6F6F8" stroke="#8CCBD4"/>
 <text x="1770" y="66" font-size="14" fill="#00808F" text-anchor="middle" letter-spacing="2">技术预览 · 2026</text>
 <text x="1864" y="112" font-size="14" fill="#4A5470" text-anchor="end">星绽开源社区 · Rust 操作系统</text>
