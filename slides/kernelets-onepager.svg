@@ -20,7 +20,7 @@
 
 <!-- ===== header ===== -->
 <text x="56" y="68" font-size="42" font-weight="700" fill="#0F1B3D">星绽 <tspan fill="#0097A7">Kernelets</tspan></text>
-<text x="56" y="114" font-size="28" font-weight="700" fill="#0F1B3D">给每一个智能体一个自己的内核——<tspan fill="#00808F">更安全、更快速、更便宜</tspan></text>
+<text x="56" y="114" font-size="28" font-weight="700" fill="#0F1B3D">给每一个智能体一个自己的内核——<tspan fill="#00808F">从虚拟机、微虚拟机，到 kernelet</tspan></text>
 <rect x="1676" y="44" width="188" height="34" rx="17" fill="#E6F6F8" stroke="#8CCBD4"/>
 <text x="1770" y="66" font-size="14" fill="#00808F" text-anchor="middle" letter-spacing="2">技术预览 · 2026</text>
 <text x="1864" y="112" font-size="14" fill="#4A5470" text-anchor="end">星绽开源社区 · Rust 操作系统</text>
@@ -152,35 +152,37 @@
 <text x="1240" y="932" font-size="13.5" fill="#0A6F7D" text-anchor="middle">对比微虚拟机（需硬件虚拟化）</text>
 
 <!-- ===== (4) RIGHT TOP : 技术先进性与自主可控 ===== -->
-<rect x="1394" y="148" width="470" height="424" rx="14" fill="#FFFFFF" stroke="#DCE2EC"/>
+<rect x="1394" y="148" width="470" height="426" rx="14" fill="#FFFFFF" stroke="#DCE2EC"/>
 <rect x="1860" y="148" width="4" height="424" rx="2" fill="#3A57D6"/>
 <text x="1422" y="184" font-size="17" font-weight="700" fill="#3553D6">④</text>
-<text x="1446" y="183" font-size="14" fill="#3553D6" letter-spacing="3">技术先进性与自主可控</text>
-<text x="1422" y="224" font-size="25" font-weight="700" fill="#0F1B3D">凭什么是我们</text>
+<text x="1446" y="183" font-size="14" fill="#3553D6" letter-spacing="3">意义与影响力</text>
+<text x="1422" y="224" font-size="25" font-weight="700" fill="#0F1B3D">要立的三件事</text>
 
-<circle cx="1428" cy="268" r="3.5" fill="#3553D6"/>
-<text x="1444" y="274" font-size="17" font-weight="700" fill="#1E2A4A">已经发表的底座</text>
-<text x="1444" y="300" font-size="15" fill="#4A5470">架构论文已在国际顶级会议 USENIX ATC 2025</text>
-<text x="1444" y="322" font-size="15" fill="#4A5470">发表；十万行以上内核代码全部是 safe Rust</text>
-<text x="1444" y="344" font-size="15" fill="#4A5470">（在编译期就排除内存错误的语言子集）</text>
+<circle cx="1428" cy="246" r="3.5" fill="#3553D6"/>
+<text x="1444" y="252" font-size="17" font-weight="700" fill="#1E2A4A">技术定义权</text>
+<text x="1444" y="278" font-size="15" fill="#4A5470">从虚拟机、微虚拟机到 kernelet——前两级靠硬件</text>
+<text x="1444" y="299" font-size="15" fill="#4A5470">虚拟化，这一级靠语言；目标是在国际上确立「一</text>
+<text x="1444" y="320" font-size="15" fill="#4A5470">个智能体一个内核」的新一代技术标杆</text>
+<text x="1444" y="341" font-size="13.5" fill="#6B7A99">论文已发表于 USENIX ATC 2025；核心模块经 CertiK 机器证明</text>
 
-<circle cx="1428" cy="384" r="3.5" fill="#3553D6"/>
-<text x="1444" y="390" font-size="17" font-weight="700" fill="#1E2A4A">可被证明的可信基</text>
-<text x="1444" y="416" font-size="15" fill="#4A5470">与 CertiK 合作，OSTD 内存管理核心模块已完</text>
-<text x="1444" y="438" font-size="15" fill="#4A5470">成机器证明，验证范围持续扩大</text>
+<circle cx="1428" cy="375" r="3.5" fill="#3553D6"/>
+<text x="1444" y="381" font-size="17" font-weight="700" fill="#1E2A4A">上游影响力</text>
+<text x="1444" y="407" font-size="15" fill="#4A5470">Linux 模式：不换宿主内核，现有 Linux 打一个补</text>
+<text x="1444" y="428" font-size="15" fill="#4A5470">丁、加一个模块，同一套 safe Rust 内核直接可用；</text>
+<text x="1444" y="449" font-size="15" fill="#4A5470">核心机制原型已跑通，目标推动机制进入上游</text>
+<text x="1444" y="470" font-size="13.5" fill="#6B7A99">社区在国内发起并主导演进，已支持 RISC-V 等指令集</text>
 
-<circle cx="1428" cy="478" r="3.5" fill="#00808F"/>
-<text x="1444" y="484" font-size="17" font-weight="700" fill="#00808F">自主可控与制高点</text>
-<text x="1444" y="510" font-size="15" fill="#4A5470">社区在国内发起并主导演进，已支持 RISC-V 等指</text>
-<text x="1444" y="532" font-size="15" fill="#4A5470">令集；隔离边界写在语言与已证明的底座里，不</text>
-<text x="1444" y="554" font-size="15" fill="#4A5470">靠人工审计</text>
+<circle cx="1428" cy="504" r="3.5" fill="#00808F"/>
+<text x="1444" y="510" font-size="17" font-weight="700" fill="#00808F">产业价值</text>
+<text x="1444" y="536" font-size="15" fill="#4A5470">同一套底座服务两种形态：数据中心看单机沙箱密</text>
+<text x="1444" y="557" font-size="15" fill="#4A5470">度与 I/O 效率，端侧看「一台虚拟机」是否还担得起</text>
 
 <!-- ===== (5) RIGHT BOTTOM : 产业落地 ===== -->
 <rect x="1394" y="596" width="470" height="380" rx="14" fill="#FFFFFF" stroke="#DCE2EC"/>
 <rect x="1860" y="596" width="4" height="380" rx="2" fill="#00A3B4"/>
 <text x="1422" y="632" font-size="17" font-weight="700" fill="#00808F">⑤</text>
 <text x="1446" y="631" font-size="14" fill="#00808F" letter-spacing="3">产业落地</text>
-<text x="1422" y="670" font-size="25" font-weight="700" fill="#0F1B3D">两个已确定意向的场景</text>
+<text x="1422" y="670" font-size="25" font-weight="700" fill="#0F1B3D">一套底座，云侧与端侧</text>
 
 <rect x="1422" y="686" width="414" height="92" rx="10" fill="#EFF8FA" stroke="#B5DAE2"/>
 <text x="1442" y="710" font-size="13" fill="#00808F" letter-spacing="2">云侧</text>
@@ -196,13 +198,10 @@
 <text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：论文已发表 → 原型与实测（进行中）→ 2027 试点</text>
 <text x="1422" y="960" font-size="14.5" fill="#4A5470">所需支持：原型工程投入与首批试点场景对接</text>
 
-<!-- ===== Linux-mode message band ===== -->
-<rect x="56" y="982" width="1808" height="32" rx="8" fill="#E9F4F8" stroke="#A9CFDA"/>
-<text x="76" y="1004" font-size="18" font-weight="700" fill="#0F1B3D">一套内核，两种宿主<tspan font-size="14.5" font-weight="400" fill="#33475F">　</tspan><tspan font-size="14.5" font-weight="700" fill="#00808F">Linux 模式</tspan><tspan font-size="14.5" font-weight="400" fill="#33475F">：不换宿主内核 —— 现有 Linux 打一个补丁、加一个模块，存量机器零迁移即可获得同一套 safe Rust 隔离（核心机制原型已跑通）；</tspan><tspan font-size="14.5" font-weight="700" fill="#00808F">星绽模式</tspan><tspan font-size="14.5" font-weight="400" fill="#33475F">：走向全栈自主。</tspan></text>
-
 <!-- ===== footnote ===== -->
-<text x="56" y="1032" font-size="14" fill="#4A5470">※ 两项数字为理论计算，原型尚未实测；原型已验证的是两种宿主下的核心机制。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
-<text x="56" y="1050" font-size="14" fill="#4A5470">I/O 为轮询模式下与用户态虚拟机监控器设备后端相比（原始区间 3–50×，此处取保守值）；对内核态 vhost 后端约 2–30×，中断模式下与 vhost 相当；独占一个 CPU 核的轮询后端（SPDK／DPDK 类）可达同一量级，但要长期占掉那个核。</text>
-<text x="56" y="1068" font-size="14" fill="#4A5470">零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提；相关主机侧支撑代码尚在开发中。※※ 逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。</text>
+<line x1="56" y1="990" x2="1864" y2="990" stroke="#DCE2EC"/>
+<text x="56" y="1012" font-size="14" fill="#4A5470">※ 两项数字为理论计算，原型尚未实测；原型已验证的是两种宿主下的核心机制。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
+<text x="56" y="1031" font-size="14" fill="#4A5470">I/O 为轮询模式下与用户态虚拟机监控器设备后端相比（原始区间 3–50×，此处取保守值）；对内核态 vhost 后端约 2–30×，中断模式下与 vhost 相当；独占一个 CPU 核的轮询后端（SPDK／DPDK 类）可达同一量级，但要长期占掉那个核。</text>
+<text x="56" y="1050" font-size="14" fill="#4A5470">零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提；相关主机侧支撑代码尚在开发中。※※ 逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。</text>
 
 </svg>
