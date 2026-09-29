@@ -163,19 +163,18 @@
 <text x="1444" y="278" font-size="15" fill="#4A5470">从虚拟机、微虚拟机到 kernelet——前两级靠硬件</text>
 <text x="1444" y="299" font-size="15" fill="#4A5470">虚拟化，这一级靠语言；目标是在国际上确立「一</text>
 <text x="1444" y="320" font-size="15" fill="#4A5470">个智能体一个内核」的新一代技术标杆</text>
-<text x="1444" y="341" font-size="13.5" fill="#6B7A99">论文已发表于 USENIX ATC 2025；核心模块经 CertiK 机器证明</text>
 
-<circle cx="1428" cy="375" r="3.5" fill="#3553D6"/>
-<text x="1444" y="381" font-size="17" font-weight="700" fill="#1E2A4A">上游影响力</text>
-<text x="1444" y="407" font-size="15" fill="#4A5470">Linux 模式：不换宿主内核，现有 Linux 打一个补</text>
-<text x="1444" y="428" font-size="15" fill="#4A5470">丁、加一个模块，同一套 safe Rust 内核直接可用；</text>
-<text x="1444" y="449" font-size="15" fill="#4A5470">核心机制原型已跑通，目标推动机制进入上游</text>
-<text x="1444" y="470" font-size="13.5" fill="#6B7A99">社区在国内发起并主导演进，已支持 RISC-V 等指令集</text>
+<circle cx="1428" cy="364" r="3.5" fill="#3553D6"/>
+<text x="1444" y="370" font-size="17" font-weight="700" fill="#1E2A4A">上游影响力</text>
+<text x="1444" y="396" font-size="15" fill="#4A5470">Linux 模式：不换宿主内核，现有 Linux 打一个补</text>
+<text x="1444" y="417" font-size="15" fill="#4A5470">丁、加一个模块，同一套 safe Rust 内核直接可用；</text>
+<text x="1444" y="438" font-size="15" fill="#4A5470">核心机制原型已跑通，目标推动机制进入上游</text>
 
-<circle cx="1428" cy="504" r="3.5" fill="#00808F"/>
-<text x="1444" y="510" font-size="17" font-weight="700" fill="#00808F">产业价值</text>
-<text x="1444" y="536" font-size="15" fill="#4A5470">同一套底座服务两种形态：数据中心看单机沙箱密</text>
-<text x="1444" y="557" font-size="15" fill="#4A5470">度与 I/O 效率，端侧看「一台虚拟机」是否还担得起</text>
+<circle cx="1428" cy="482" r="3.5" fill="#00808F"/>
+<text x="1444" y="488" font-size="17" font-weight="700" fill="#00808F">产业价值</text>
+<text x="1444" y="514" font-size="15" fill="#4A5470">同一套底座服务两种形态：数据中心看单机沙箱密</text>
+<text x="1444" y="535" font-size="15" fill="#4A5470">度与 I/O 效率，端侧看「一个智能体一台虚拟机」是</text>
+<text x="1444" y="556" font-size="15" fill="#4A5470">否还负担得起 —— 两边的答案都在这一层</text>
 
 <!-- ===== (5) RIGHT BOTTOM : 产业落地 ===== -->
 <rect x="1394" y="596" width="470" height="380" rx="14" fill="#FFFFFF" stroke="#DCE2EC"/>
@@ -195,7 +194,7 @@
 <text x="1442" y="866" font-size="14.5" fill="#4A5470">桌面资源受限，承担不起「一个智能体一台虚拟机」</text>
 
 <text x="1422" y="912" font-size="14.5" fill="#0A6F7D">部署方式：可选 Linux 宿主或星绽宿主</text>
-<text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：论文已发表 → 原型与实测（进行中）→ 2027 试点</text>
+<text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：原型与实测（进行中）→ 首批场景试点（2027）</text>
 <text x="1422" y="960" font-size="14.5" fill="#4A5470">所需支持：原型工程投入与首批试点场景对接</text>
 
 <!-- ===== footnote ===== -->
