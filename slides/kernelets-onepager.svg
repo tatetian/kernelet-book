@@ -21,6 +21,10 @@
 <!-- ===== header ===== -->
 <text x="56" y="68" font-size="42" font-weight="700" fill="#0F1B3D">星绽 <tspan fill="#0097A7">Kernelets</tspan></text>
 <text x="56" y="114" font-size="28" font-weight="700" fill="#0F1B3D">给每一个智能体一个自己的内核——<tspan fill="#00808F">更安全、更快速、更便宜</tspan></text>
+<rect x="1314" y="44" width="150" height="34" rx="17" fill="#D3EEF2" stroke="#7CC3CE"/>
+<text x="1389" y="66" font-size="14" fill="#006B78" text-anchor="middle" letter-spacing="1">开源 <tspan font-weight="700">2026.12</tspan></text>
+<rect x="1480" y="44" width="180" height="34" rx="17" fill="#D3EEF2" stroke="#7CC3CE"/>
+<text x="1570" y="66" font-size="14" fill="#006B78" text-anchor="middle" letter-spacing="1">初步落地 <tspan font-weight="700">2027.06</tspan></text>
 <rect x="1676" y="44" width="188" height="34" rx="17" fill="#E6F6F8" stroke="#8CCBD4"/>
 <text x="1770" y="66" font-size="14" fill="#00808F" text-anchor="middle" letter-spacing="2">技术预览 · 2026</text>
 <text x="1864" y="112" font-size="14" fill="#4A5470" text-anchor="end">星绽开源社区 · Rust 操作系统</text>
@@ -160,21 +164,21 @@
 
 <circle cx="1428" cy="246" r="3.5" fill="#3553D6"/>
 <text x="1444" y="252" font-size="17" font-weight="700" fill="#1E2A4A">技术定义权</text>
-<text x="1444" y="278" font-size="15" fill="#4A5470">从虚拟机、微虚拟机到 kernelet——前两级靠硬件</text>
-<text x="1444" y="299" font-size="15" fill="#4A5470">虚拟化，这一级靠语言；目标是在国际上确立「一</text>
-<text x="1444" y="320" font-size="15" fill="#4A5470">个智能体一个内核」的新一代技术标杆</text>
+<text x="1444" y="278" font-size="15" fill="#4A5470">从虚拟机、微虚拟机到 <tspan font-weight="700" fill="#1E2A4A">kernelet</tspan>——前两级靠硬件</text>
+<text x="1444" y="299" font-size="15" fill="#4A5470">虚拟化，<tspan font-weight="700" fill="#1E2A4A">这一级靠语言</tspan>；目标是在国际上确立「一</text>
+<text x="1444" y="320" font-size="15" fill="#4A5470">个智能体一个内核」的<tspan font-weight="700" fill="#1E2A4A">新一代技术标杆</tspan></text>
 
 <circle cx="1428" cy="364" r="3.5" fill="#3553D6"/>
 <text x="1444" y="370" font-size="17" font-weight="700" fill="#1E2A4A">上游影响力</text>
-<text x="1444" y="396" font-size="15" fill="#4A5470">Linux 模式：不换宿主内核，现有 Linux 打一个补</text>
+<text x="1444" y="396" font-size="15" fill="#4A5470"><tspan font-weight="700" fill="#00808F">Linux 模式</tspan>：<tspan font-weight="700" fill="#1E2A4A">不换宿主内核</tspan>，现有 Linux 打一个补</text>
 <text x="1444" y="417" font-size="15" fill="#4A5470">丁、加一个模块，同一套 safe Rust 内核直接可用；</text>
-<text x="1444" y="438" font-size="15" fill="#4A5470">核心机制原型已跑通，目标推动机制进入上游</text>
+<text x="1444" y="438" font-size="15" fill="#4A5470">核心机制原型已跑通，目标推动机制<tspan font-weight="700" fill="#1E2A4A">进入上游</tspan></text>
 
 <circle cx="1428" cy="482" r="3.5" fill="#00808F"/>
 <text x="1444" y="488" font-size="17" font-weight="700" fill="#00808F">产业价值</text>
-<text x="1444" y="514" font-size="15" fill="#4A5470">同一套底座服务两种形态：数据中心看单机沙箱密</text>
+<text x="1444" y="514" font-size="15" fill="#4A5470">同一套底座服务<tspan font-weight="700" fill="#1E2A4A">两种形态</tspan>：数据中心看单机沙箱密</text>
 <text x="1444" y="535" font-size="15" fill="#4A5470">度与 I/O 效率，端侧看「一个智能体一台虚拟机」是</text>
-<text x="1444" y="556" font-size="15" fill="#4A5470">否还负担得起 —— 两边的答案都在这一层</text>
+<text x="1444" y="556" font-size="15" fill="#4A5470">否还负担得起 —— <tspan font-weight="700" fill="#1E2A4A">两边的答案都在这一层</tspan></text>
 
 <!-- ===== (5) RIGHT BOTTOM : 产业落地 ===== -->
 <rect x="1394" y="596" width="470" height="380" rx="14" fill="#FFFFFF" stroke="#DCE2EC"/>
@@ -194,7 +198,7 @@
 <text x="1442" y="866" font-size="14.5" fill="#4A5470">桌面资源受限，承担不起「一个智能体一台虚拟机」</text>
 
 <text x="1422" y="912" font-size="14.5" fill="#0A6F7D">部署方式：可选 Linux 宿主或星绽宿主</text>
-<text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：原型与实测（进行中）→ 首批场景试点（2027）</text>
+<text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：原型与实测（进行中）→ 开源 2026.12 → 试点 2027.06</text>
 <text x="1422" y="960" font-size="14.5" fill="#4A5470">所需支持：原型工程投入与首批试点场景对接</text>
 
 <!-- ===== footnote ===== -->
