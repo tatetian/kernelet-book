@@ -122,7 +122,7 @@
 <text x="960" y="644" font-size="13.5" fill="#4A5470" text-anchor="middle">物理硬件或云上虚拟机 —— 不需要虚拟机监控器，不占用虚拟化层</text>
 
 <!-- ===== CENTER BOTTOM : 预期成效 ===== -->
-<text x="960" y="692" font-size="14" fill="#0A6F7D" text-anchor="middle" letter-spacing="3">预期成效（模型估算 ※）</text>
+<text x="960" y="692" font-size="14" fill="#0A6F7D" text-anchor="middle" letter-spacing="3">预期成效（理论计算 ＋ 机制原型验证 ※）</text>
 <rect x="554" y="704" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#B5DAE2"/>
 <rect x="834" y="704" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#B5DAE2"/>
 <rect x="1114" y="704" width="252" height="272" rx="14" fill="url(#gMetric)" stroke="#B5DAE2"/>
@@ -192,15 +192,17 @@
 <text x="1442" y="840" font-size="18" font-weight="700" fill="#0F1B3D">统信软件 · Agent 原生桌面 OS</text>
 <text x="1442" y="866" font-size="14.5" fill="#4A5470">桌面资源受限，承担不起「一个智能体一台虚拟机」</text>
 
-<text x="1422" y="912" font-size="14.5" fill="#0A6F7D">部署前提：以星绽作为宿主内核。</text>
+<text x="1422" y="912" font-size="14.5" fill="#0A6F7D">部署方式：可选 Linux 宿主或星绽宿主</text>
 <text x="1422" y="936" font-size="14.5" fill="#4A5470">路线：论文已发表 → 原型与实测（进行中）→ 2027 试点</text>
 <text x="1422" y="960" font-size="14.5" fill="#4A5470">所需支持：原型工程投入与首批试点场景对接</text>
 
+<!-- ===== Linux-mode message band ===== -->
+<rect x="56" y="982" width="1808" height="32" rx="8" fill="#E9F4F8" stroke="#A9CFDA"/>
+<text x="76" y="1004" font-size="18" font-weight="700" fill="#0F1B3D">一套内核，两种宿主<tspan font-size="14.5" font-weight="400" fill="#33475F">　</tspan><tspan font-size="14.5" font-weight="700" fill="#00808F">Linux 模式</tspan><tspan font-size="14.5" font-weight="400" fill="#33475F">：不换宿主内核 —— 现有 Linux 打一个补丁、加一个模块，存量机器零迁移即可获得同一套 safe Rust 隔离（核心机制原型已跑通）；</tspan><tspan font-size="14.5" font-weight="700" fill="#00808F">星绽模式</tspan><tspan font-size="14.5" font-weight="400" fill="#33475F">：走向全栈自主。</tspan></text>
+
 <!-- ===== footnote ===== -->
-<line x1="56" y1="990" x2="1864" y2="990" stroke="#DCE2EC"/>
-<text x="56" y="1010" font-size="14" fill="#4A5470">※ 模型估算，原型尚未实测。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
-<text x="56" y="1029" font-size="14" fill="#4A5470">I/O 为轮询模式下与用户态虚拟机监控器设备后端相比（原始区间 3–50×，此处取保守值）；对内核态 vhost 后端约 2–30×，中断模式下与 vhost 相当。</text>
-<text x="56" y="1048" font-size="14" fill="#4A5470">独占一个 CPU 核的轮询后端（SPDK／DPDK 类）可达同一量级，但要长期占掉那个核。零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提；相关主机侧支撑代码尚在开发中。</text>
-<text x="56" y="1067" font-size="14" fill="#4A5470">※※ 逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。</text>
+<text x="56" y="1032" font-size="14" fill="#4A5470">※ 两项数字为理论计算，原型尚未实测；原型已验证的是两种宿主下的核心机制。密度为 256 核服务器、对等技术条件（双方均可把空闲沙箱换出内存）下的预期值，任何方案的理论上界为 2×；在 128 核服务器、或基线已启用 DAX 直通时，优势收敛至约 1×。</text>
+<text x="56" y="1050" font-size="14" fill="#4A5470">I/O 为轮询模式下与用户态虚拟机监控器设备后端相比（原始区间 3–50×，此处取保守值）；对内核态 vhost 后端约 2–30×，中断模式下与 vhost 相当；独占一个 CPU 核的轮询后端（SPDK／DPDK 类）可达同一量级，但要长期占掉那个核。</text>
+<text x="56" y="1068" font-size="14" fill="#4A5470">零拷贝以每沙箱独立网卡队列、块设备直通裸分区为前提；相关主机侧支撑代码尚在开发中。※※ 逃逸事件据 Hugging Face 官方技术复盘与 OpenAI 公开披露，属容器与编排层逃逸，非硬件虚拟化失效；其余业界数据引自 2026 年公开报道。</text>
 
 </svg>

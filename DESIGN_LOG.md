@@ -167,3 +167,312 @@ Changes the design forces in the Paper or the Overview. Not applied; listed for 
 **Revised.** A host-owned descriptor for in-band receive headers (D71, A14); the monitor row's notify exit as kernel-handled, marked unverified against Firecracker's source, and the ratios 1.1–4.5× and 3–50×; a reserved control-pool slot per live connection and direction with a per-sender quota on connection requests; rings unpinned at `on_dying`; the cursor under the switch lock and the copy outside it; 536 bytes; host-endpoint connections; the control-pool exception; the payload defined as what follows the headers; torn-down connections' frames completed with an error; the socket-layer change in Costs; the interrupts-off window named as the host's interrupt-latency cost. The cut list applied in part: the six fixes added text, and the page stands at about 4,200 prose words against the 3,000 target; the reviewer's own estimate was that 3,400 is the floor without cutting the validation list or the unit-cost derivation, so about 800 words of tightening remain open.
 
 **Closed.** Five design iterations and a final pass, five reviews. This last pass was not re-reviewed by a subagent; what it changed is listed above and its items are one sentence each.
+
+## Iteration 16: Linux as the host
+
+**Written.** A new chapter, `src/blueprint/linux-mode/`, after Design: index, background
+(self-contained Linux, every claim hyperlinked to v6.12 source or docs), one-address-space
+(the gate), endovisor, tenant, what-differs, evidence. Plus
+`src/notes/linux-mode-experiments.md` with the programs and unedited output.
+
+**The gate, and it passed.** A colleague's observation was that kernelets may not need a
+private kernel page table if the image is position-independent. Evaluating it turned up a
+stronger form: one *physical* copy of the text, mapped at N different kernel addresses,
+each followed by that instance's own data at the same relative offset, so that
+program-counter-relative addressing selects the right instance's data with no register,
+no table and no lookup. Verified in a VM: four instances, one physical text page, four
+correct answers.
+
+**Measured** (details in the Notes page): Syscall User Dispatch 936 ns, a twenty-line
+per-task hook 118 ns, against 46 ns for a call Linux services itself, all in one guest
+under KVM; seccomp user notification 5,721 ns and ptrace 8,221 ns on the build host,
+where the floor is 485 ns. Linux mode needs exactly one exported symbol
+(`set_memory_x`), because `vmap()` strips the execute bit, no permission setter is
+exported, and `execmem_alloc()` is not exported.
+
+**Design chapter changed in the same branch**, because the scheme is better in Asterinas
+mode too. Sentences changed and why:
+- `builds-and-images.md`, the whole `## The kernelet image` section: D3 said the image is
+  linked at fixed addresses inside two top-level entries of a per-kernelet page table.
+  That cannot be done on a host whose kernel half is shared, and the separation it
+  appeared to give was never real, since the linear map is shared into every kernelet's
+  page table. Replaced by the position-independent scheme.
+- `virtualizing-ostd/memory.md`, the opening paragraph, the `paddr_to_vaddr` listing,
+  step 2 of "How memory arrives", and the cost paragraph: the physical window is gone;
+  `paddr_to_vaddr` uses the host's linear-map base; only the metadata window remains
+  per instance.
+- `virtualizing-ostd/index.md`, the `paddr_to_vaddr` row: same reason.
+- `faults-and-reclamation.md`, destroy step 7: there are no two private level-3 tables to
+  free; the image range is unmapped and the metadata window's tables are freed.
+- `kernelet-api-control.md`, the host-mapped-regions table and the sentence after it: the
+  `KW_PHYS` row is gone, since granted frames need no mapping.
+- `principles.md`: a new paragraph saying plainly that kernelets are mutually addressable
+  and that isolation between them has no second layer.
+- Register: D3 and D58 revised, A2 and A13 withdrawn, D78–D80 and A17–A18 added.
+
+**Not changed**, per the task's guard rail: the Paper and the Overview, which describe
+per-kernelet data as "per-kernelet windows". That is still a fair one-phrase description
+and neither page depends on the addresses.
+
+**Open.** The two hosts' system-call costs have never been compared, because Asterinas
+mode's `user_run` return is not measured anywhere in the book. The zero-copy argument has
+not been rechecked against Linux's block layer. The metadata address-space budget is
+arithmetic, not measurement.
+
+## Linux mode: review round one
+
+Three reviewers read the new chapter in the roles the task asked for: a senior
+Linux kernel developer, a senior systems researcher, and a technical writer.
+Between them they found three defects in what had been shipped as verified work,
+and each one changed the text rather than only its wording.
+
+**The patch was wrong, and it under-sold the result.** The hook returned `false`
+from `do_syscall_64`, which forces the interrupt-return path and skips the checks
+that allow the fast one. That, not the hook, was most of the 118 ns first
+reported. Falling through to the common exit instead gives a median of 39 ns over
+five runs, so the gap against Syscall User Dispatch is about 24×, not 7.9×. A
+defective patch had been presented as a measurement.
+
+**`vmap` plus `set_memory_x` yields a writable, executable mapping.** The chapter
+had asked Linux to export exactly the wrong symbol. `set_memory_rox` clears both
+bits; the guest now prints `W=0 X=1` for the text page. And a complete Linux mode
+needs three exports, not one.
+
+**The hook overrode seccomp.** It did not test for the marker that says an earlier
+stage already answered the call.
+
+The researcher's finding was structural: the Design chapter's revision was
+half-done, with about fifteen stale references to the superseded window scheme and
+two invariants left stating properties that no longer held. The writer's was that
+a ratio had been formed by dividing one machine's numerator by another machine's
+denominator.
+
+What the round changed in the argument, not just in the facts: the patch is a
+**security** mechanism. Without it a tenant can store to the selector byte, or jump
+to the stub's own `syscall` instruction, and reach Linux directly. So on the
+no-patch path the kernelet is not the tenant's boundary, and the container's is.
+Leading with the speed number had made a boundary look like an optimization.
+
+Also recorded rather than repaired, because each is larger than an edit: invariant
+I7 does not hold on Linux; the tenant's process lifecycle and the virtual
+system-call page are not designed; the image must satisfy indirect-branch tracking
+and nothing in the design says how; and Linux's 16 KiB kernel stack is a
+thirty-two-fold mismatch against assumption A3.
+
+Next: re-run the three reviewers against the revised chapter.
+
+## Linux mode: review rounds two and three
+
+Three reviewers read the chapter a second time. Two of them, independently,
+led with the same defect, and it was the chapter's own central claim about
+security.
+
+**The private window never existed.** The chapter said Asterinas maps only a
+kernelet's own grains, so that a miscomputed physical address faults, and that
+Linux gives that up. The Design chapter says the opposite in four places, and
+decision D58 rejects the private window outright, for the reason that it
+reserves address space in proportion to the machine's physical memory for every
+kernelet. Grain addressing is fail-stop on neither host. Correcting it removed a
+cost Linux mode did not owe and made the host-replaceability claim stronger,
+which is the opposite of what a reviewer usually does for you.
+
+**Four taxonomy rows were missing, and all four cut against the claim.** The
+kernel-mode fault path, where Linux's handler cannot find a kernelet's exception
+table, so a routine first-touch fault becomes an oops. Any other fault in
+kernelet code, which is an oops rather than a contained kill. The per-CPU
+replica selector, which is safe only under a preemption count no Linux honors,
+and which on the patched path runs on the tenant's unpinned task. And the
+segment-base registers, which Linux caches per task.
+
+The Linux kernel developer then found four facts that change what the chapter
+concludes, each verified in the tree before it was applied:
+
+- Linux clears Syscall User Dispatch in `copy_process()` and in
+  `begin_new_exec()`. On the unpatched path only a tenant's first thread is ever
+  intercepted. The no-patch path is not a weaker boundary; for a multi-process
+  tenant it is barely a boundary at all.
+- The legacy virtual system-call page is emulated inside the page-fault handler
+  and calls three system calls directly, below every interception point. Linux
+  mode carries an operator requirement to boot with it disabled.
+- `set_memory_rox` propagates its write-bit clear to the direct-map alias, so
+  the shared text protects itself — and cannot be handed back to Linux until the
+  permission is restored, which needs a second export.
+- A module cannot create a mapping in another task's address space, and pages
+  inserted as raw frame numbers lose the pinning interface and copy-on-write. So
+  tenant memory works only on the patched path, and the design's memory story is
+  narrower than it read.
+
+What the rounds changed in the argument: the chapter no longer says "Linux can
+host kernelets". It says nothing found rules Linux out, names three properties
+the boundary owes that Linux weakens, and enumerates what is unfinished rather
+than glossing it. The one place Linux mode might simply not work is now stated
+sharply: on a host whose own build enforces type-checked indirect branches, the
+first call into a kernelet traps, and sharing the text is not why.
+
+Next: whatever survives the third pass of the same three reviewers.
+
+## Linux mode: round four, and the finding that changes the design
+
+The Linux kernel developer found something that no amount of reading Linux's
+interfaces would have produced, and it is the strongest result the chapter has.
+
+**Kernelet code cannot touch tenant memory at all.** Since Broadwell and Zen, a
+kernel-mode access to a user address faults unless the accessing code sets one
+flag in the processor's status register around it. Linux's own copy routines are
+the code that does so; that is why they are the only code allowed to touch user
+memory. And `do_user_addr_fault()` checks this *first*, before it looks the
+address up in the process's areas and before any fixup search, reporting a bad
+kernel pointer. A kernelet's code, compiled by the ordinary Rust toolchain,
+emits a bare copy. So the first byte the kernel proper reads from its tenant
+ends the task, present page or not.
+
+The flag cannot be held open across a kernelet's work: it is not preserved
+across a context switch, and a kernelet sleeps and takes locks, so it would leak
+the permission into unrelated tasks. Linux confines its own such regions to
+straight-line code for exactly that reason.
+
+So D82 is not "a fallible copy becomes a service call so that faults are
+recoverable". It is "every access to tenant memory is performed by host code",
+it is forced by the hardware rather than chosen, and its cost lands on the path
+every system call that passes a buffer takes. Unmeasured, and now the chapter's
+largest performance question.
+
+Three of my own errors went with it. Restoring the text's permissions belongs to
+retiring a *kind*, not destroying an instance — doing it per instance would
+un-protect the shared text for every surviving sibling through the alias they
+share. "The no-patch path cannot give a tenant memory at all" was one step too
+far: what is ruled out is the parked-servicing-thread shape, because
+address-space work must run on the task whose address space it is. And the
+machine-wide flush is forced by the direct-map alias, not by the image exceeding
+a page threshold.
+
+Two structural changes, both asked for independently. The five assumption breaks
+became their own page, because they apply to a kernelet's own kernel threads as
+much as to a tenant's task and had grown to outweigh the page they sat on. And
+the evidence page gained "What to build first": five gated stages, with the
+indirect-branch question first because it decides whether a whole class of host
+is eligible at all, and process lifecycle last because it blocks a tenant's
+second process rather than its first.
+
+The chapter's conclusion is now: nothing found rules out a patched Linux built
+without type-checked indirect branches. An unmodified Linux is ruled out.
+
+## Linux mode: round five, and the experiment that settled it
+
+Two reviewers disagreed about the same claim, so I tested it instead of choosing.
+
+The Linux developer said kernelet code cannot touch tenant memory at all, and that
+every access must be performed by host code. The writer objected that the argument
+as written would rule the copy out on *Asterinas* too, since it is the same source.
+Both were partly right, and the missing step was a fact about our own kernel:
+**Asterinas does not enable the processor's supervisor-access check.** Its
+control-register setup names five features and not that one, and nothing in the tree
+emits the bracketing instructions. Linux enables it wherever the hardware has it.
+
+Experiment 6, four cases in the guest:
+
+| case | result |
+|---|---|
+| bare kernel-mode read of a tenant address | oops, on a present and writable page |
+| the module brackets it itself | works |
+| Linux's own copy routine | works |
+| the supplier's own kernel alias of the frame | works, with no bracket |
+| bracketed read of a *bad* address | oops |
+
+The third and fifth rows decide it. A kernelet supplied every frame in its tenant's
+address space out of its own grant, so it already holds an alias of each one that is
+not marked as user memory; reading through it needs nothing. And bracketing, which a
+kernelet may do since it runs in kernel mode, still cannot deliver the *fallible*
+contract, because a bad address finds no fixup.
+
+So D82 is an **addressing rule**, not a crossing: the kernel proper reaches its
+tenant's memory through its own alias of the frames it granted, never through the
+tenant's virtual address, with a crossing only on a miss. That costs a lookup in an
+index A21 already requires, it is what the zero-copy design already does, and it
+disposes of futexes, which a copy routine cannot express and an atomic on a kernel
+address can.
+
+The result worth keeping is not about Linux. The framework's contract for reading user
+memory silently encodes the host's policy on a hardware feature, and neither the API
+nor its taxonomy mentions it. Porting is what found it, which is the methodological
+argument for this chapter existing. `virtualizing-ostd/user-mode.md` now states the
+precondition.
+
+Also this round: the unpatched tier is withdrawn everywhere, not just in the
+conclusion — Linux clears dispatch at every fork and exec, so it cannot run a process
+tree; the fault-containment item explains why no patch is proposed for it, rather than
+adding a second ask the chapter could not defend; the stack switch became a decision
+with an assumption about it; and the build order's first stage now aims at the
+configuration that ships rather than at one no distribution builds.
+
+## Linux mode: round six, and where it stops
+
+All three reviewers converged on one short list and all three said to stop after it.
+
+**One experiment case proved less than I claimed.** I had written that a bracketed
+read of a bad address oopses "because the fixup is in the kernelet image and Linux
+searches its own table and the loaded modules'". The test ran in a module, whose
+fixups *are* searched, so the run only showed that an access with no fixup faults.
+A sixth case fixed it: the same bad access with an exception-table entry on the
+faulting instruction recovers with `-EFAULT`. The pair isolates the real claim — the
+mechanism works, it works there because the code is a module, and a kernelet is not
+one and cannot become one without giving up the shared text.
+
+**The alias rule's translation was not earned.** It cited an assumption that does not
+require the index, and in the wrong direction: a system call arrives with a *virtual
+address*, so what is wanted is address to frame. vOSTD's own fault handler supplies
+that pair as it hands each frame over, so the map is built rather than shadowed. Two
+halves of it are open, and the second is the serious one. A miss is structural — the
+tenant's address space also holds the runtime's stub, Linux's virtual system-call
+pages, and whatever Linux populated itself. And a stale entry does not miss; it
+*resolves*, silently, against a frame that may already have gone back to the host and
+on to another kernelet. The alias rule is what makes that reachable, because before it
+the hardware would have refused the access outright. Closing it is a precondition of
+the rule, not a detail, and the intended answer is the invalidation callback a
+hypervisor uses to keep shadow page tables coherent, which Linux exports.
+
+**The rule costs the kernel proper nothing in source**, which the chapter had never
+said. The copy routines are OSTD's, so the rule lives in vOSTD: the kernel proper
+still calls `VmReader` and `VmWriter` and does not know which host it is on. That is
+the taxonomy working as designed — a virtualized item with a second body — rather than
+a breach of it, and it answers the natural objection to D82 before it is raised.
+
+Six rounds, three reviewers, six experiments, one patch. The chapter's conclusion is
+that nothing found rules out a patched Linux built without type-checked indirect
+branches; that an unmodified Linux is ruled out; and that the most useful thing the
+port produced was not a Linux fact but a defect in our own interface, which specified
+a copy as an instruction while silently depending on the host's policy for a hardware
+feature.
+
+## Linux mode: closed
+
+Three reviewers in the roles the task named — a senior Linux kernel developer, a
+senior systems researcher, and a technical writer — each read the chapter six times.
+All three have confirmed that nothing substantive remains.
+
+What the rounds cost and bought, in one place:
+
+| round | what it found |
+|---|---|
+| 1 | a defective patch presented as a measurement; the wrong symbol asked of Linux; a hook that would override seccomp |
+| 2 | the private window the chapter claimed Asterinas keeps does not exist, so Linux mode was paying a cost it did not owe |
+| 3 | four taxonomy rows missing, all of which cut against the claim; dispatch cleared at every fork and exec; the legacy virtual system-call page below every interception point |
+| 4 | the kernel proper cannot dereference a tenant address at all, and the same call that protects a kernelet's text makes those frames unreturnable |
+| 5 | the alias answer, which made that constraint a lookup rather than a crossing |
+| 6 | one experiment case proved less than it claimed; the alias rule's map was cited wrongly and in the wrong direction; a callback is half the protocol |
+
+The chapter ends where the evidence puts it. Nothing found rules out a patched Linux
+built without type-checked indirect branches; an unmodified Linux is ruled out, because
+it cannot intercept a process tree and the patch is what makes the kernelet a boundary
+at all. Six experiments, one patch, four exports, one build option and one boot setting.
+
+The most useful thing the port produced is not a Linux fact. It is that our own API
+specifies a copy to user memory as an instruction while silently depending on the host's
+policy for a hardware feature, which no amount of reading the Asterinas source would
+have revealed. That is the argument for having done it.
+
+What is left open is listed rather than hidden: the address-to-frame map and what keeps
+it true, the tenant's process lifecycle, the per-CPU and preemption model, device
+addressing under an enforced translation unit, and whether a kernelet can be entered at
+all on a kernel built with type-checked indirect branches. The build order on the
+evidence page says which of those gate which.
